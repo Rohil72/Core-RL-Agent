@@ -23,6 +23,7 @@ from src.data.labeler import create_cycle_example
 from src.data.feature_engineering import assemble_features
 from src.models.timesnet_encoder import TimesNetEncoder
 from src.eval import metrics as eval_metrics
+from src.data.io_utils import read_dataframe, write_dataframe
 
 logging.basicConfig(
     level=logging.INFO,
@@ -95,7 +96,7 @@ def build_feature_tables(cycles_df, quick=False):
     
     features_df = pd.DataFrame(features_list)
     output_path = "data/feature_tables/features.parquet"
-    features_df.to_parquet(output_path)
+    write_dataframe(features_df, output_path)
     logger.info(f"Saved {len(features_df)} feature rows to {output_path}")
     
     return features_df
@@ -217,7 +218,7 @@ def generate_embeddings(features_df, encoder, norm_params, config):
     
     os.makedirs("data/embeddings", exist_ok=True)
     emb_path = f"data/embeddings/{config['run_id']}_embeddings.parquet"
-    emb_df.to_parquet(emb_path)
+    write_dataframe(emb_df, emb_path)
     logger.info(f"Saved {len(emb_df)} embeddings to {emb_path}")
     
     return emb_path, emb_df
@@ -235,7 +236,7 @@ def train_rl_agent(embeddings_path, config):
         return None, None
     
     # Load embeddings
-    emb_df = pd.read_parquet(embeddings_path)
+    emb_df = read_dataframe(embeddings_path)
     
     # Split train/test
     split_idx = int(len(emb_df) * 0.8)

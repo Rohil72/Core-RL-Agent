@@ -8,6 +8,7 @@ import glob
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from typing import List
 from src.data.feature_engineering import assemble_features
+from src.data.io_utils import write_dataframe
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -60,7 +61,7 @@ def process_file(jsonl_path: str, rebuild: bool = False) -> str:
                     except:
                         pass
                         
-            df.to_parquet(out_path)
+            write_dataframe(df, out_path)
             return f"Processed {ticker}: {len(df)} rows"
         else:
             return f"No valid cycles for {ticker}"

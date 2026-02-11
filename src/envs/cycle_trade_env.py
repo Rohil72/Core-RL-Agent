@@ -201,7 +201,7 @@ class CycleTradeEnv(gym.Env):
         obs_next, info_next = self._next_observation()
         
         # If done, resolve ALL pending (end of episode/historical data)
-        resolve_until = pd.Timestamp.max if self.done else self.current_time
+        resolve_until = pd.Timestamp.max.tz_localize('UTC') if self.done else self.current_time
         
         resolved_reward = self._resolve_pending_rewards(resolve_until)
         total_reward = current_reward + resolved_reward

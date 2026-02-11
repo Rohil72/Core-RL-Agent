@@ -6,6 +6,7 @@ import logging
 import time
 import numpy as np
 from typing import Optional, Dict, Any, Union
+from src.data.io_utils import read_dataframe, write_dataframe
 from datetime import datetime, timezone
 
 # Setup logging
@@ -74,7 +75,7 @@ def fetch_price_history(ticker: str, start: str, end: str, interval: str = "1d")
     df_cached = None
     if os.path.exists(cache_path):
         try:
-            df_cached = pd.read_parquet(cache_path)
+            df_cached = read_dataframe(cache_path)
             # Ensure index is datetime with UTC
             if not isinstance(df_cached.index, pd.DatetimeIndex):
                 df_cached.index = pd.to_datetime(df_cached.index, utc=True)
@@ -160,7 +161,7 @@ def fetch_price_history(ticker: str, start: str, end: str, interval: str = "1d")
                 df_combined = df_new
             
             # Save to cache
-            df_combined.to_parquet(cache_path)
+            write_dataframe(df_combined, cache_path)
             
             return _filter_and_format_price_df(df_combined, start_dt, end_dt)
             

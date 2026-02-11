@@ -5,11 +5,11 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.metrics import (
-    precision_recall_fscore_support, 
-    roc_auc_score, 
-    brier_score_loss, 
-    calibration_curve
+    precision_recall_fscore_support,
+    roc_auc_score,
+    brier_score_loss,
 )
+from sklearn.calibration import calibration_curve
 from typing import Dict, Any, List, Optional
 import os
 

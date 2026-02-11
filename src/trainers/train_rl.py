@@ -21,6 +21,7 @@ except ImportError:
     SB3_AVAILABLE = False
     
 from src.envs.cycle_trade_env import CycleTradeEnv
+from src.data.io_utils import read_dataframe
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -60,7 +61,7 @@ class CycleDataset:
         all_dfs = []
         for f in self.data_files:
             try:
-                df = pd.read_parquet(f)
+                df = read_dataframe(f)
                 all_dfs.append(df)
             except Exception as e:
                 logger.error(f"Error reading {f}: {e}")
@@ -144,8 +145,15 @@ def train(config_path: str = "configs/rl.yaml"):
 
     # Setup Model
     train_config = config['training']
-    policy_kwargs = dict(net_arch=[dict(pi=[128, 64], vf=[128, 64])])
+    policy_kwargs = dict(net_arch=dict(pi=[128, 64], vf=[128, 64]))
     
+    tensorboard_log = train_config.get('log_dir', "logs/rl")
+    try:
+        from torch.utils.tensorboard import SummaryWriter  # noqa: F401
+    except ImportError:
+        logger.warning("tensorboard is not installed; disabling tensorboard logging.")
+        tensorboard_log = None
+
     model = PPO(
         "MultiInputPolicy",
         env,
@@ -160,7 +168,7 @@ def train(config_path: str = "configs/rl.yaml"):
         max_grad_norm=train_config.get('max_grad_norm', 0.5),
         policy_kwargs=policy_kwargs,
         verbose=1,
-        tensorboard_log=train_config.get('log_dir', "logs/rl")
+        tensorboard_log=tensorboard_log
     )
 
     # Checkpoint Callback

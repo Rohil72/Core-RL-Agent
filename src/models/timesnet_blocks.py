@@ -32,11 +32,15 @@ class TimesNetBlock(nn.Module):
 
         xf = torch.fft.rfft(x, dim=1)
         freq_energy = xf.abs().mean(dim=-1)
-        topk = torch.topk(freq_energy, self.top_k, dim=1).indices
+        effective_k = min(self.top_k, freq_energy.shape[1])
+        if effective_k <= 0:
+            return self.dropout(self.norm(x))
+
+        topk = torch.topk(freq_energy, effective_k, dim=1).indices
 
         outputs = []
 
-        for k in range(self.top_k):
+        for k in range(effective_k):
             # Convert indices to float first to avoid dtype error with mean()
             period_idx = topk[:, k].float().mean().item()
             period = max(2, T // (int(period_idx) + 1))

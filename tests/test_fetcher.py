@@ -6,6 +6,7 @@ import shutil
 import json
 from unittest.mock import patch, MagicMock
 from src.data import fetcher
+from src.data.io_utils import read_dataframe, write_dataframe
 
 # Helper to create dummy price df
 def create_dummy_price_df(start, end):
@@ -64,7 +65,7 @@ def test_fetch_price_history_incremental(mock_cache_dir):
     
     # Pre-populate cache with part1
     cache_path = os.path.join(mock_cache_dir, f"{ticker}_prices.parquet")
-    df_part1.to_parquet(cache_path)
+    write_dataframe(df_part1, cache_path)
     
     with patch('yfinance.download') as mock_download:
         # Mock returning only the missing part
@@ -84,7 +85,7 @@ def test_fetch_price_history_incremental(mock_cache_dir):
         assert df_full.index.max() == pd.Timestamp("2023-01-10", tz='UTC')
         
         # Check cache updated
-        df_cached_new = pd.read_parquet(cache_path)
+        df_cached_new = read_dataframe(cache_path)
         assert len(df_cached_new) == 10
 
 def test_fetch_fundamentals_yf(mock_cache_dir):
