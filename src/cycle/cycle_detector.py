@@ -36,17 +36,35 @@ def detect_cycles(
     Returns:
         List of Cycle objects (non-overlapping).
     """
+    # --- Input Validation ---
+    if prices.empty:
+        return []
+    if not isinstance(prices.index, pd.DatetimeIndex):
+        raise ValueError("prices must have a DatetimeIndex")
+    if min_duration_days <= 0 or max_duration_days <= 0:
+        raise ValueError("Duration parameters must be positive")
+    if min_duration_days > max_duration_days:
+        raise ValueError("min_duration_days must be <= max_duration_days")
+    if min_return < 0:
+        raise ValueError("min_return must be non-negative")
 
     price_values = prices.values
     dates = prices.index
     n = len(prices)
-    
+
+    if n <= min_duration_days:
+        return []
+
     candidates = []
 
     # O(N * MaxDuration) - deterministic search
     # We iterate every day as a potential start
     for t_start in range(n - min_duration_days):
         p_start = price_values[t_start]
+
+        # Guard: skip zero/negative start prices
+        if p_start <= 0:
+            continue
         
         # Optimization: Only consider local minima or just flat iteration?
         # User asked for "deterministic logic", "volatility must be present".
@@ -81,6 +99,10 @@ def detect_cycles(
                          valid_structure = False
                 
                 if valid_structure:
+                    # Compute actual peak within the cycle window
+                    # (Stage 2 markup: end_date is the cycle boundary,
+                    #  but the true highest price may occur before end)
+                    actual_peak_idx = t_start + np.argmax(price_values[t_start:t_end + 1])
                     candidates.append(Cycle(
                         start_date=dates[t_start],
                         end_date=dates[t_end],
@@ -88,8 +110,8 @@ def detect_cycles(
                         end_idx=t_end,
                         duration_days=duration,
                         net_return=ret,
-                        peak_date=dates[t_end], # assuming end is the peak of this cycle segment
-                        peak_idx=t_end
+                        peak_date=dates[actual_peak_idx],
+                        peak_idx=actual_peak_idx
                     ))
     
     # --- Resolve Overlaps ---

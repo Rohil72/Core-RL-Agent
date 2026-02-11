@@ -37,7 +37,9 @@ class TimesNetBlock(nn.Module):
         outputs = []
 
         for k in range(self.top_k):
-            period = max(2, T // (topk[:, k].float().mean().int().item() + 1))
+            # Convert indices to float first to avoid dtype error with mean()
+            period_idx = topk[:, k].float().mean().item()
+            period = max(2, T // (int(period_idx) + 1))
 
             pad_len = (period - T % period) % period
             x_pad = F.pad(x, (0, 0, 0, pad_len))
