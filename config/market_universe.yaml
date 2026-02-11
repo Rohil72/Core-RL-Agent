@@ -1,0 +1,78 @@
+exchange_scope:
+  - NYSE
+  - NASDAQ
+
+universe_type: growth_leaders
+data_provider: yfinance
+
+industries:
+
+  Software - Infrastructure:
+    sector: Technology
+    tickers:
+      - MSFT   # Microsoft
+      - ORCL   # Oracle
+      - SNOW   # Snowflake
+
+  Software - Application:
+    sector: Technology
+    tickers:
+      - CRM    # Salesforce
+      - ADBE   # Adobe
+      - INTU   # Intuit
+
+  Semiconductors:
+    sector: Technology
+    tickers:
+      - NVDA   # Nvidia
+      - AMD    # Advanced Micro Devices
+      - AVGO   # Broadcom
+
+  Biotechnology:
+    sector: Healthcare
+    tickers:
+      - AMGN   # Amgen
+      - GILD   # Gilead Sciences
+      - REGN  # Regeneron Pharmaceuticals
+
+  Medical Devices:
+    sector: Healthcare
+    tickers:
+      - ISRG   # Intuitive Surgical
+      - MDT    # Medtronic
+      - SYK    # Stryker
+
+  Internet Content & Information:
+    sector: Communication Services
+    tickers:
+      - GOOGL  # Alphabet
+      - META   # Meta Platforms
+      - BIDU   # Baidu (keep or drop later)
+
+  Consumer Electronics:
+    sector: Technology
+    tickers:
+      - AAPL   # Apple
+      - SONY   # Sony Group
+      - VZIO   # Vizio (borderline, revisit later)
+
+  Renewable Energy Equipment:
+    sector: Industrials
+    tickers:
+      - ENPH   # Enphase Energy
+      - SEDG   # SolarEdge
+      - NEE    # NextEra Energy (hybrid, still growth-tilted)
+
+  Aerospace & Defense (Innovation-heavy subset):
+    sector: Industrials
+    tickers:
+      - RTX    # RTX Corp
+      - LMT    # Lockheed Martin
+      - NOC    # Northrop Grumman
+
+  Financial Technology:
+    sector: Technology
+    tickers:
+      - SQ     # Block
+      - PYPL   # PayPal
+      - V      # Visa
