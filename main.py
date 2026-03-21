@@ -1,87 +1,66 @@
-import torch
-import pandas as pd
-from typing import List
+"""
+main.py — Lean research entry point.
 
-from src.data.fetcher import load_market_ohlcv
-# from src.data.augment import augment_3day_geometry # Not used for price cycles
-from src.models.timesnet_encoder import TimesNetEncoder
+  1. Load OHLCV for all tickers
+  2. Detect price cycles (self-supervision signal)
+  3. Print summary
+"""
+
+import logging
+import torch
+
+from src.data.loader import load_market_data
 from src.cycle.cycle_detector import detect_cycles, Cycle
 from src.visualization.price_cycle_plot import plot_price_and_cycles
 
-# Latent logic removed
-# from src.cycle.cycle_metrics import compute_cycle_score 
-# from src.visualization.latent_trajectory import plot_latent_trajectory
-
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+logger = logging.getLogger(__name__)
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
+CONFIG_PATH = "config/market_universe.yaml"
+START = "2018-01-01"
+END = "2024-12-31"
 
-def run_stock(
-    ticker: str,
-    ohlcv_df: pd.DataFrame,
-) -> List[Cycle]:
-    
-    # Use closing prices for cycle detection
-    close_prices = ohlcv_df["close"]
-    
-    # --- cycle detection ---
-    # Using defaults: min 40 days, max 252 days, min 30% return
-    cycles = detect_cycles(close_prices)
-    
-    print(f"[{ticker}] Detected {len(cycles)} cycles.")
+
+def run_stock(ticker: str, price_df: pd.DataFrame) -> list[Cycle]:
+    close = price_df["close"]
+    cycles = detect_cycles(close)
+
+    print(f"[{ticker}] {len(cycles)} cycles detected")
     for i, c in enumerate(cycles):
-        print(f"  Cycle {i+1}: {c.start_date.date()} -> {c.end_date.date()} "
-              f"({c.duration_days} days, {c.net_return:.1%})")
+        print(f"  {i+1}: {c.start_date.date()} → {c.end_date.date()} "
+              f"({c.duration_days}d, {c.net_return:.1%})")
 
-    # --- visualization ---
-    if len(cycles) > 0:
+    if cycles:
         plot_price_and_cycles(
-            dates=ohlcv_df.index,
-            close_prices=close_prices.values,
+            dates=price_df.index,
+            close_prices=close.values,
             cycles=cycles,
             title=f"{ticker} | Price Cycles",
         )
-    else:
-        print(f"[{ticker}] No cycles detected matching criteria.")
-
     return cycles
 
 
 def main():
-    # Load ALL data
-    data = load_market_ohlcv(
-        config_path="config/market_universe.yaml",
-        start="2018-01-01",
-        end="2024-12-31",
-        interval="1d",
-    )
+    # 1. Load
+    data = load_market_data(CONFIG_PATH, START, END)
+    if not data:
+        logger.error("No data loaded — check config or network.")
+        return
 
-    # Encoder is initialized but NOT used for detection as per requirements
-    encoder = TimesNetEncoder(
-        in_dim=4,
-        embed_dim=128,
-        num_layers=2,
-        top_k=3,
-        dropout=0.1,
-    ).to(DEVICE)
-    encoder.eval() 
-
-    # Iterate over ALL loaded stocks
+    # 2. Detect cycles
     all_cycles = {}
-    
-    for ticker, df in data.items():
-        if df.empty:
-            print(f"{ticker}: no data")
+    for ticker, dfs in data.items():
+        price_df = dfs["price"]
+        if price_df.empty:
             continue
+        print(f"\n--- {ticker} ---")
+        all_cycles[ticker] = run_stock(ticker, price_df)
 
-        print(f"\n--- Running {ticker} ---")
-        stock_cycles = run_stock(ticker, df)
-        all_cycles[ticker] = stock_cycles
-
-    # Future: Use all_cycles for aligning TimesNet embeddings or memory construction
-    # For now, we are done.
+    total = sum(len(v) for v in all_cycles.values())
+    print(f"\nTotal: {total} cycles across {len(all_cycles)} tickers")
 
 
 if __name__ == "__main__":
     main()
-

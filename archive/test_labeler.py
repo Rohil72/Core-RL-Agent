@@ -99,5 +99,5 @@ def test_create_cycle_example_with_dataclass(mock_cycles_dir):
         assert f"{ticker}.jsonl" in files
         
         with open(os.path.join(mock_cycles_dir, f"{ticker}.jsonl"), 'r') as f:
-            saved = json.load(f)
+            saved = json.loads(f.readline())
             assert saved['ticker'] == ticker

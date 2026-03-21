@@ -9,7 +9,8 @@ from .fetcher import get_latest_report_before, fetch_fundamentals_yf
 
 logger = logging.getLogger(__name__)
 
-CYCLES_DIR = os.path.join("data", "cycles")
+_PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+CYCLES_DIR = os.path.join(_PROJECT_ROOT, "data", "cycles")
 os.makedirs(CYCLES_DIR, exist_ok=True)
 
 def label_cycle(

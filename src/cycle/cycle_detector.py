@@ -95,7 +95,8 @@ def detect_cycles(
                      # Check if any price dropped below start price (full reversion)
                      # User said "near cycle start", let's be strict: cannot go below p_start * 0.98?
                      # Or just strictly < p_start.
-                     if np.any(window_prices < p_start):
+                     # Allow up to 2% pullback below start price before invalidating
+                     if np.any(window_prices < p_start * 0.98):
                          valid_structure = False
                 
                 if valid_structure:
@@ -113,6 +114,7 @@ def detect_cycles(
                         peak_date=dates[actual_peak_idx],
                         peak_idx=actual_peak_idx
                     ))
+                    break  # First valid cycle from this start is sufficient
     
     # --- Resolve Overlaps ---
     # Strategy: Sort by Duration DESC, then Return DESC.

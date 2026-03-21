@@ -58,7 +58,7 @@ def process_file(jsonl_path: str, rebuild: bool = False) -> str:
                 if df[col].dtype == 'object':
                     try:
                         df[col] = pd.to_numeric(df[col])
-                    except:
+                    except (ValueError, TypeError):
                         pass
                         
             write_dataframe(df, out_path)

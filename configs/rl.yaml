@@ -1,34 +1,22 @@
 env:
   embedding_size: 128
-  action_space_size: 3
+  action_space_size: 2 # 0: Out, 1: In
   reward_params:
-    c_flag: -0.01  # Cost for flagging/proactive action
-    R_confirm: 1.0 # Reward for correct flag with confirmation
-    R_miss: -0.5   # Penalty for flag without confirmation
-    R_miss_ignore: -0.2 # Penalty for ignoring a confirmed cycle (optional)
-  max_steps: 1000  # Max steps per episode (or cycle stream length)
+    correct_in: 1.0
+    correct_out: 0.1
+    false_pos: -0.5
+    false_neg: -1.0
+    duration_bonus: 0.01
 
 training:
-  total_timesteps: 100000
+  total_timesteps: 200000
   learning_rate: 0.0003
   n_steps: 2048
-  batch_size: 64
+  batch_size: 128
   gamma: 0.99
-  gae_lambda: 0.95
-  clip_range: 0.2
-  ent_coef: 0.0
-  vf_coef: 0.5
-  max_grad_norm: 0.5
-  checkpoint_freq: 10000
-  log_dir: "logs/rl"
-  model_dir: "models/rl"
+  model_dir: "models/rl_v2"
 
 data:
-  embeddings_path: "data/embeddings/*.parquet"
-  feature_tables_path: "data/feature_tables/*.parquet"
-  offline_mode: true
-  
-online:
-  simulation_speedup: 10 # Speed multiplier for simulation
-  replay_buffer_size: 10000
-  update_interval: 100 # Steps between updates
+  precomputed_dir: "data/precomputed/*.parquet"
+  start: "2018-01-01"
+  end: "2024-12-31"

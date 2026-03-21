@@ -12,7 +12,9 @@ from datetime import datetime, timezone
 # Setup logging
 logger = logging.getLogger(__name__)
 
-CACHE_DIR = os.path.join("data", "cache")
+# Resolve cache dir relative to this file so it works regardless of cwd
+_PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+CACHE_DIR = os.path.join(_PROJECT_ROOT, "data", "cache")
 os.makedirs(CACHE_DIR, exist_ok=True)
 
 def _ensure_utc_timestamp(ts: Any) -> str:
@@ -109,16 +111,18 @@ def fetch_price_history(ticker: str, start: str, end: str, interval: str = "1d")
         # For simplicity and robustness against gaps: 
         # If extended range is needed, just fetch the missing piece and merge.
         
-        if end_dt > cache_end:
+        if start_dt < cache_start and end_dt > cache_end:
+            # Request spans beyond cache on both sides — fetch the whole range
+            fetch_start = start_dt
+            fetch_end = end_dt
+        elif end_dt > cache_end:
             fetch_start = cache_end + pd.Timedelta(days=1)
             fetch_end = end_dt
         elif start_dt < cache_start:
             fetch_start = start_dt
             fetch_end = cache_start - pd.Timedelta(days=1)
         else:
-            # Should be covered, but maybe gaps?
-            # If we are strictly inside, just return what we have (or re-fetch if suspicious?)
-            # Prompt says "If cache exists and end <= cache_end, use cache".
+            # Fully covered by cache
             return _filter_and_format_price_df(df_cached, start_dt, end_dt)
     
     # Fetching logic with backoff
@@ -314,7 +318,7 @@ def get_latest_report_before(ticker: str, as_of: pd.Timestamp) -> Dict[str, Any]
                         best_date = dt
                         latest_report = report_data
                         latest_report['report_date'] = date_str
-            except:
+            except Exception:
                 continue
                 
     # If explicit history not found, fallback to quarterly_earnings (dates are usually indices?)
@@ -357,8 +361,14 @@ def load_market_ohlcv(
         logger.error(f"Failed to load config from {config_path}: {e}")
         return {}
     
-    # Extract tickers
+    # Extract tickers — support both a flat top-level 'tickers' list and
+    # the nested 'industries: { IndustryName: { tickers: [...] } }' structure.
     tickers = config.get('tickers', [])
+    if not tickers:
+        industries = config.get('industries', {})
+        for industry_data in industries.values():
+            if isinstance(industry_data, dict):
+                tickers.extend(industry_data.get('tickers', []))
     if not tickers:
         logger.warning(f"No tickers found in config: {config_path}")
         return {}

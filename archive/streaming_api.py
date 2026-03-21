@@ -60,7 +60,7 @@ class CycleLabelStreamer:
         if len(self.history_df) < 40: # Min duration in detector default
             return None
             
-        cycles = self.detector(self.history_df)
+        cycles = self.detector(self.history_df['close'])
         
         # 3. Process Newly Closed Cycles
         # Identifying "new" cycles. 
