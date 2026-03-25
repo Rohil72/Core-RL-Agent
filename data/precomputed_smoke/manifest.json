@@ -1,0 +1,38 @@
+{
+  "config_path": "config/market_universe.yaml",
+  "date_range": {
+    "start": "2018-01-01",
+    "end": "2024-12-31"
+  },
+  "ticker_limit": 3,
+  "tickers_requested": 28,
+  "tickers_selected": 3,
+  "tickers_processed": 3,
+  "rows_written": 4311,
+  "per_ticker": [
+    {
+      "ticker": "MSFT",
+      "rows": 1664,
+      "cycle_count": 6,
+      "positive_rate": 0.5943509615384616,
+      "candidate_gate_rate": 0.6538461446762085,
+      "report_coverage": 0.7061298076923077
+    },
+    {
+      "ticker": "ORCL",
+      "rows": 1664,
+      "cycle_count": 6,
+      "positive_rate": 0.6460336538461539,
+      "candidate_gate_rate": 0.5703125,
+      "report_coverage": 0.6862980769230769
+    },
+    {
+      "ticker": "SNOW",
+      "rows": 983,
+      "cycle_count": 7,
+      "positive_rate": 0.38555442522889116,
+      "candidate_gate_rate": 0.18006104230880737,
+      "report_coverage": 1.0
+    }
+  ]
+}

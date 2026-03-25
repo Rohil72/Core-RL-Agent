@@ -1,0 +1,85 @@
+data:
+  precomputed_dir: "data/precomputed/*.parquet"
+
+oracle:
+  min_duration_days: 21
+  max_duration_days: 252
+  min_return: 0.30
+  catastrophic_return: -0.10
+  soft_pullback_limit: 0.05
+  hard_pullback_limit: 0.12
+  volatility_window: 21
+  volatility_multiplier: 2.0
+  min_cycle_score: 0.58
+  min_quality_score: 0.20
+
+model:
+  window_size: 252
+  window_sizes: [21, 63, 252]
+  branch_hidden_dim: 64
+  latent_dim: 128
+
+training:
+  seed: 7
+  device: auto
+  epochs: 10
+  batch_size: 64
+  learning_rate: 0.0005
+  weight_decay: 0.0001
+  future_loss_weight: 0.35
+  hard_negative_weight: 1.0
+  grad_clip: 1.0
+  model_dir: "models/cycle_reasoner"
+
+split:
+  train_years: 3
+  val_years: 1
+  test_years: 1
+  step_years: 1
+  selected_fold: -1
+  ticker_holdout_fraction: 0.2
+  seed: 7
+
+features:
+  sequence:
+    - tech_return_1
+    - tech_intraday_range
+    - tech_momentum_3
+    - tech_momentum_10
+    - tech_momentum_21
+    - tech_vol_21
+    - tech_volume_ratio
+    - tech_volume_change_1
+    - tech_drawdown
+    - tech_trend_slope
+    - tech_close_vs_sma_50
+    - tech_close_vs_sma_150
+    - tech_close_vs_sma_200
+    - tech_sma_200_trend_20
+    - tech_pct_above_52w_low
+    - tech_pct_from_52w_high
+    - tech_up_down_volume_ratio_50
+    - tech_minervini_template_score
+    - tech_minervini_gate
+    - fund_eps_surprise
+    - fund_eps_growth_yoy
+    - fund_eps_rolling2_yoy
+    - fund_eps_accel
+    - fund_revenue_growth_yoy
+    - fund_revenue_rolling2_yoy
+    - fund_minervini_score
+    - fund_report_available
+    - fund_days_since_report
+  future_targets:
+    - future_return_21
+    - future_return_63
+    - future_return_126
+    - future_return_252
+    - future_max_return_63
+    - future_min_return_63
+
+evaluation:
+  cooldown_days: 42
+  catastrophic_return: -0.10
+  late_exit_penalty_factor: 1.5
+  reports_dir: "reports/experiments"

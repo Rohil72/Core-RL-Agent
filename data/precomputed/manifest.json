@@ -1,0 +1,434 @@
+{
+  "config_path": "config/market_universe.yaml",
+  "date_range": {
+    "start": "2018-01-01",
+    "end": "2024-12-31"
+  },
+  "ticker_limit": null,
+  "tickers_requested": 28,
+  "tickers_selected": 28,
+  "tickers_processed": 28,
+  "rows_written": 48599,
+  "per_ticker": [
+    {
+      "ticker": "MSFT",
+      "rows": 1760,
+      "cycle_count": 6,
+      "positive_rate": 0.5761363636363637,
+      "candidate_gate_rate": 0.6181818246841431,
+      "report_coverage": 0.6676136363636364,
+      "hard_negative_rate": 0.2034090909090909,
+      "action_distribution": {
+        "0": 0.4238636363636364,
+        "1": 0.003409090909090909,
+        "2": 0.5693181818181818,
+        "3": 0.003409090909090909
+      }
+    },
+    {
+      "ticker": "ORCL",
+      "rows": 1760,
+      "cycle_count": 6,
+      "positive_rate": 0.6107954545454546,
+      "candidate_gate_rate": 0.5392045378684998,
+      "report_coverage": 0.6488636363636363,
+      "hard_negative_rate": 0.28295454545454546,
+      "action_distribution": {
+        "0": 0.38920454545454547,
+        "1": 0.003409090909090909,
+        "2": 0.6039772727272728,
+        "3": 0.003409090909090909
+      }
+    },
+    {
+      "ticker": "SNOW",
+      "rows": 1079,
+      "cycle_count": 8,
+      "positive_rate": 0.35959221501390176,
+      "candidate_gate_rate": 0.16404077410697937,
+      "report_coverage": 0.9481000926784059,
+      "hard_negative_rate": 0.6014828544949027,
+      "action_distribution": {
+        "0": 0.6404077849860983,
+        "1": 0.0074142724745134385,
+        "2": 0.3447636700648749,
+        "3": 0.0074142724745134385
+      }
+    },
+    {
+      "ticker": "CRM",
+      "rows": 1760,
+      "cycle_count": 9,
+      "positive_rate": 0.49375,
+      "candidate_gate_rate": 0.40454545617103577,
+      "report_coverage": 0.65625,
+      "hard_negative_rate": 0.35852272727272727,
+      "action_distribution": {
+        "0": 0.50625,
+        "1": 0.005113636363636364,
+        "2": 0.48352272727272727,
+        "3": 0.005113636363636364
+      }
+    },
+    {
+      "ticker": "ADBE",
+      "rows": 1760,
+      "cycle_count": 7,
+      "positive_rate": 0.5721590909090909,
+      "candidate_gate_rate": 0.44090908765792847,
+      "report_coverage": 0.6505681818181818,
+      "hard_negative_rate": 0.4113636363636364,
+      "action_distribution": {
+        "0": 0.4278409090909091,
+        "1": 0.003977272727272727,
+        "2": 0.5642045454545455,
+        "3": 0.003977272727272727
+      }
+    },
+    {
+      "ticker": "INTU",
+      "rows": 1760,
+      "cycle_count": 9,
+      "positive_rate": 0.7596590909090909,
+      "candidate_gate_rate": 0.5215908885002136,
+      "report_coverage": 0.6585227272727273,
+      "hard_negative_rate": 0.25,
+      "action_distribution": {
+        "0": 0.24034090909090908,
+        "1": 0.005113636363636364,
+        "2": 0.7494318181818181,
+        "3": 0.005113636363636364
+      }
+    },
+    {
+      "ticker": "NVDA",
+      "rows": 1760,
+      "cycle_count": 18,
+      "positive_rate": 0.6806818181818182,
+      "candidate_gate_rate": 0.5931817889213562,
+      "report_coverage": 0.6585227272727273,
+      "hard_negative_rate": 0.3704545454545455,
+      "action_distribution": {
+        "0": 0.31931818181818183,
+        "1": 0.010227272727272727,
+        "2": 0.6602272727272728,
+        "3": 0.010227272727272727
+      }
+    },
+    {
+      "ticker": "AMD",
+      "rows": 1760,
+      "cycle_count": 19,
+      "positive_rate": 0.5465909090909091,
+      "candidate_gate_rate": 0.49261364340782166,
+      "report_coverage": 0.6681818181818182,
+      "hard_negative_rate": 0.4738636363636364,
+      "action_distribution": {
+        "0": 0.45340909090909093,
+        "1": 0.010795454545454546,
+        "2": 0.525,
+        "3": 0.010795454545454546
+      }
+    },
+    {
+      "ticker": "AVGO",
+      "rows": 1760,
+      "cycle_count": 8,
+      "positive_rate": 0.5982954545454545,
+      "candidate_gate_rate": 0.6642045378684998,
+      "report_coverage": 0.6534090909090909,
+      "hard_negative_rate": 0.26193181818181815,
+      "action_distribution": {
+        "0": 0.4017045454545455,
+        "1": 0.004545454545454545,
+        "2": 0.5892045454545455,
+        "3": 0.004545454545454545
+      }
+    },
+    {
+      "ticker": "AMGN",
+      "rows": 1760,
+      "cycle_count": 5,
+      "positive_rate": 0.42613636363636365,
+      "candidate_gate_rate": 0.3130681812763214,
+      "report_coverage": 0.6670454545454545,
+      "hard_negative_rate": 0.2539772727272727,
+      "action_distribution": {
+        "0": 0.5738636363636364,
+        "1": 0.002840909090909091,
+        "2": 0.42045454545454547,
+        "3": 0.002840909090909091
+      }
+    },
+    {
+      "ticker": "GILD",
+      "rows": 1760,
+      "cycle_count": 4,
+      "positive_rate": 0.42727272727272725,
+      "candidate_gate_rate": 0.22613635659217834,
+      "report_coverage": 0.6670454545454545,
+      "hard_negative_rate": 0.22272727272727272,
+      "action_distribution": {
+        "0": 0.5727272727272728,
+        "1": 0.0022727272727272726,
+        "2": 0.42272727272727273,
+        "3": 0.0022727272727272726
+      }
+    },
+    {
+      "ticker": "REGN",
+      "rows": 1760,
+      "cycle_count": 7,
+      "positive_rate": 0.5465909090909091,
+      "candidate_gate_rate": 0.4545454680919647,
+      "report_coverage": 0.665340909090909,
+      "hard_negative_rate": 0.3431818181818182,
+      "action_distribution": {
+        "0": 0.45340909090909093,
+        "1": 0.003977272727272727,
+        "2": 0.5386363636363637,
+        "3": 0.003977272727272727
+      }
+    },
+    {
+      "ticker": "ISRG",
+      "rows": 1760,
+      "cycle_count": 9,
+      "positive_rate": 0.6079545454545454,
+      "candidate_gate_rate": 0.5107954740524292,
+      "report_coverage": 0.6727272727272727,
+      "hard_negative_rate": 0.33579545454545456,
+      "action_distribution": {
+        "0": 0.39204545454545453,
+        "1": 0.005113636363636364,
+        "2": 0.5977272727272728,
+        "3": 0.005113636363636364
+      }
+    },
+    {
+      "ticker": "MDT",
+      "rows": 1760,
+      "cycle_count": 5,
+      "positive_rate": 0.48863636363636365,
+      "candidate_gate_rate": 0.24090908467769623,
+      "report_coverage": 0.6585227272727273,
+      "hard_negative_rate": 0.24488636363636362,
+      "action_distribution": {
+        "0": 0.5113636363636364,
+        "1": 0.002840909090909091,
+        "2": 0.48295454545454547,
+        "3": 0.002840909090909091
+      }
+    },
+    {
+      "ticker": "SYK",
+      "rows": 1760,
+      "cycle_count": 5,
+      "positive_rate": 0.475,
+      "candidate_gate_rate": 0.47102272510528564,
+      "report_coverage": 0.6670454545454545,
+      "hard_negative_rate": 0.19261363636363638,
+      "action_distribution": {
+        "0": 0.525,
+        "1": 0.002840909090909091,
+        "2": 0.4693181818181818,
+        "3": 0.002840909090909091
+      }
+    },
+    {
+      "ticker": "GOOGL",
+      "rows": 1760,
+      "cycle_count": 6,
+      "positive_rate": 0.5840909090909091,
+      "candidate_gate_rate": 0.5056818127632141,
+      "report_coverage": 0.6681818181818182,
+      "hard_negative_rate": 0.30568181818181817,
+      "action_distribution": {
+        "0": 0.4159090909090909,
+        "1": 0.003409090909090909,
+        "2": 0.5772727272727273,
+        "3": 0.003409090909090909
+      }
+    },
+    {
+      "ticker": "META",
+      "rows": 1760,
+      "cycle_count": 12,
+      "positive_rate": 0.5840909090909091,
+      "candidate_gate_rate": 0.5306817889213562,
+      "report_coverage": 0.6676136363636364,
+      "hard_negative_rate": 0.3977272727272727,
+      "action_distribution": {
+        "0": 0.4159090909090909,
+        "1": 0.006818181818181818,
+        "2": 0.5704545454545454,
+        "3": 0.006818181818181818
+      }
+    },
+    {
+      "ticker": "BIDU",
+      "rows": 1760,
+      "cycle_count": 10,
+      "positive_rate": 0.33352272727272725,
+      "candidate_gate_rate": 0.14374999701976776,
+      "report_coverage": 0.6602272727272728,
+      "hard_negative_rate": 0.6164772727272727,
+      "action_distribution": {
+        "0": 0.6664772727272728,
+        "1": 0.005681818181818182,
+        "2": 0.3221590909090909,
+        "3": 0.005681818181818182
+      }
+    },
+    {
+      "ticker": "AAPL",
+      "rows": 1760,
+      "cycle_count": 10,
+      "positive_rate": 0.6107954545454546,
+      "candidate_gate_rate": 0.5420454740524292,
+      "report_coverage": 0.6670454545454545,
+      "hard_negative_rate": 0.2943181818181818,
+      "action_distribution": {
+        "0": 0.38920454545454547,
+        "1": 0.005681818181818182,
+        "2": 0.5994318181818182,
+        "3": 0.005681818181818182
+      }
+    },
+    {
+      "ticker": "SONY",
+      "rows": 1760,
+      "cycle_count": 6,
+      "positive_rate": 0.5346590909090909,
+      "candidate_gate_rate": 0.3323863744735718,
+      "report_coverage": 0.6619318181818182,
+      "hard_negative_rate": 0.3409090909090909,
+      "action_distribution": {
+        "0": 0.4653409090909091,
+        "1": 0.003409090909090909,
+        "2": 0.5278409090909091,
+        "3": 0.003409090909090909
+      }
+    },
+    {
+      "ticker": "ENPH",
+      "rows": 1760,
+      "cycle_count": 24,
+      "positive_rate": 0.4505681818181818,
+      "candidate_gate_rate": 0.3693181872367859,
+      "report_coverage": 0.665340909090909,
+      "hard_negative_rate": 0.46988636363636366,
+      "action_distribution": {
+        "0": 0.5494318181818182,
+        "1": 0.013636363636363636,
+        "2": 0.42329545454545453,
+        "3": 0.013636363636363636
+      }
+    },
+    {
+      "ticker": "SEDG",
+      "rows": 1760,
+      "cycle_count": 15,
+      "positive_rate": 0.3931818181818182,
+      "candidate_gate_rate": 0.32102271914482117,
+      "report_coverage": 0.6647727272727273,
+      "hard_negative_rate": 0.5823863636363636,
+      "action_distribution": {
+        "0": 0.6068181818181818,
+        "1": 0.008522727272727272,
+        "2": 0.37613636363636366,
+        "3": 0.008522727272727272
+      }
+    },
+    {
+      "ticker": "NEE",
+      "rows": 1760,
+      "cycle_count": 8,
+      "positive_rate": 0.6147727272727272,
+      "candidate_gate_rate": 0.4124999940395355,
+      "report_coverage": 0.6704545454545454,
+      "hard_negative_rate": 0.25681818181818183,
+      "action_distribution": {
+        "0": 0.38522727272727275,
+        "1": 0.004545454545454545,
+        "2": 0.6056818181818182,
+        "3": 0.004545454545454545
+      }
+    },
+    {
+      "ticker": "RTX",
+      "rows": 1760,
+      "cycle_count": 7,
+      "positive_rate": 0.5971590909090909,
+      "candidate_gate_rate": 0.3903408944606781,
+      "report_coverage": 0.6642045454545454,
+      "hard_negative_rate": 0.27329545454545456,
+      "action_distribution": {
+        "0": 0.4028409090909091,
+        "1": 0.003977272727272727,
+        "2": 0.5892045454545455,
+        "3": 0.003977272727272727
+      }
+    },
+    {
+      "ticker": "LMT",
+      "rows": 1760,
+      "cycle_count": 5,
+      "positive_rate": 0.5022727272727273,
+      "candidate_gate_rate": 0.3346590995788574,
+      "report_coverage": 0.6710227272727273,
+      "hard_negative_rate": 0.26988636363636365,
+      "action_distribution": {
+        "0": 0.49772727272727274,
+        "1": 0.002840909090909091,
+        "2": 0.4965909090909091,
+        "3": 0.002840909090909091
+      }
+    },
+    {
+      "ticker": "NOC",
+      "rows": 1760,
+      "cycle_count": 5,
+      "positive_rate": 0.5073863636363637,
+      "candidate_gate_rate": 0.34715908765792847,
+      "report_coverage": 0.6676136363636364,
+      "hard_negative_rate": 0.2534090909090909,
+      "action_distribution": {
+        "0": 0.49261363636363636,
+        "1": 0.002840909090909091,
+        "2": 0.5017045454545455,
+        "3": 0.002840909090909091
+      }
+    },
+    {
+      "ticker": "PYPL",
+      "rows": 1760,
+      "cycle_count": 8,
+      "positive_rate": 0.5784090909090909,
+      "candidate_gate_rate": 0.3477272689342499,
+      "report_coverage": 0.6647727272727273,
+      "hard_negative_rate": 0.44488636363636364,
+      "action_distribution": {
+        "0": 0.42159090909090907,
+        "1": 0.004545454545454545,
+        "2": 0.5693181818181818,
+        "3": 0.004545454545454545
+      }
+    },
+    {
+      "ticker": "V",
+      "rows": 1760,
+      "cycle_count": 6,
+      "positive_rate": 0.6022727272727273,
+      "candidate_gate_rate": 0.459090918302536,
+      "report_coverage": 0.6670454545454545,
+      "hard_negative_rate": 0.2119318181818182,
+      "action_distribution": {
+        "0": 0.3977272727272727,
+        "1": 0.003409090909090909,
+        "2": 0.5954545454545455,
+        "3": 0.003409090909090909
+      }
+    }
+  ]
+}
