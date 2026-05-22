@@ -61,13 +61,50 @@ def plot_comparison(ticker, frame, oracle_cycles, predicted_cycles) -> None:
 
     plt.tight_layout()
     # ensure output directory exists
-    Path(OUTPUT_DIR).mkdir(parents=True, exist_ok=True)
+    out_dir_path = Path(OUTPUT_DIR)
+    out_dir_path.mkdir(parents=True, exist_ok=True)
 
     # sanitize ticker to produce a safe filename on Windows
-    safe_ticker = re.sub(r'[^A-Za-z0-9_.-]', '_', str(ticker))
-    out_path = Path(OUTPUT_DIR) / f"{safe_ticker}_comparison.png"
-    plt.savefig(str(out_path))
-    plt.close()
+    safe_ticker = re.sub(r'[^A-Za-z0-9_.-]', '_', str(ticker)).strip(' .')
+    # avoid reserved device names like CON, PRN, AUX, NUL, COM1..COM9, LPT1..LPT9
+    reserved = {"CON", "PRN", "AUX", "NUL"} | {f"COM{i}" for i in range(1,10)} | {f"LPT{i}" for i in range(1,10)}
+    if safe_ticker.upper() in reserved or len(safe_ticker) == 0:
+        safe_ticker = f"ticker_{abs(hash(str(ticker))) & 0xffffffff:08x}"
+
+    out_path = out_dir_path / f"{safe_ticker}_comparison.png"
+    abs_path = out_path.resolve(strict=False)
+    try:
+        logger.info("Saving plot to %s", abs_path)
+        logger.debug("Path repr: %r", str(abs_path))
+        plt.savefig(str(abs_path))
+    except Exception as e:
+        logger.exception("Failed to save plot to %s: %s", abs_path, e)
+        # try fallback filename using hash
+        alt_name = f"{safe_ticker}_{abs(str(hash(str(ticker)))) & 0xffffffff:08x}_comparison.png"
+        alt_path = out_dir_path / alt_name
+        try:
+            logger.info("Retrying save to fallback path %s", alt_path)
+            plt.savefig(str(alt_path.resolve(strict=False)))
+        except Exception:
+            # In extreme case, write the figure to a bytes buffer and write to temp dir
+            import io
+            import tempfile
+            buf = io.BytesIO()
+            try:
+                fig.savefig(buf, format="png")
+                buf.seek(0)
+                tmp = Path(tempfile.gettempdir()) / f"figure_{abs(hash(str(ticker))) & 0xffffffff:08x}.png"
+                with open(tmp, "wb") as f:
+                    f.write(buf.read())
+                logger.info("Wrote fallback figure bytes to %s", tmp)
+            except Exception:
+                logger.exception("Failed writing fallback image to bytes")
+            finally:
+                buf.close()
+            # re-raise original exception to surface error
+            raise
+    finally:
+        plt.close()
 
 
 def _metric_line(metrics: dict, key: str, label: str) -> str:
