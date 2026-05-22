@@ -172,6 +172,11 @@ def compute_fundamental_features_aligned(
 ) -> pd.DataFrame:
     """
     Align report-level fundamental features to daily prices without lookahead.
+
+    Enhancements added:
+    - Two-year rolling averages (8-quarter) for EPS and revenue
+    - Comparison of latest EPS/revenue vs 2-year average
+    - Days-to-next-report and imminent/post-report flags
     """
     edf = _canonicalize_report_frame(earnings_df)
     if edf.empty:
@@ -183,18 +188,40 @@ def compute_fundamental_features_aligned(
         edf["surprise_pct"] / 100.0
     )
 
+    # short rolling (2-quarter) used previously
     eps_roll2 = edf["reported_eps"].rolling(window=2, min_periods=2).mean()
     rev_roll2 = edf["total_revenue"].rolling(window=2, min_periods=2).mean()
 
+    # 2-year rolling averages (8 quarters)
+    eps_roll8 = edf["reported_eps"].rolling(window=8, min_periods=2).mean()
+    rev_roll8 = edf["total_revenue"].rolling(window=8, min_periods=2).mean()
+    edf["fund_eps_2y_avg"] = eps_roll8
+    edf["fund_rev_2y_avg"] = rev_roll8
+
+    # compare latest reported value to 2-year average
+    edf["fund_eps_vs_2y_avg"] = np.where(
+        edf["fund_eps_2y_avg"].notna(),
+        (edf["reported_eps"] / (edf["fund_eps_2y_avg"] + 1e-9)) - 1.0,
+        np.nan,
+    )
+    edf["fund_rev_vs_2y_avg"] = np.where(
+        edf["fund_rev_2y_avg"].notna(),
+        (edf["total_revenue"] / (edf["fund_rev_2y_avg"] + 1e-9)) - 1.0,
+        np.nan,
+    )
+
+    # year-over-year and rolling-growth signals
     edf["fund_eps_growth_yoy"] = _safe_growth(
         edf["reported_eps"], edf["reported_eps"].shift(4)
     )
     edf["fund_eps_rolling2_yoy"] = _safe_growth(eps_roll2, eps_roll2.shift(4))
+    edf["fund_eps_rolling8_yoy"] = _safe_growth(eps_roll8, eps_roll8.shift(4))
     edf["fund_eps_accel"] = edf["fund_eps_rolling2_yoy"].diff()
     edf["fund_revenue_growth_yoy"] = _safe_growth(
         edf["total_revenue"], edf["total_revenue"].shift(4)
     )
     edf["fund_revenue_rolling2_yoy"] = _safe_growth(rev_roll2, rev_roll2.shift(4))
+    edf["fund_revenue_rolling8_yoy"] = _safe_growth(rev_roll8, rev_roll8.shift(4))
 
     composite = pd.DataFrame(
         {
@@ -234,13 +261,14 @@ def compute_fundamental_features_aligned(
     )
     edf["fund_report_available"] = 1.0
 
+    # Align to daily prices using the most recent past report
     price_sorted = price_df.sort_index()
     price_with_date = price_sorted.reset_index()
     date_col = price_with_date.columns[0]
 
     merged = pd.merge_asof(
         price_with_date,
-        edf[["report_date", *_FUNDAMENTAL_FILL_COLUMNS]].sort_values("report_date"),
+        edf[["report_date", *_FUNDAMENTAL_FILL_COLUMNS, "fund_eps_2y_avg", "fund_rev_2y_avg", "fund_eps_vs_2y_avg", "fund_rev_vs_2y_avg"]].sort_values("report_date"),
         left_on=date_col,
         right_on="report_date",
         direction="backward",
@@ -254,10 +282,49 @@ def compute_fundamental_features_aligned(
         .fillna(_DEFAULT_REPORT_LOOKBACK_DAYS)
         .clip(lower=0.0)
     )
+
+    # Also align the next scheduled report (if available) to compute days-to-next-report
+    next_merged = pd.merge_asof(
+        price_with_date,
+        edf[["report_date"]].sort_values("report_date"),
+        left_on=date_col,
+        right_on="report_date",
+        direction="forward",
+    )
+    merged["next_report_date"] = next_merged["report_date"]
+    merged["fund_days_to_next_report"] = (
+        merged["next_report_date"] - merged[date_col]
+    ).dt.total_seconds() / 86_400.0
+    merged["fund_days_to_next_report"] = (
+        merged["fund_days_to_next_report"]
+        .fillna(_DEFAULT_REPORT_LOOKBACK_DAYS)
+        .clip(lower=0.0)
+    )
+
+    # Flags for imminence / just-post-report
+    REPORT_IMMINENT_DAYS = 14
+    POST_REPORT_DAYS = 7
+    merged["fund_report_imminent"] = (
+        merged["fund_days_to_next_report"] <= REPORT_IMMINENT_DAYS
+    ).astype(np.float32)
+    merged["fund_just_reported"] = (
+        merged["fund_days_since_report"] <= POST_REPORT_DAYS
+    ).astype(np.float32)
+
     merged = merged.drop(columns=["report_date"])
 
-    for col in _FUNDAMENTAL_FILL_COLUMNS:
-        merged[col] = merged[col].fillna(0.0)
+    # Fill any remaining NaNs for consistency
+    for col in _FUNDAMENTAL_FILL_COLUMNS + [
+        "fund_eps_2y_avg",
+        "fund_rev_2y_avg",
+        "fund_eps_vs_2y_avg",
+        "fund_rev_vs_2y_avg",
+        "fund_days_to_next_report",
+        "fund_report_imminent",
+        "fund_just_reported",
+    ]:
+        if col in merged.columns:
+            merged[col] = merged[col].fillna(0.0)
 
     return merged.set_index(date_col)
 
