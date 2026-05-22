@@ -29,6 +29,7 @@ from src.cycle.cycle_detector import detect_cycles
 from src.cycle.oracle import (
     annotate_cycle_targets,
     decode_action_spans,
+    decode_return_spans,
     ensure_event_outcome_targets,
     ensure_oracle_cycle_metadata,
     extract_oracle_spans,
@@ -489,7 +490,29 @@ def train_one_epoch(
         )
         row_weights = 1.0 + hard_negative * hard_negative_weight
         action_loss = (ce * row_weights).mean()
-        future_loss = _compute_future_loss(outputs["future_pred"], future_target)
+        # Weighted future loss focusing on max/min return targets
+        target_names = list(getattr(loader.dataset, "future_target_cols", []))
+        pred = outputs["future_pred"]
+        # construct per-target weights (default 1.0)
+        weights = [1.0] * (pred.size(1) if pred.dim() > 1 else 1)
+        try:
+            idx = target_names.index("future_max_return_63")
+            weights[idx] = float(config["training"].get("max_return_loss_weight", 2.0))
+        except ValueError:
+            pass
+        try:
+            idx = target_names.index("future_min_return_63")
+            weights[idx] = float(config["training"].get("min_return_loss_weight", 2.0))
+        except ValueError:
+            pass
+        future_loss_total = pred.new_tensor(0.0)
+        total_w = 0.0
+        for k, w in enumerate(weights):
+            future_loss_total = future_loss_total + float(w) * _compute_future_loss(
+                pred[:, k], future_target[:, k]
+            )
+            total_w += float(w)
+        future_loss = future_loss_total / max(total_w, 1e-9)
         loss = action_loss_weight * action_loss + future_loss_weight * future_loss
         if reconstruction_loss_weight > 0 and reconstruction_mask is not None:
             if reconstruction_mask.any():
@@ -523,32 +546,40 @@ def collect_predictions(
     future_true_batches = []
     future_pred_batches = []
 
+    target_names = list(getattr(loader.dataset, "future_target_cols", []))
     for batch in loader:
         sequence = batch["sequence"].to(device)
         action = batch["action"].cpu().numpy()
         future_target = batch["future_target"].to(device)
-
+ 
         outputs = _forward_model(model, sequence)
         logits = outputs["action_logits"]
         pred_action = logits.argmax(dim=1).cpu().numpy()
-
+ 
         future_true_batches.append(future_target.cpu().numpy())
         future_pred_batches.append(outputs["future_pred"].cpu().numpy())
-
-        for ticker, timestamp, true_action, predicted_action in zip(
+ 
+        future_preds = outputs["future_pred"].cpu().numpy()
+        for i, (ticker, timestamp, true_action, predicted_action) in enumerate(zip(
             batch["ticker"],
             batch["timestamp"],
             action,
             pred_action,
-        ):
-            records.append(
-                {
-                    "ticker": ticker,
-                    "timestamp": timestamp,
-                    "true_action": int(true_action),
-                    "pred_action": int(predicted_action),
-                }
-            )
+        )):
+            rec = {
+                "ticker": ticker,
+                "timestamp": timestamp,
+                "true_action": int(true_action),
+                "pred_action": int(predicted_action),
+            }
+            # attach per-target future predictions so they can be joined later
+            if future_preds is not None and len(target_names) == future_preds.shape[1]:
+                for tname, val in zip(target_names, future_preds[i]):
+                    try:
+                        rec[str(tname)] = float(val) if np.isfinite(val) else float("nan")
+                    except Exception:
+                        rec[str(tname)] = float("nan")
+            records.append(rec)
 
     pred_df = pd.DataFrame(records)
     target_names = list(getattr(loader.dataset, "future_target_cols", []))
@@ -627,10 +658,28 @@ def evaluate_split(
         if eval_frame.empty:
             continue
         oracle_cycles = extract_oracle_spans(eval_frame)
-        predicted_cycles = decode_action_spans(
-            eval_frame,
-            eval_frame["pred_action"].astype(int).tolist(),
-        )
+        eval_method = config.get("evaluation", {}).get("cycle_extraction_method", "return_threshold")
+        if eval_method == "return_threshold":
+            enter = float(config.get("evaluation", {}).get("return_enter_threshold", 0.2))
+            exit_thr = float(config.get("evaluation", {}).get("return_exit_threshold", 0.1))
+            risk_thr = float(config.get("evaluation", {}).get("return_risk_threshold", 0.1))
+            hysteresis_days = int(config.get("evaluation", {}).get("return_hysteresis_days", 5))
+            cooldown_days = int(config.get("evaluation", {}).get("return_cooldown_days", 0))
+            predicted_cycles = decode_return_spans(
+                eval_frame,
+                pred_max_col="future_max_return_63",
+                pred_min_col="future_min_return_63",
+                enter_threshold=enter,
+                risk_threshold=risk_thr,
+                exit_threshold=exit_thr,
+                hysteresis_days=hysteresis_days,
+                cooldown_days=cooldown_days,
+            )
+        else:
+            predicted_cycles = decode_action_spans(
+                eval_frame,
+                eval_frame["pred_action"].astype(int).tolist(),
+            )
         cycle_metrics = compute_cycle_metrics(
             predicted_cycles,
             oracle_cycles,

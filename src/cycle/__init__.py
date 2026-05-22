@@ -6,6 +6,7 @@ from src.cycle.oracle import (
     ACTION_NEUTRAL,
     annotate_cycle_targets,
     decode_action_spans,
+    ensure_event_outcome_targets,
     extract_oracle_spans,
 )
 
@@ -17,5 +18,6 @@ __all__ = [
     "ACTION_NEUTRAL",
     "annotate_cycle_targets",
     "decode_action_spans",
+    "ensure_event_outcome_targets",
     "extract_oracle_spans",
 ]

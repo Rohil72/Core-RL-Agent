@@ -7,6 +7,8 @@ def plot_price_and_cycles(
     close_prices,
     cycles,
     title,
+    save_path: str | None = None,
+    show: bool = True,
 ):
     fig, ax1 = plt.subplots(figsize=(12, 5))
 
@@ -26,6 +28,10 @@ def plot_price_and_cycles(
 
     ax1.set_title(title)
     ax1.legend(loc="upper left")
-    
+
     plt.tight_layout()
-    plt.show()
+    if save_path:
+        plt.savefig(save_path, dpi=150)
+    if show:
+        plt.show()
+    plt.close(fig)

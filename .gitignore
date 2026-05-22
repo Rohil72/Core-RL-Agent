@@ -1,0 +1,31 @@
+# Python caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local environments
+.venv/
+venv/
+env/
+
+# Logs and scratch outputs
+logs/
+*.log
+test_output.txt
+
+# Generated data and model artifacts
+data/precomputed/
+data/precomputed_smoke/
+data/evaluation_plots/
+data/detector_plots/
+models/
+reports/
+
+# Local OS/editor noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

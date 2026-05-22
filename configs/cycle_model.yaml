@@ -3,8 +3,8 @@ data:
 
 oracle:
   min_duration_days: 21
-  max_duration_days: 252
-  min_return: 0.30
+  max_duration_days: 42
+  min_return: 0.10
   catastrophic_return: -0.10
   soft_pullback_limit: 0.05
   hard_pullback_limit: 0.12
@@ -15,9 +15,12 @@ oracle:
 
 model:
   window_size: 252
-  window_sizes: [21, 63, 252]
-  branch_hidden_dim: 64
+  encoder: hierarchical_lstm
+  lstm_hidden_dim: 96
+  lstm_layers: 2
+  patch_size: 5
   latent_dim: 128
+  dropout: 0.10
 
 training:
   seed: 7
@@ -26,10 +29,18 @@ training:
   batch_size: 64
   learning_rate: 0.0005
   weight_decay: 0.0001
+  action_loss_weight: 0.75
   future_loss_weight: 0.35
   hard_negative_weight: 1.0
   grad_clip: 1.0
   model_dir: "models/cycle_reasoner"
+
+self_supervised:
+  reconstruction_loss_weight: 0.10
+  mask_probability: 0.10
+  mask_span_probability: 0.03
+  mask_span_length: 5
+  mask_value: 0.0
 
 split:
   train_years: 3
@@ -77,9 +88,13 @@ features:
     - future_return_252
     - future_max_return_63
     - future_min_return_63
+    - event_peak_offset_63
+    - event_drawdown_offset_63
+    - event_upside_before_drawdown_126
+    - event_upside_hit_126
+    - event_drawdown_hit_126
 
 evaluation:
-  cooldown_days: 42
   catastrophic_return: -0.10
   late_exit_penalty_factor: 1.5
   reports_dir: "reports/experiments"

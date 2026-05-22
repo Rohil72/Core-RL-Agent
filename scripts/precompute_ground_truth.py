@@ -34,6 +34,7 @@ OUTPUT_DIR = "data/precomputed"
 CONFIG_PATH = "config/market_universe.yaml"
 START = "2018-01-01"
 END = "2024-12-31"
+MAX_DURATION_DAYS = 42
 
 
 def precompute(
@@ -43,8 +44,8 @@ def precompute(
     end: str = END,
     ticker_limit: int | None = None,
     min_duration_days: int = 21,
-    max_duration_days: int = 252,
-    min_return: float = 0.30,
+    max_duration_days: int = MAX_DURATION_DAYS,
+    min_return: float = 0.10,
     catastrophic_return: float = -0.10,
     soft_pullback_limit: float = 0.05,
     hard_pullback_limit: float = 0.12,
@@ -149,8 +150,8 @@ if __name__ == "__main__":
     parser.add_argument("--end", default=END)
     parser.add_argument("--ticker-limit", type=int, default=None)
     parser.add_argument("--min-duration-days", type=int, default=21)
-    parser.add_argument("--max-duration-days", type=int, default=252)
-    parser.add_argument("--min-return", type=float, default=0.30)
+    parser.add_argument("--max-duration-days", type=int, default=MAX_DURATION_DAYS)
+    parser.add_argument("--min-return", type=float, default=0.10)
     parser.add_argument("--catastrophic-return", type=float, default=-0.10)
     parser.add_argument("--soft-pullback-limit", type=float, default=0.05)
     parser.add_argument("--hard-pullback-limit", type=float, default=0.12)

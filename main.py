@@ -29,8 +29,8 @@ START = "2018-01-01"
 END = "2024-12-31"
 DETECTOR_KWARGS = {
     "min_duration_days": 21,
-    "max_duration_days": 252,
-    "min_return": 0.30,
+    "max_duration_days": 42,
+    "min_return": 0.10,
     "soft_pullback_limit": 0.05,
     "hard_pullback_limit": 0.12,
     "volatility_window": 21,

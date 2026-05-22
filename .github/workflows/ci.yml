@@ -26,11 +26,7 @@ jobs:
     
     - name: Run pytest
       run: |
-        pytest -q tests/ --ignore=tests/test_end_to_end_minimal.py
-    
-    - name: Run minimal end-to-end pipeline
-      run: |
-        python scripts/evaluate_end_to_end.py --quick
+        pytest -q tests/
     
     - name: Upload artifacts
       if: always()

@@ -9,6 +9,8 @@ import json
 import logging
 import os
 import sys
+from datetime import datetime, timezone
+from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -34,6 +36,7 @@ logger = logging.getLogger(__name__)
 
 CHECKPOINT_PATH = "models/cycle_reasoner/final_model.pt"
 OUTPUT_DIR = "data/evaluation_plots"
+METRICS_DIR = "reports/evaluations"
 
 
 def shade_cycles(ax, spans, color: str, alpha: float) -> None:
@@ -59,6 +62,95 @@ def plot_comparison(ticker, frame, oracle_cycles, predicted_cycles) -> None:
     plt.close()
 
 
+def _metric_line(metrics: dict, key: str, label: str) -> str:
+    return f"- {label}: {float(metrics.get(key, 0.0)):.4f}"
+
+
+def write_evaluation_metrics(
+    summary: dict,
+    metrics_dir: str,
+    config_path: str,
+    checkpoint_path: str,
+) -> tuple[str, str]:
+    out_dir = Path(metrics_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    run_id = datetime.now(timezone.utc).strftime("evaluation_%Y%m%d_%H%M%S")
+    payload = {
+        "run_id": run_id,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "config_path": config_path,
+        "checkpoint_path": checkpoint_path,
+        "splits": summary,
+    }
+    json_path = out_dir / f"{run_id}.json"
+    md_path = out_dir / f"{run_id}.md"
+
+    with open(json_path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2)
+
+    lines = [
+        "# Evaluation Metrics",
+        "",
+        f"- Run ID: {run_id}",
+        f"- Config: `{config_path}`",
+        f"- Checkpoint: `{checkpoint_path}`",
+        "",
+    ]
+    for split_name, metrics in summary.items():
+        lines.extend(
+            [
+                f"## {split_name.title()}",
+                "",
+                "### Action Classification",
+                "",
+                _metric_line(metrics, "action_accuracy", "Accuracy"),
+                _metric_line(metrics, "action_balanced_accuracy", "Balanced accuracy"),
+                _metric_line(metrics, "action_macro_f1", "Macro F1"),
+                _metric_line(metrics, "action_weighted_f1", "Weighted F1"),
+                "",
+                "### Future/Event Regression",
+                "",
+                _metric_line(metrics, "future_target_mae", "MAE"),
+                _metric_line(metrics, "future_target_rmse", "RMSE"),
+                _metric_line(metrics, "future_target_r2", "Mean R2"),
+                _metric_line(metrics, "future_target_pearson", "Mean Pearson"),
+                "",
+                "### Cycle Span Quality",
+                "",
+                _metric_line(metrics, "cycle_precision", "Precision"),
+                _metric_line(metrics, "cycle_recall", "Recall"),
+                _metric_line(metrics, "cycle_f1", "F1"),
+                _metric_line(metrics, "profitable_cycle_rate", "Profitable cycle rate"),
+                _metric_line(metrics, "average_cycle_return", "Average cycle return"),
+                _metric_line(metrics, "median_cycle_return", "Median cycle return"),
+                _metric_line(metrics, "catastrophic_cycle_rate", "Catastrophic cycle rate"),
+                _metric_line(metrics, "bounded_exit_error", "Bounded exit error"),
+                "",
+            ]
+        )
+        per_target = metrics.get("future_target_metrics", {})
+        if per_target:
+            lines.extend(["### Per-Target Future/Event Metrics", ""])
+            lines.append("| Target | MAE | RMSE | R2 | Pearson | Valid Count |")
+            lines.append("| --- | ---: | ---: | ---: | ---: | ---: |")
+            for target, target_metrics in per_target.items():
+                lines.append(
+                    "| "
+                    f"{target} | "
+                    f"{target_metrics.get('mae', 0.0):.4f} | "
+                    f"{target_metrics.get('rmse', 0.0):.4f} | "
+                    f"{target_metrics.get('r2', 0.0):.4f} | "
+                    f"{target_metrics.get('pearson', 0.0):.4f} | "
+                    f"{target_metrics.get('valid_count', 0.0):.0f} |"
+                )
+            lines.append("")
+
+    with open(md_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines))
+
+    return str(json_path), str(md_path)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config-path", default="configs/cycle_model.yaml")
@@ -67,17 +159,22 @@ def main() -> None:
         "--split", choices=["val", "test", "holdout", "all"], default="test"
     )
     parser.add_argument("--plot-limit", type=int, default=28)
+    parser.add_argument("--metrics-dir", default=METRICS_DIR)
     args = parser.parse_args()
 
     if not os.path.exists(args.checkpoint):
         raise FileNotFoundError(f"Checkpoint not found: {args.checkpoint}")
 
-    config = load_config(args.config_path)
-    frame = load_precomputed_frame(config)
-    raw_frames, datasets, _, _ = make_datasets(frame, config)
-
     model, payload = load_checkpoint(args.checkpoint)
     device = next(model.parameters()).device
+    config = load_config(args.config_path)
+    config.setdefault("features", {})
+    if "feature_cols" in payload:
+        config["features"]["sequence"] = list(payload["feature_cols"])
+    if "future_target_cols" in payload:
+        config["features"]["future_targets"] = list(payload["future_target_cols"])
+    frame = load_precomputed_frame(config)
+    raw_frames, datasets, _, _ = make_datasets(frame, config)
 
     if args.split == "all":
         split_names = [name for name in ["val", "test", "holdout"] if name in datasets]
@@ -97,10 +194,11 @@ def main() -> None:
         )
         summary[split_name] = metrics
         logger.info(
-            "%s precision=%.4f recall=%.4f profitable=%.4f catastrophic=%.4f",
+            "%s action_f1=%.4f future_mae=%.4f cycle_f1=%.4f profitable=%.4f catastrophic=%.4f",
             split_name,
-            metrics["cycle_precision"],
-            metrics["cycle_recall"],
+            metrics["action_macro_f1"],
+            metrics["future_target_mae"],
+            metrics["cycle_f1"],
             metrics["profitable_cycle_rate"],
             metrics["catastrophic_cycle_rate"],
         )
@@ -126,11 +224,17 @@ def main() -> None:
             predicted_cycles = decode_action_spans(
                 eval_frame,
                 eval_frame["pred_action"].astype(int).tolist(),
-                cooldown_days=int(config["evaluation"]["cooldown_days"]),
             )
             plot_comparison(ticker, eval_frame, oracle_cycles, predicted_cycles)
             plotted += 1
 
+    metric_paths = write_evaluation_metrics(
+        summary=summary,
+        metrics_dir=args.metrics_dir,
+        config_path=args.config_path,
+        checkpoint_path=args.checkpoint,
+    )
+    logger.info("Saved evaluation metrics to %s and %s", *metric_paths)
     print(json.dumps(summary, indent=2))
 
 

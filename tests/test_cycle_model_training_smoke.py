@@ -59,9 +59,12 @@ def test_cycle_model_training_smoke(tmp_path: Path):
         },
         "model": {
             "window_size": 21,
-            "window_sizes": [5, 10, 21],
-            "branch_hidden_dim": 16,
+            "encoder": "hierarchical_lstm",
+            "lstm_hidden_dim": 16,
+            "lstm_layers": 1,
+            "patch_size": 5,
             "latent_dim": 32,
+            "dropout": 0.0,
         },
         "training": {
             "seed": 7,
@@ -70,10 +73,18 @@ def test_cycle_model_training_smoke(tmp_path: Path):
             "batch_size": 32,
             "learning_rate": 0.001,
             "weight_decay": 0.0,
+            "action_loss_weight": 0.75,
             "future_loss_weight": 0.2,
             "hard_negative_weight": 0.5,
             "grad_clip": 1.0,
             "model_dir": str(tmp_path / "models"),
+        },
+        "self_supervised": {
+            "reconstruction_loss_weight": 0.05,
+            "mask_probability": 0.10,
+            "mask_span_probability": 0.05,
+            "mask_span_length": 3,
+            "mask_value": 0.0,
         },
         "split": {
             "train_years": 1,
@@ -98,6 +109,9 @@ def test_cycle_model_training_smoke(tmp_path: Path):
                 "future_return_63",
                 "future_max_return_63",
                 "future_min_return_63",
+                "event_peak_offset_63",
+                "event_drawdown_offset_63",
+                "event_upside_before_drawdown_126",
             ],
         },
         "evaluation": {
