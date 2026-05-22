@@ -33,6 +33,8 @@ training:
   future_loss_weight: 0.35
   hard_negative_weight: 1.0
   grad_clip: 1.0
+  max_return_loss_weight: 2.0
+  min_return_loss_weight: 2.0
   model_dir: "models/cycle_reasoner"
 
 self_supervised:
@@ -97,4 +99,9 @@ features:
 evaluation:
   catastrophic_return: -0.10
   late_exit_penalty_factor: 1.5
+  return_enter_threshold: 0.06
+  return_exit_threshold: 0.03
+  return_risk_threshold: 0.08
+  return_hysteresis_days: 3
+  return_cooldown_days: 5
   reports_dir: "reports/experiments"
