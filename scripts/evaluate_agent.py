@@ -45,6 +45,9 @@ def shade_cycles(ax, spans, color: str, alpha: float) -> None:
 
 
 def plot_comparison(ticker, frame, oracle_cycles, predicted_cycles) -> None:
+    import re
+    from pathlib import Path
+
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(15, 10), sharex=True)
     prices = frame["close"]
 
@@ -57,8 +60,13 @@ def plot_comparison(ticker, frame, oracle_cycles, predicted_cycles) -> None:
     ax2.set_title(f"{ticker} - Model Cycles")
 
     plt.tight_layout()
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
-    plt.savefig(os.path.join(OUTPUT_DIR, f"{ticker}_comparison.png"))
+    # ensure output directory exists
+    Path(OUTPUT_DIR).mkdir(parents=True, exist_ok=True)
+
+    # sanitize ticker to produce a safe filename on Windows
+    safe_ticker = re.sub(r'[^A-Za-z0-9_.-]', '_', str(ticker))
+    out_path = Path(OUTPUT_DIR) / f"{safe_ticker}_comparison.png"
+    plt.savefig(str(out_path))
     plt.close()
 
 
