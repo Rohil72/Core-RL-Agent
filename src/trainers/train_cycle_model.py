@@ -15,6 +15,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 import yaml
 from torch.utils.data import DataLoader
@@ -28,6 +29,8 @@ from src.cycle.cycle_detector import detect_cycles
 from src.cycle.oracle import (
     annotate_cycle_targets,
     decode_action_spans,
+    ensure_event_outcome_targets,
+    ensure_oracle_cycle_metadata,
     extract_oracle_spans,
 )
 from src.data.features import ensure_sequence_model_features
@@ -43,8 +46,10 @@ from src.data.sequence_dataset import (
 from src.eval.cycle_prediction_metrics import (
     compute_action_metrics,
     compute_cycle_metrics,
+    compute_future_target_metrics,
+    compute_cycle_moving_average_return,
 )
-from src.models.cycle_reasoning_model import CycleReasoningModel
+from src.models import build_cycle_model
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -134,8 +139,18 @@ def _infer_future_target_columns(
         "future_return_252",
         "future_max_return_63",
         "future_min_return_63",
+        "event_peak_offset_63",
+        "event_drawdown_offset_63",
+        "event_upside_before_drawdown_126",
+        "event_upside_hit_126",
+        "event_drawdown_hit_126",
     ]
     return [col for col in preferred if col in df.columns]
+
+
+def _has_precomputed_oracle_targets(df: pd.DataFrame) -> bool:
+    required = {"oracle_action", "oracle_cycle_id"}
+    return required.issubset(df.columns)
 
 
 def load_precomputed_frame(config: dict[str, Any]) -> pd.DataFrame:
@@ -159,24 +174,34 @@ def load_precomputed_frame(config: dict[str, Any]) -> pd.DataFrame:
         )
         df["ticker"] = ticker
         df = ensure_sequence_model_features(df)
-        cycles = detect_cycles(
-            df["close"],
-            min_duration_days=int(oracle_cfg["min_duration_days"]),
-            max_duration_days=int(oracle_cfg["max_duration_days"]),
-            min_return=float(oracle_cfg["min_return"]),
-            feature_frame=df,
-            soft_pullback_limit=float(oracle_cfg.get("soft_pullback_limit", 0.05)),
-            hard_pullback_limit=float(oracle_cfg.get("hard_pullback_limit", 0.12)),
-            volatility_window=int(oracle_cfg.get("volatility_window", 21)),
-            volatility_multiplier=float(oracle_cfg.get("volatility_multiplier", 2.0)),
-            min_cycle_score=float(oracle_cfg.get("min_cycle_score", 0.58)),
-            min_quality_score=float(oracle_cfg.get("min_quality_score", 0.20)),
-        )
-        df = annotate_cycle_targets(
+        if _has_precomputed_oracle_targets(df):
+            df = ensure_oracle_cycle_metadata(df)
+        else:
+            cycles = detect_cycles(
+                df["close"],
+                min_duration_days=int(oracle_cfg["min_duration_days"]),
+                max_duration_days=int(oracle_cfg["max_duration_days"]),
+                min_return=float(oracle_cfg["min_return"]),
+                feature_frame=df,
+                soft_pullback_limit=float(oracle_cfg.get("soft_pullback_limit", 0.05)),
+                hard_pullback_limit=float(oracle_cfg.get("hard_pullback_limit", 0.12)),
+                volatility_window=int(oracle_cfg.get("volatility_window", 21)),
+                volatility_multiplier=float(
+                    oracle_cfg.get("volatility_multiplier", 2.0)
+                ),
+                min_cycle_score=float(oracle_cfg.get("min_cycle_score", 0.58)),
+                min_quality_score=float(oracle_cfg.get("min_quality_score", 0.20)),
+            )
+            df = annotate_cycle_targets(
+                df,
+                cycles,
+                catastrophic_return=float(oracle_cfg["catastrophic_return"]),
+                positive_return_threshold=float(oracle_cfg["min_return"]),
+            )
+        df = ensure_event_outcome_targets(
             df,
-            cycles,
-            catastrophic_return=float(oracle_cfg["catastrophic_return"]),
-            positive_return_threshold=float(oracle_cfg["min_return"]),
+            drawdown_threshold=float(oracle_cfg["catastrophic_return"]),
+            upside_threshold=float(oracle_cfg["min_return"]),
         )
         df["in_cycle"] = (df["oracle_cycle_id"] >= 0).astype(np.int8)
         prepared.append(df)
@@ -332,15 +357,13 @@ def make_datasets(
 
 def build_model(
     config: dict[str, Any], input_dim: int, future_target_dim: int
-) -> CycleReasoningModel:
+) -> nn.Module:
     model_cfg = config["model"]
-    return CycleReasoningModel(
+    return build_cycle_model(
+        model_cfg=model_cfg,
         input_dim=input_dim,
         future_target_dim=future_target_dim,
         action_dim=4,
-        window_sizes=list(model_cfg["window_sizes"]),
-        branch_hidden_dim=int(model_cfg["branch_hidden_dim"]),
-        latent_dim=int(model_cfg["latent_dim"]),
     )
 
 
@@ -358,6 +381,57 @@ def make_loader(
     return DataLoader(dataset, batch_size=batch_size, shuffle=shuffle, drop_last=False)
 
 
+def _forward_model(
+    model: nn.Module,
+    sequence: torch.Tensor,
+    return_reconstruction: bool = False,
+) -> dict[str, torch.Tensor]:
+    if return_reconstruction:
+        if not getattr(model, "supports_reconstruction", False):
+            raise ValueError(
+                "Self-supervised reconstruction requires a model with "
+                "supports_reconstruction=True."
+            )
+        return model(sequence, return_reconstruction=True)
+    return model(sequence)
+
+
+def _apply_self_supervised_mask(
+    sequence: torch.Tensor,
+    config: dict[str, Any],
+) -> tuple[torch.Tensor, torch.Tensor]:
+    ssl_cfg = config.get("self_supervised", {})
+    mask_probability = float(ssl_cfg.get("mask_probability", 0.0))
+    span_probability = float(ssl_cfg.get("mask_span_probability", 0.0))
+    span_length = max(int(ssl_cfg.get("mask_span_length", 0)), 0)
+    mask_value = float(ssl_cfg.get("mask_value", 0.0))
+
+    mask = torch.zeros_like(sequence, dtype=torch.bool)
+    if mask_probability > 0:
+        mask |= torch.rand_like(sequence) < mask_probability
+
+    if span_probability > 0 and span_length > 0:
+        batch_size, _, time_steps = sequence.shape
+        starts = torch.rand(
+            batch_size,
+            time_steps,
+            device=sequence.device,
+        ) < span_probability
+        time_mask = torch.zeros(
+            batch_size,
+            time_steps,
+            dtype=torch.bool,
+            device=sequence.device,
+        )
+        for offset in range(span_length):
+            if offset >= time_steps:
+                break
+            time_mask[:, offset:] |= starts[:, : time_steps - offset]
+        mask |= time_mask.unsqueeze(1)
+
+    return sequence.masked_fill(mask, mask_value), mask
+
+
 def _compute_future_loss(
     prediction: torch.Tensor, target: torch.Tensor
 ) -> torch.Tensor:
@@ -370,7 +444,7 @@ def _compute_future_loss(
 
 
 def train_one_epoch(
-    model: CycleReasoningModel,
+    model: nn.Module,
     loader: DataLoader,
     optimizer: torch.optim.Optimizer,
     class_weights: torch.Tensor,
@@ -380,9 +454,13 @@ def train_one_epoch(
     model.train()
     total_loss = 0.0
     total_count = 0
+    action_loss_weight = float(config["training"].get("action_loss_weight", 1.0))
     future_loss_weight = float(config["training"]["future_loss_weight"])
     hard_negative_weight = float(config["training"]["hard_negative_weight"])
     grad_clip = float(config["training"]["grad_clip"])
+    reconstruction_loss_weight = float(
+        config.get("self_supervised", {}).get("reconstruction_loss_weight", 0.0)
+    )
 
     for batch in loader:
         sequence = batch["sequence"].to(device)
@@ -390,7 +468,19 @@ def train_one_epoch(
         future_target = batch["future_target"].to(device)
         hard_negative = batch["hard_negative"].to(device)
 
-        outputs = model(sequence)
+        model_input = sequence
+        reconstruction_mask = None
+        if reconstruction_loss_weight > 0:
+            model_input, reconstruction_mask = _apply_self_supervised_mask(
+                sequence,
+                config,
+            )
+
+        outputs = _forward_model(
+            model,
+            model_input,
+            return_reconstruction=reconstruction_loss_weight > 0,
+        )
         ce = F.cross_entropy(
             outputs["action_logits"],
             action,
@@ -400,7 +490,15 @@ def train_one_epoch(
         row_weights = 1.0 + hard_negative * hard_negative_weight
         action_loss = (ce * row_weights).mean()
         future_loss = _compute_future_loss(outputs["future_pred"], future_target)
-        loss = action_loss + future_loss_weight * future_loss
+        loss = action_loss_weight * action_loss + future_loss_weight * future_loss
+        if reconstruction_loss_weight > 0 and reconstruction_mask is not None:
+            if reconstruction_mask.any():
+                reconstruction_loss = F.smooth_l1_loss(
+                    outputs["reconstruction"][reconstruction_mask],
+                    sequence[reconstruction_mask],
+                    reduction="mean",
+                )
+                loss = loss + reconstruction_loss_weight * reconstruction_loss
 
         optimizer.zero_grad()
         loss.backward()
@@ -416,32 +514,26 @@ def train_one_epoch(
 
 @torch.no_grad()
 def collect_predictions(
-    model: CycleReasoningModel,
+    model: nn.Module,
     loader: DataLoader,
     device: torch.device,
 ) -> tuple[pd.DataFrame, dict[str, float]]:
     model.eval()
     records = []
-    total_future_mae = 0.0
-    total_future_count = 0
+    future_true_batches = []
+    future_pred_batches = []
 
     for batch in loader:
         sequence = batch["sequence"].to(device)
         action = batch["action"].cpu().numpy()
         future_target = batch["future_target"].to(device)
 
-        outputs = model(sequence)
+        outputs = _forward_model(model, sequence)
         logits = outputs["action_logits"]
         pred_action = logits.argmax(dim=1).cpu().numpy()
 
-        valid_mask = ~torch.isnan(future_target)
-        if valid_mask.any():
-            total_future_mae += float(
-                torch.abs(outputs["future_pred"] - future_target)[valid_mask]
-                .sum()
-                .item()
-            )
-            total_future_count += int(valid_mask.sum().item())
+        future_true_batches.append(future_target.cpu().numpy())
+        future_pred_batches.append(outputs["future_pred"].cpu().numpy())
 
         for ticker, timestamp, true_action, predicted_action in zip(
             batch["ticker"],
@@ -459,13 +551,23 @@ def collect_predictions(
             )
 
     pred_df = pd.DataFrame(records)
+    target_names = list(getattr(loader.dataset, "future_target_cols", []))
     if pred_df.empty:
         return pred_df, {
             "action_accuracy": 0.0,
+            "action_balanced_accuracy": 0.0,
             "action_macro_precision": 0.0,
             "action_macro_recall": 0.0,
             "action_macro_f1": 0.0,
+            "action_weighted_precision": 0.0,
+            "action_weighted_recall": 0.0,
+            "action_weighted_f1": 0.0,
             "future_target_mae": 0.0,
+            "future_target_rmse": 0.0,
+            "future_target_r2": 0.0,
+            "future_target_pearson": 0.0,
+            "future_target_valid_count": 0.0,
+            "future_target_metrics": {},
         }
     pred_df["timestamp"] = pd.to_datetime(pred_df["timestamp"], utc=True)
     pred_df = pred_df.sort_values(["ticker", "timestamp"]).reset_index(drop=True)
@@ -473,14 +575,16 @@ def collect_predictions(
         pred_df["true_action"].to_numpy(),
         pred_df["pred_action"].to_numpy(),
     )
-    action_metrics["future_target_mae"] = (
-        total_future_mae / total_future_count if total_future_count else 0.0
+    future_metrics = compute_future_target_metrics(
+        np.concatenate(future_true_batches, axis=0),
+        np.concatenate(future_pred_batches, axis=0),
+        target_names=target_names,
     )
-    return pred_df, action_metrics
+    return pred_df, {**action_metrics, **future_metrics}
 
 
 def evaluate_split(
-    model: CycleReasoningModel,
+    model: nn.Module,
     dataset: CycleSequenceDataset,
     raw_frame: pd.DataFrame,
     device: torch.device,
@@ -503,7 +607,6 @@ def evaluate_split(
     )
     pred_df, action_metrics = collect_predictions(model, loader, device)
 
-    cooldown_days = int(config["evaluation"]["cooldown_days"])
     catastrophic_return = float(config["evaluation"]["catastrophic_return"])
     late_penalty_factor = float(config["evaluation"]["late_exit_penalty_factor"])
 
@@ -527,7 +630,6 @@ def evaluate_split(
         predicted_cycles = decode_action_spans(
             eval_frame,
             eval_frame["pred_action"].astype(int).tolist(),
-            cooldown_days=cooldown_days,
         )
         cycle_metrics = compute_cycle_metrics(
             predicted_cycles,
@@ -546,9 +648,17 @@ def evaluate_split(
         catastrophic_return=catastrophic_return,
         late_penalty_factor=late_penalty_factor,
     )
+
+    # Independent profit metric: moving-average of oracle cycle returns
+    moving_window = int(config.get("evaluation", {}).get("moving_avg_window", 50))
+    moving_summary = compute_cycle_moving_average_return(all_oracle, window=moving_window)
+
     return {
         **action_metrics,
         **aggregate_cycle,
+        "moving_avg_cycle_return": float(moving_summary.get("moving_avg_cycle_return", 0.0)),
+        "moving_avg_window": int(moving_summary.get("moving_avg_window", moving_window)),
+        "moving_avg_count": float(moving_summary.get("moving_avg_count", 0.0)),
         "per_ticker": per_ticker,
     }
 
@@ -586,11 +696,20 @@ def write_report(
                 f"## {split_name.title()}",
                 "",
                 f"- Action accuracy: {metrics.get('action_accuracy', 0.0):.4f}",
+                f"- Action balanced accuracy: {metrics.get('action_balanced_accuracy', 0.0):.4f}",
                 f"- Action macro F1: {metrics.get('action_macro_f1', 0.0):.4f}",
+                f"- Action weighted F1: {metrics.get('action_weighted_f1', 0.0):.4f}",
+                f"- Future target MAE: {metrics.get('future_target_mae', 0.0):.4f}",
+                f"- Future target RMSE: {metrics.get('future_target_rmse', 0.0):.4f}",
+                f"- Future target R2: {metrics.get('future_target_r2', 0.0):.4f}",
+                f"- Future target Pearson: {metrics.get('future_target_pearson', 0.0):.4f}",
                 f"- Cycle precision: {metrics.get('cycle_precision', 0.0):.4f}",
                 f"- Cycle recall: {metrics.get('cycle_recall', 0.0):.4f}",
+                f"- Cycle F1: {metrics.get('cycle_f1', 0.0):.4f}",
                 f"- Profitable cycle rate: {metrics.get('profitable_cycle_rate', 0.0):.4f}",
                 f"- Average cycle return: {metrics.get('average_cycle_return', 0.0):.4f}",
+                f"- Median cycle return: {metrics.get('median_cycle_return', 0.0):.4f}",
+                f"- Moving avg cycle return: {metrics.get('moving_avg_cycle_return', 0.0):.4f}",
                 f"- Catastrophic cycle rate: {metrics.get('catastrophic_cycle_rate', 0.0):.4f}",
                 f"- Bounded exit error: {metrics.get('bounded_exit_error', 1.0):.4f}",
                 "",
@@ -604,7 +723,7 @@ def write_report(
 
 
 def save_checkpoint(
-    model: CycleReasoningModel,
+    model: nn.Module,
     standardizer: FeatureStandardizer,
     config: dict[str, Any],
     split_meta: dict[str, Any],
@@ -627,7 +746,7 @@ def save_checkpoint(
 
 def load_checkpoint(
     checkpoint_path: str, device: torch.device | None = None
-) -> tuple[CycleReasoningModel, dict[str, Any]]:
+) -> tuple[nn.Module, dict[str, Any]]:
     map_location = device if device is not None else "cpu"
     payload = torch.load(
         checkpoint_path,
@@ -637,13 +756,11 @@ def load_checkpoint(
     feature_cols = payload["feature_cols"]
     future_target_cols = payload["future_target_cols"]
     model_cfg = payload["model_config"]
-    model = CycleReasoningModel(
+    model = build_cycle_model(
+        model_cfg=model_cfg,
         input_dim=len(feature_cols),
         future_target_dim=len(future_target_cols),
         action_dim=4,
-        window_sizes=list(model_cfg["window_sizes"]),
-        branch_hidden_dim=int(model_cfg["branch_hidden_dim"]),
-        latent_dim=int(model_cfg["latent_dim"]),
     )
     model.load_state_dict(payload["model_state"])
     model.eval()

@@ -3,7 +3,11 @@ from __future__ import annotations
 from typing import Sequence
 
 import numpy as np
-from sklearn.metrics import precision_recall_fscore_support
+from sklearn.metrics import (
+    balanced_accuracy_score,
+    confusion_matrix,
+    precision_recall_fscore_support,
+)
 
 from src.cycle.oracle import CycleSpan
 
@@ -13,17 +17,147 @@ def compute_action_metrics(
     y_pred: np.ndarray,
 ) -> dict[str, float]:
     accuracy = float(np.mean(y_true == y_pred)) if len(y_true) else 0.0
-    precision, recall, f1, _ = precision_recall_fscore_support(
+    macro_precision, macro_recall, macro_f1, _ = precision_recall_fscore_support(
         y_true,
         y_pred,
         average="macro",
         zero_division=0,
     )
+    weighted_precision, weighted_recall, weighted_f1, _ = (
+        precision_recall_fscore_support(
+            y_true,
+            y_pred,
+            average="weighted",
+            zero_division=0,
+        )
+    )
+    labels = [0, 1, 2, 3]
+    per_precision, per_recall, per_f1, per_support = precision_recall_fscore_support(
+        y_true,
+        y_pred,
+        labels=labels,
+        average=None,
+        zero_division=0,
+    )
+    matrix = confusion_matrix(y_true, y_pred, labels=labels)
+    true_counts = matrix.sum(axis=1)
+    pred_counts = matrix.sum(axis=0)
+    total = int(matrix.sum())
     return {
         "action_accuracy": accuracy,
-        "action_macro_precision": float(precision),
-        "action_macro_recall": float(recall),
-        "action_macro_f1": float(f1),
+        "action_balanced_accuracy": float(balanced_accuracy_score(y_true, y_pred))
+        if len(y_true)
+        else 0.0,
+        "action_macro_precision": float(macro_precision),
+        "action_macro_recall": float(macro_recall),
+        "action_macro_f1": float(macro_f1),
+        "action_weighted_precision": float(weighted_precision),
+        "action_weighted_recall": float(weighted_recall),
+        "action_weighted_f1": float(weighted_f1),
+        "action_confusion_matrix": matrix.astype(int).tolist(),
+        "action_true_distribution": {
+            str(label): float(true_counts[idx] / total) if total else 0.0
+            for idx, label in enumerate(labels)
+        },
+        "action_pred_distribution": {
+            str(label): float(pred_counts[idx] / total) if total else 0.0
+            for idx, label in enumerate(labels)
+        },
+        "action_per_class": {
+            str(label): {
+                "precision": float(per_precision[idx]),
+                "recall": float(per_recall[idx]),
+                "f1": float(per_f1[idx]),
+                "support": float(per_support[idx]),
+            }
+            for idx, label in enumerate(labels)
+        },
+    }
+
+
+def _safe_pearson(x: np.ndarray, y: np.ndarray) -> float:
+    if len(x) < 2:
+        return 0.0
+    if np.std(x) <= 1e-12 or np.std(y) <= 1e-12:
+        return 0.0
+    return float(np.corrcoef(x, y)[0, 1])
+
+
+def _safe_r2(y_true: np.ndarray, y_pred: np.ndarray) -> float:
+    if len(y_true) == 0:
+        return 0.0
+    ss_res = float(np.sum((y_true - y_pred) ** 2))
+    ss_tot = float(np.sum((y_true - np.mean(y_true)) ** 2))
+    if ss_tot <= 1e-12:
+        return 0.0
+    return float(1.0 - (ss_res / ss_tot))
+
+
+def compute_future_target_metrics(
+    y_true: np.ndarray,
+    y_pred: np.ndarray,
+    target_names: Sequence[str],
+) -> dict[str, float | dict[str, dict[str, float]]]:
+    if y_true.size == 0 or y_pred.size == 0:
+        return {
+            "future_target_mae": 0.0,
+            "future_target_rmse": 0.0,
+            "future_target_r2": 0.0,
+            "future_target_pearson": 0.0,
+            "future_target_valid_count": 0.0,
+            "future_target_metrics": {},
+        }
+
+    valid_mask = np.isfinite(y_true) & np.isfinite(y_pred)
+    if not valid_mask.any():
+        return {
+            "future_target_mae": 0.0,
+            "future_target_rmse": 0.0,
+            "future_target_r2": 0.0,
+            "future_target_pearson": 0.0,
+            "future_target_valid_count": 0.0,
+            "future_target_metrics": {},
+        }
+
+    diff = y_pred[valid_mask] - y_true[valid_mask]
+    per_target: dict[str, dict[str, float]] = {}
+    r2_values = []
+    pearson_values = []
+    for idx, name in enumerate(target_names):
+        target_mask = valid_mask[:, idx]
+        if not target_mask.any():
+            per_target[name] = {
+                "mae": 0.0,
+                "rmse": 0.0,
+                "r2": 0.0,
+                "pearson": 0.0,
+                "valid_count": 0.0,
+            }
+            continue
+        target_true = y_true[target_mask, idx]
+        target_pred = y_pred[target_mask, idx]
+        target_diff = target_pred - target_true
+        target_r2 = _safe_r2(target_true, target_pred)
+        target_pearson = _safe_pearson(target_true, target_pred)
+        r2_values.append(target_r2)
+        pearson_values.append(target_pearson)
+        per_target[name] = {
+            "mae": float(np.mean(np.abs(target_diff))),
+            "rmse": float(np.sqrt(np.mean(target_diff**2))),
+            "r2": target_r2,
+            "pearson": target_pearson,
+            "valid_count": float(target_mask.sum()),
+        }
+
+    return {
+        "future_target_mae": float(np.mean(np.abs(diff))),
+        "future_target_rmse": float(np.sqrt(np.mean(diff**2))),
+        "future_target_r2": float(np.mean(r2_values)) if r2_values else 0.0,
+        "future_target_pearson": float(np.mean(pearson_values))
+        if pearson_values
+        else 0.0,
+        "future_target_valid_count": float(valid_mask.sum()),
+        "future_target_metrics": per_target,
     }
 
 
@@ -126,16 +260,28 @@ def compute_cycle_metrics(
     predicted_count = len(predicted)
     oracle_count = len(oracle)
     match_count = len(matches)
+    precision = float(match_count / predicted_count) if predicted_count else 0.0
+    recall = float(match_count / oracle_count) if oracle_count else 0.0
+    cycle_f1 = (
+        float(2.0 * precision * recall / (precision + recall))
+        if (precision + recall) > 0
+        else 0.0
+    )
 
     return {
         "predicted_cycles": float(predicted_count),
         "oracle_cycles": float(oracle_count),
-        "cycle_precision": float(match_count / predicted_count)
-        if predicted_count
-        else 0.0,
-        "cycle_recall": float(match_count / oracle_count) if oracle_count else 0.0,
+        "cycle_precision": precision,
+        "cycle_recall": recall,
+        "cycle_f1": cycle_f1,
         "profitable_cycle_rate": float(np.mean(profitable)) if predicted_count else 0.0,
         "average_cycle_return": float(np.mean(predicted_returns))
+        if predicted_count
+        else 0.0,
+        "median_cycle_return": float(np.median(predicted_returns))
+        if predicted_count
+        else 0.0,
+        "cycle_return_std": float(np.std(predicted_returns))
         if predicted_count
         else 0.0,
         "average_positive_return": float(np.mean(np.clip(predicted_returns, 0.0, None)))
@@ -163,3 +309,34 @@ def compute_cycle_metrics(
         if oracle_count
         else 0.0,
     }
+
+
+def compute_cycle_moving_average_return(cycles: Sequence[CycleSpan], window: int = 50, method: str = "ema") -> dict[str, float]:
+    """Compute a moving-average summary of cycle returns (independent of prediction).
+
+    Returns a small dict with the computed scalar moving average and metadata.
+
+    - cycles: sequence of CycleSpan (uses CycleSpan.return_pct)
+    - window: lookback window for the moving average (number of cycles)
+    - method: 'ema' for exponential moving average, otherwise simple rolling mean over last window
+    """
+    returns = np.array([c.return_pct for c in cycles], dtype=float)
+    out: dict[str, float] = {"moving_avg_cycle_return": 0.0, "moving_avg_window": int(window), "moving_avg_count": float(len(returns))}
+    if returns.size == 0:
+        return out
+
+    if method == "ema":
+        # standard EMA alpha
+        alpha = 2.0 / (float(window) + 1.0) if window > 0 else 1.0
+        ema = float(returns[0])
+        for r in returns[1:]:
+            ema = float(alpha * r + (1.0 - alpha) * ema)
+        out["moving_avg_cycle_return"] = float(ema)
+    else:
+        if window <= 0:
+            ma = float(np.mean(returns))
+        else:
+            ma = float(np.mean(returns[-window:]))
+        out["moving_avg_cycle_return"] = ma
+    return out
+
