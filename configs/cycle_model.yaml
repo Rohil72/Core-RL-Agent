@@ -1,7 +1,11 @@
 data:
-  precomputed_dir: "data/precomputed/*.parquet"
+  precomputed_dir: "data/precomputed_v2/*.parquet"
+  exclude_years: [2020]
+  use_detector_targets: false
 
 oracle:
+  scorer_path: "models/candidate_scorer.pt"
+  scorer_device: "cuda"
   min_duration_days: 21
   max_duration_days: 42
   min_return: 0.10
@@ -15,33 +19,41 @@ oracle:
 
 model:
   window_size: 252
-  encoder: hierarchical_lstm
-  lstm_hidden_dim: 96
-  lstm_layers: 2
+  encoder: patch_transformer
+  d_model: 96
+  nhead: 4
+  num_layers: 4
   patch_size: 5
   latent_dim: 128
+  num_memory_slots: 8
   dropout: 0.10
 
 training:
   seed: 7
-  device: auto
+  device: cuda
   epochs: 10
-  batch_size: 64
+  batch_size: 256
   learning_rate: 0.0005
   weight_decay: 0.0001
-  action_loss_weight: 0.75
-  future_loss_weight: 0.35
-  hard_negative_weight: 1.0
-  grad_clip: 1.0
-  max_return_loss_weight: 2.0
-  min_return_loss_weight: 2.0
+  action_loss_weight: 0.0
+  future_loss_weight: 1.0
+  hard_negative_weight: 0.0
+  grad_clip: 5.0
+  validation_selection_metric: future_target_mae
+  validation_selection_mode: min
+  max_return_loss_weight: 1.0
+  min_return_loss_weight: 1.0
   model_dir: "models/cycle_reasoner"
+  use_amp: true
+  profit_weight_lambda: 0.0
+  profit_weight_Rmax: 0.5
+  label_smoothing: 0.0
 
 self_supervised:
-  reconstruction_loss_weight: 0.10
-  mask_probability: 0.10
-  mask_span_probability: 0.03
-  mask_span_length: 5
+  reconstruction_loss_weight: 0.0
+  mask_probability: 0.0
+  mask_span_probability: 0.0
+  mask_span_length: 0
   mask_value: 0.0
 
 split:
@@ -84,17 +96,9 @@ features:
     - fund_report_available
     - fund_days_since_report
   future_targets:
-    - future_return_21
-    - future_return_63
-    - future_return_126
-    - future_return_252
     - future_max_return_63
     - future_min_return_63
-    - event_peak_offset_63
-    - event_drawdown_offset_63
     - event_upside_before_drawdown_126
-    - event_upside_hit_126
-    - event_drawdown_hit_126
 
 evaluation:
   catastrophic_return: -0.10

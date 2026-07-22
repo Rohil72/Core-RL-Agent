@@ -1,0 +1,135 @@
+experiment:
+  name: phase4d_retrieval_semantics
+  source_run: reports/phase4c/phase4c_v1
+  output_root: reports/phase4d
+  expected_folds: 5
+  expected_seeds: [7, 17, 37]
+  minimum_complete_runs: 14
+  active_folds: [fold_04]
+  active_seeds: [7, 17, 37]
+  validation_split: val
+  diagnostic_splits: [test, holdout]
+
+data:
+  precomputed_glob: data/precomputed_v2/*.parquet
+
+relative_outcomes:
+  enabled: true
+  return_target: future_return_63
+  sector_column: sector
+  minimum_sector_observations: 3
+  universe_alpha_column: future_universe_alpha_63
+  blended_alpha_column: future_blended_alpha_63
+  sector_weight: 0.50
+
+metric_learning:
+  fit_end_year: 2021
+  validation_year: 2022
+  steps: 2000
+  batch_size: 256
+  learning_rate: 0.001
+  validation_interval: 100
+  patience: 10
+  gradient_clip: 1.0
+  rank_weight: 0.10
+  preserve_weight: 0.10
+  weight_decay: 0.0001
+  temperature: 1.0
+  output_dim: 32
+  device: auto
+  alpha_target: future_blended_alpha_63
+  downside_target: future_min_return_63
+  path_target: event_upside_before_drawdown_126
+
+ood_calibration:
+  sample_size: 2048
+  distance_quantile: 0.95
+  seed: 7
+
+memory_defaults:
+  k: 25
+  causal_horizon_sessions: 126
+  minimum_neighbor_separation_sessions: 21
+  same_ticker_mode: exclude
+  same_ticker_neighbor_limit: null
+  exclude_query_sector: false
+  exclude_query_industry: false
+  target_upside: future_max_return_63
+  target_downside: future_min_return_63
+  target_path_quality: event_upside_before_drawdown_126
+  target_holding_period: event_peak_offset_63
+  aggregation_method: gaussian
+  trim_fraction: 0.10
+  tail_fraction: 0.25
+  min_neighbors: 15
+  max_median_distance: null
+  confidence_reference_distance: null
+  require_outcome_availability: true
+  retrieval_batch_size: 128
+
+policy:
+  top_k: 3
+  min_score: 0.0
+  min_expected_upside: 0.0
+  max_expected_downside: 0.12
+  min_confidence: 0.20
+  min_alpha_lcb: 0.0
+  max_downside_cvar: 0.12
+  min_neighbor_count: 15
+  require_ood_pass: true
+  min_hold_days: 5
+  max_hold_days: 63
+  exit_score_fraction: 0.50
+  exit_min_score: 0.0
+  stop_loss: 0.10
+  slippage_bps: 10
+  initial_capital: 100000
+  risk_guard_enabled: true
+  cooldown_sessions: 63
+  rolling_loss_window_sessions: 126
+  quarantine_sessions: 126
+  max_stop_losses: 2
+  cumulative_loss_limit: -0.15
+
+variants:
+  - id: A0_legacy_identity
+    metric: original
+    target_alpha: null
+    score_mode: legacy
+  - id: A1_universe_alpha_identity
+    metric: original
+    target_alpha: future_universe_alpha_63
+    score_mode: alpha_lcb
+  - id: A2_blended_alpha_identity
+    metric: original
+    target_alpha: future_blended_alpha_63
+    score_mode: alpha_lcb
+  - id: A3_blended_alpha_diagonal
+    metric: diagonal
+    target_alpha: future_blended_alpha_63
+    score_mode: alpha_lcb
+  - id: A4_blended_alpha_low_rank
+    metric: low_rank
+    target_alpha: future_blended_alpha_63
+    score_mode: alpha_lcb
+
+promotion:
+  baseline_variant: A0_legacy_identity
+  bootstrap_samples: 2000
+  bootstrap_block_length: 20
+  confidence_level: 0.95
+  minimum_fold_win_rate: 0.60
+  minimum_seed_win_rate: 0.55
+  maximum_drawdown_regression: 0.05
+  minimum_memory_metric_gain: 0.0
+  maximum_pbo: 0.50
+  minimum_deflated_sharpe_probability: 0.50
+
+ensemble:
+  fold: fold_04
+  seeds: [7, 17, 37]
+  minimum_votes: 2
+  min_score: 0.0
+  min_alpha_lcb: 0.0
+  min_confidence: 0.20
+  max_downside_cvar: 0.12

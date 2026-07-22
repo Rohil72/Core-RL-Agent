@@ -78,19 +78,37 @@ def refresh_detector_outputs(
         )
         frame["ticker"] = ticker
 
-        cycles = detect_cycles(
-            frame["close"],
-            min_duration_days=int(oracle_cfg["min_duration_days"]),
-            max_duration_days=int(oracle_cfg["max_duration_days"]),
-            min_return=float(oracle_cfg["min_return"]),
-            feature_frame=frame,
-            soft_pullback_limit=float(oracle_cfg.get("soft_pullback_limit", 0.05)),
-            hard_pullback_limit=float(oracle_cfg.get("hard_pullback_limit", 0.12)),
-            volatility_window=int(oracle_cfg.get("volatility_window", 21)),
-            volatility_multiplier=float(oracle_cfg.get("volatility_multiplier", 2.0)),
-            min_cycle_score=float(oracle_cfg.get("min_cycle_score", 0.58)),
-            min_quality_score=float(oracle_cfg.get("min_quality_score", 0.20)),
-        )
+        # support optional learned scorer
+        if hasattr(oracle_cfg, "get") and oracle_cfg.get("scorer_path"):
+            from src.cycle.learned_detector import detect_cycles_learned
+
+            cycles = detect_cycles_learned(
+                frame["close"],
+                feature_frame=frame,
+                model_path=str(oracle_cfg.get("scorer_path")),
+                device=oracle_cfg.get("scorer_device", "cpu"),
+                min_duration_days=int(oracle_cfg["min_duration_days"]),
+                max_duration_days=int(oracle_cfg["max_duration_days"]),
+                min_return=float(oracle_cfg["min_return"]),
+                soft_pullback_limit=float(oracle_cfg.get("soft_pullback_limit", 0.05)),
+                hard_pullback_limit=float(oracle_cfg.get("hard_pullback_limit", 0.12)),
+                volatility_window=int(oracle_cfg.get("volatility_window", 21)),
+                volatility_multiplier=float(oracle_cfg.get("volatility_multiplier", 2.0)),
+            )
+        else:
+            cycles = detect_cycles(
+                frame["close"],
+                min_duration_days=int(oracle_cfg["min_duration_days"]),
+                max_duration_days=int(oracle_cfg["max_duration_days"]),
+                min_return=float(oracle_cfg["min_return"]),
+                feature_frame=frame,
+                soft_pullback_limit=float(oracle_cfg.get("soft_pullback_limit", 0.05)),
+                hard_pullback_limit=float(oracle_cfg.get("hard_pullback_limit", 0.12)),
+                volatility_window=int(oracle_cfg.get("volatility_window", 21)),
+                volatility_multiplier=float(oracle_cfg.get("volatility_multiplier", 2.0)),
+                min_cycle_score=float(oracle_cfg.get("min_cycle_score", 0.58)),
+                min_quality_score=float(oracle_cfg.get("min_quality_score", 0.20)),
+            )
         annotated = annotate_cycle_targets(
             frame,
             cycles,

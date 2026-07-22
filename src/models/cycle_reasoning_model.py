@@ -16,7 +16,8 @@ class ResidualTemporalBlock(nn.Module):
             nn.GELU(),
             nn.Conv1d(channels, channels, kernel_size=1),
         )
-        self.norm = nn.BatchNorm1d(channels)
+        # BatchNorm can be unstable with small batch sizes; use GroupNorm for stability
+        self.norm = nn.GroupNorm(1, channels)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return F.gelu(self.norm(self.net(x) + x))

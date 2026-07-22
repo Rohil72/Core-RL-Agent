@@ -8,21 +8,41 @@ __pycache__/
 
 # Local environments
 .venv/
+.venv-*/
 venv/
 env/
 
 # Logs and scratch outputs
 logs/
+debug/
 *.log
 test_output.txt
+*.tmp
+*.temp
+.coverage
+htmlcov/
+.*-pytest-temp*/
+temp_*.yaml
 
-# Generated data and model artifacts
-data/precomputed/
-data/precomputed_smoke/
-data/evaluation_plots/
-data/detector_plots/
-models/
+# Generated research data and model artifacts. Keep only the small, canonical
+# CSV fixture needed for a clean-clone smoke test.
+data/**
+!data/examples/
+!data/examples/sample_prices.csv
+
+# Training and evaluation outputs
+/models/
 reports/
+*.pt
+*.pth
+*.ckpt
+*.d3
+*.parquet
+*.npz
+*.npy
+*.pkl
+*.pickle
+graphify-out/
 
 # Local OS/editor noise
 .DS_Store

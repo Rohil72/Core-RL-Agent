@@ -268,7 +268,16 @@ def compute_fundamental_features_aligned(
 
     merged = pd.merge_asof(
         price_with_date,
-        edf[["report_date", *_FUNDAMENTAL_FILL_COLUMNS, "fund_eps_2y_avg", "fund_rev_2y_avg", "fund_eps_vs_2y_avg", "fund_rev_vs_2y_avg"]].sort_values("report_date"),
+        edf[
+            [
+                "report_date",
+                *_FUNDAMENTAL_FILL_COLUMNS,
+                "fund_eps_2y_avg",
+                "fund_rev_2y_avg",
+                "fund_eps_vs_2y_avg",
+                "fund_rev_vs_2y_avg",
+            ]
+        ].sort_values("report_date"),
         left_on=date_col,
         right_on="report_date",
         direction="backward",

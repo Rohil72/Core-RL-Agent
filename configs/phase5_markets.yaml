@@ -1,0 +1,48 @@
+experiment:
+  output_root: reports/phase5/international
+  data_root: data/international
+  start: 2018-01-01
+  end: 2026-06-30
+  train_years: [2018, 2019, 2020, 2021, 2022]
+  validation_year: 2023
+  development_test_year: 2024
+  confirmation_year: 2025
+  minimum_tickers: 18
+  minimum_sessions: 1250
+  minimum_fundamental_coverage: 0.20
+  source_only_normalization: true
+  local_currency_evaluation: true
+
+markets:
+  US:
+    exchange: NYSE_NASDAQ
+    currency: USD
+    tickers: [AAPL, MSFT, NVDA, AMZN, GOOGL, META, AVGO, CRM, ORCL, AMD, ADBE, INTU, ISRG, AMGN, REGN, LMT, NOC, V, PYPL, NEE]
+  India:
+    exchange: NSE
+    currency: INR
+    tickers: [RELIANCE.NS, TCS.NS, HDFCBANK.NS, ICICIBANK.NS, INFY.NS, BHARTIARTL.NS, ITC.NS, LT.NS, SBIN.NS, AXISBANK.NS, KOTAKBANK.NS, MARUTI.NS, SUNPHARMA.NS, "M&M.NS", NTPC.NS, TITAN.NS, BAJFINANCE.NS, HINDUNILVR.NS]
+  China:
+    exchange: SSE_SZSE
+    currency: CNY
+    tickers: [600519.SS, 601318.SS, 600036.SS, 601166.SS, 600276.SS, 600887.SS, 601888.SS, 600030.SS, 601012.SS, 600309.SS, 000858.SZ, 000333.SZ, 000651.SZ, 300750.SZ, 002594.SZ, 300059.SZ, 002415.SZ, 000725.SZ]
+  Brazil:
+    exchange: B3
+    currency: BRL
+    tickers: [PETR4.SA, VALE3.SA, ITUB4.SA, BBDC4.SA, BBAS3.SA, WEGE3.SA, ABEV3.SA, RENT3.SA, SUZB3.SA, GGBR4.SA, JBSS3.SA, RADL3.SA, RAIL3.SA, PRIO3.SA, EQTL3.SA, LREN3.SA, VIVT3.SA, TOTS3.SA]
+  France:
+    exchange: Euronext_Paris
+    currency: EUR
+    tickers: [MC.PA, OR.PA, RMS.PA, TTE.PA, SAN.PA, AIR.PA, SU.PA, KER.PA, BNP.PA, AI.PA, DG.PA, SAF.PA, RI.PA, EL.PA, CAP.PA, CS.PA, VIE.PA, ML.PA]
+  UK:
+    exchange: LSE
+    currency: GBP
+    tickers: [AZN.L, SHEL.L, HSBA.L, ULVR.L, BP.L, GSK.L, REL.L, RIO.L, DGE.L, LSEG.L, NG.L, BATS.L, AAL.L, VOD.L, PRU.L, EXPN.L, CPG.L, BA.L]
+
+evaluation:
+  modes: [within_market, pairwise_zero_shot, leave_one_market_out]
+  minimum_global_sharpe: 2.0
+  maximum_global_drawdown: 0.20
+  minimum_positive_market_count: 5
+  minimum_positive_pair_fraction: 0.60
+  maximum_profit_concentration: 0.35

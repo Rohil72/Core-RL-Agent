@@ -7,6 +7,8 @@ This repository is currently a cycle-oriented equity modeling research pipeline.
 ```bash
 python scripts/precompute_ground_truth.py
 python src/trainers/train_cycle_model.py
+# Orchestrated Phase-1 experiment (baseline -> detector-ablation -> analysis)
+python scripts/orchestrate_phase1.py
 python scripts/evaluate_agent.py
 pytest -q
 ```
@@ -16,6 +18,18 @@ Default settings live in `configs/cycle_model.yaml`.
 For the detailed current architecture, including the world-model framing,
 memory system, input shapes, preprocessing, LSTM dimensions, targets, losses,
 and outputs, see [ARCHITECTURE.md](ARCHITECTURE.md).
+
+New tooling added for Phase-1 experiments
+- `scripts/orchestrate_phase1.py` — runs the baseline training, a detector-ablation
+  run (same seed/hyperparams, `configs/cycle_model_detector_ablation.yaml`), then
+  runs the analysis pipeline to generate numeric reports and latent exports.
+- `scripts/phase1_analysis.py` — latent PCA/UMAP projection, nearest-neighbor
+  future-similarity tests, and opportunity ranking analysis. Writes summaries to
+  `reports/research_phase1/` and latent exports to `reports/latent_analysis/`.
+
+These additions implement the experiments described in the research plan without
+changing model code paths or datasets: the ablation is applied by setting
+`training.action_loss_weight: 0.0` in `configs/cycle_model_detector_ablation.yaml`.
 
 ## What The Project Does
 
@@ -69,6 +83,8 @@ The old PPO/Stable-Baselines RL path has been removed from the active tree. The 
 - `scripts/run_detector_on_precomputed.py`: refreshes detector labels on existing precomputed files
 - `scripts/plot_detector_on_precomputed.py`: renders detector-only inspection plots
 - `scripts/evaluate_agent.py`: evaluates a saved checkpoint and writes numeric metrics plus comparison plots
+ - `scripts/orchestrate_phase1.py`: run baseline -> ablation -> analysis, create phase1 reports
+ - `scripts/phase1_analysis.py`: latent export, PCA/UMAP, neighbor similarity, ranking tests
 - `src/cycle/`: cycle detection, oracle labeling, and span decoding
 - `src/data/`: data loading, feature engineering, IO, and sequence datasets
 - `src/eval/`: action and cycle-level evaluation metrics
@@ -102,4 +118,25 @@ Run tests with:
 
 ```bash
 pytest -q
+```
+
+## Phase 5 Consensus Exposure
+
+The consensus exposure experiment keeps the transformer, market memory, C0 seed aggregation,
+and A2 hold/exit rules frozen. It evaluates four predeclared gross-exposure policies using
+causal percentage, volatility, and dimensionless evidence inputs. The output is development
+evidence only; cross-market confirmation remains locked even when the local gates pass.
+
+```powershell
+python scripts/run_phase5_consensus_exposure.py --config configs/phase5_consensus_exposure.yaml --run-id phase5_consensus_exposure_v1
+```
+
+## Phase 5 Opportunity Allocation
+
+This stage reconstructs causal 2022 retrieval evidence from outcome-available 2021 memory,
+tests obvious versus nonlinear inference on a later 2022 slice, and then evaluates fixed-grid
+per-entry sizing over the frozen 2023 C0 signals. Retrieval generation is cached and resumable.
+
+```powershell
+python scripts/run_phase5_opportunity_allocator.py --config configs/phase5_opportunity_allocator.yaml --run-id phase5_opportunity_allocator_v1 --stage all
 ```

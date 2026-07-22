@@ -1,0 +1,97 @@
+experiment:
+  phase: 4I
+  name: neutral_aware_rally_entry_memory
+  source_phase4c_run: reports/phase4c/phase4c_v1
+  source_phase4e_run: reports/phase4e/phase4e_v1
+  output_root: reports/phase4i
+  source_candidate: A2_base
+  source_semantic: A2_blended_alpha_identity
+  expected_folds: 5
+  expected_seeds: [7, 17, 37]
+  minimum_complete_runs: 14
+  active_folds: []
+  active_seeds: [7, 17, 37]
+  validation_split: val
+  confirmation_splits: [test, holdout]
+
+relative_outcomes:
+  enabled: true
+  return_target: future_return_63
+  sector_column: sector
+  minimum_sector_observations: 3
+  universe_alpha_column: future_universe_alpha_63
+  blended_alpha_column: future_blended_alpha_63
+  sector_weight: 0.50
+
+ood_calibration:
+  sample_size: 2048
+  distance_quantile: 0.95
+  seed: 7
+
+memory_defaults:
+  k: 25
+  causal_horizon_sessions: 126
+  minimum_neighbor_separation_sessions: 21
+  same_ticker_mode: exclude
+  same_ticker_neighbor_limit: null
+  exclude_query_sector: false
+  exclude_query_industry: false
+  target_upside: future_max_return_63
+  target_downside: future_min_return_63
+  target_path_quality: event_upside_before_drawdown_126
+  target_holding_period: event_peak_offset_63
+  aggregation_method: gaussian
+  trim_fraction: 0.10
+  tail_fraction: 0.25
+  min_neighbors: 15
+  max_median_distance: null
+  confidence_reference_distance: null
+  require_outcome_availability: true
+  retrieval_batch_size: 128
+
+rally_prototypes:
+  upside_threshold: 0.10
+  drawdown_threshold: -0.10
+  horizon_sessions: 63
+  maturity_sessions: 126
+  k: 25
+  minimum_neighbors: 5
+  minimum_neighbor_separation_sessions: 21
+  same_ticker_mode: exclude
+  exclude_query_sector: false
+  exclude_query_industry: false
+  retrieval_batch_size: 128
+  include_neutral: true
+  neutral_sampling_stride_sessions: 21
+  # Require the closest prototype to be within one training-calibrated kernel bandwidth.
+  maximum_nearest_distance_ratio: 1.0
+
+policy_candidates:
+  - id: I0_a2_base
+    mode: a2_base
+  - id: I1_neutral_aware_rank
+    mode: rally_rank
+    minimum_probability: 0.50
+    minimum_log_odds: 0.0
+  - id: I2_a2_neutral_aware_gate
+    mode: a2_rally_gate
+    minimum_probability: 0.50
+    minimum_log_odds: 0.0
+
+selection:
+  baseline_candidate: I0_a2_base
+  target_pooled_sharpe: 2.0
+  target_cross_market_oof_sharpe: 2.0
+  minimum_mean_excess_return: 0.0
+  minimum_positive_run_fraction: 0.70
+  minimum_positive_fold_excess_fraction: 0.60
+  maximum_worst_drawdown: 0.25
+  minimum_mean_trade_count: 10
+  minimum_deflated_sharpe_probability: 0.80
+  maximum_pbo: 0.50
+  minimum_rally_precision_lift: 0.0
+  objective:
+    pooled_sharpe_weight: 1.0
+    minimum_fold_sharpe_weight: 0.25
+    mean_excess_return_weight: 2.0
+    drawdown_weight: 0.50

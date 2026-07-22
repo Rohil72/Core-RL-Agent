@@ -2,15 +2,18 @@ from __future__ import annotations
 
 import argparse
 import glob
+import hashlib
 import json
 import logging
 import os
 import random
+import signal
 import sys
+import time
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import numpy as np
 import pandas as pd
@@ -18,7 +21,17 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import yaml
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, WeightedRandomSampler
+
+try:
+    from torch.amp import autocast
+except ImportError:  # pragma: no cover - older torch fallback
+    from torch.cuda.amp import autocast
+
+try:
+    from torch.amp import GradScaler
+except ImportError:  # pragma: no cover - older torch fallback
+    from torch.cuda.amp import GradScaler
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(os.path.dirname(SCRIPT_DIR))
@@ -50,6 +63,12 @@ from src.eval.cycle_prediction_metrics import (
     compute_future_target_metrics,
     compute_cycle_moving_average_return,
 )
+from src.losses.outcome_geometry import (
+    OutcomeGeometryLossConfig,
+    OutcomeTargetNormalizer,
+    LossBreakdown,
+    compute_market_memory_loss,
+)
 from src.models import build_cycle_model
 
 logging.basicConfig(level=logging.INFO)
@@ -59,12 +78,105 @@ logger = logging.getLogger(__name__)
 DEFAULT_CONFIG_PATH = "configs/cycle_model.yaml"
 
 
+class TrainingInterrupted(RuntimeError):
+    """Raised after a requested shutdown has been checkpointed safely."""
+
+
+_STOP_REQUESTED = False
+
+
+def _request_training_stop(signum: int, _frame: Any) -> None:
+    global _STOP_REQUESTED
+    _STOP_REQUESTED = True
+    logger.warning("Received signal %s; checkpointing after the active optimizer step.", signum)
+
+
 def set_seed(seed: int) -> None:
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
+
+
+def _config_fingerprint(config: dict[str, Any]) -> str:
+    """Return a stable digest of the immutable training contract."""
+    stable = deepcopy({
+        key: value
+        for key, value in config.items()
+        if not str(key).startswith("_")
+    })
+    for operational_key in (
+        "auto_resume",
+        "checkpoint_interval_steps",
+        "allow_hardware_mismatch_resume",
+    ):
+        stable.get("training", {}).pop(operational_key, None)
+    encoded = json.dumps(stable, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _runtime_fingerprint(device: torch.device) -> dict[str, Any]:
+    """Capture software and accelerator properties required for strict resume."""
+    payload: dict[str, Any] = {
+        "python": sys.version.split()[0],
+        "torch": torch.__version__,
+        "cuda_runtime": torch.version.cuda,
+        "cudnn": torch.backends.cudnn.version(),
+        "device_type": device.type,
+    }
+    if device.type == "cuda":
+        index = device.index if device.index is not None else torch.cuda.current_device()
+        properties = torch.cuda.get_device_properties(index)
+        payload.update(
+            {
+                "device_name": properties.name,
+                "compute_capability": [properties.major, properties.minor],
+                "total_memory": int(properties.total_memory),
+            }
+        )
+    return payload
+
+
+def _rng_state(loader: DataLoader | None = None) -> dict[str, Any]:
+    """Capture all RNG streams used by training and data ordering."""
+    state: dict[str, Any] = {
+        "python": random.getstate(),
+        "numpy": np.random.get_state(),
+        "torch": torch.get_rng_state(),
+    }
+    if torch.cuda.is_available():
+        state["cuda"] = torch.cuda.get_rng_state_all()
+    if loader is not None and loader.generator is not None:
+        state["loader"] = loader.generator.get_state()
+    return state
+
+
+def _restore_rng_state(state: dict[str, Any], loader: DataLoader | None = None) -> None:
+    """Restore RNG streams from a resumable training checkpoint."""
+    random.setstate(state["python"])
+    np.random.set_state(state["numpy"])
+    torch.set_rng_state(state["torch"])
+    if torch.cuda.is_available() and "cuda" in state:
+        torch.cuda.set_rng_state_all(state["cuda"])
+    if loader is not None and loader.generator is not None and "loader" in state:
+        loader.generator.set_state(state["loader"])
+
+
+def _atomic_torch_save(payload: dict[str, Any], path: Path) -> None:
+    """Write a Torch payload atomically so preemption cannot leave a partial file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    torch.save(payload, temporary)
+    os.replace(temporary, path)
+
+
+def _atomic_json_write(payload: dict[str, Any], path: Path) -> None:
+    """Write JSON atomically."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    temporary.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
+    os.replace(temporary, path)
 
 
 def load_config(path: str = DEFAULT_CONFIG_PATH) -> dict[str, Any]:
@@ -155,17 +267,29 @@ def _has_precomputed_oracle_targets(df: pd.DataFrame) -> bool:
 
 
 def load_precomputed_frame(config: dict[str, Any]) -> pd.DataFrame:
-    pattern = config["data"]["precomputed_dir"]
-    files = sorted(glob.glob(pattern))
-    if not files:
+    data_cfg = config["data"]
+    source_specs = data_cfg.get("precomputed_sources")
+    if source_specs is None:
+        source_specs = [{"market": data_cfg.get("market", "unknown"), "glob": data_cfg["precomputed_dir"]}]
+    matched: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for source in source_specs:
+        pattern = str(source["glob"])
+        market = str(source.get("market", "unknown"))
+        for path in sorted(glob.glob(pattern, recursive=True)):
+            resolved = str(Path(path).resolve())
+            if resolved not in seen:
+                matched.append((path, market))
+                seen.add(resolved)
+    if not matched:
         raise FileNotFoundError(
-            f"No precomputed parquet files found for pattern: {pattern}"
+            f"No precomputed parquet files found for configured sources: {source_specs}"
         )
 
     prepared = []
     oracle_cfg = config["oracle"]
 
-    for path in files:
+    for path, market in matched:
         df = read_dataframe(path)
         if df.empty:
             continue
@@ -174,8 +298,14 @@ def load_precomputed_frame(config: dict[str, Any]) -> pd.DataFrame:
             str(df["ticker"].iloc[0]) if "ticker" in df.columns else Path(path).stem
         )
         df["ticker"] = ticker
+        df["market"] = market
         df = ensure_sequence_model_features(df)
-        if _has_precomputed_oracle_targets(df):
+        use_detector_targets = bool(config.get("data", {}).get("use_detector_targets", False))
+        if not use_detector_targets:
+            df["oracle_action"] = 0
+            df["oracle_cycle_id"] = -1
+            df["oracle_hard_negative"] = 0.0
+        elif _has_precomputed_oracle_targets(df):
             df = ensure_oracle_cycle_metadata(df)
         else:
             cycles = detect_cycles(
@@ -211,12 +341,26 @@ def load_precomputed_frame(config: dict[str, Any]) -> pd.DataFrame:
         raise ValueError("No usable data loaded from precomputed parquet files.")
 
     frame = pd.concat(prepared).sort_index()
+
+    # Optionally exclude particular calendar years (e.g., 2020) to avoid contamination
+    exclude_years = config.get("data", {}).get("exclude_years", [])
+    if exclude_years:
+        mask = ~np.isin(frame.index.year, exclude_years)
+        frame = frame.loc[mask]
+
     feature_cols = _infer_feature_columns(
         frame, config.get("features", {}).get("sequence")
     )
     future_target_cols = _infer_future_target_columns(
         frame, config.get("features", {}).get("future_targets")
     )
+
+    # Safety check to prevent accidental leakage: ensure no feature column is also a future target
+    _overlap = set(feature_cols) & set(future_target_cols)
+    if _overlap:
+        raise ValueError(
+            f"Feature/target overlap detected. This may leak future information into features: {sorted(_overlap)}"
+        )
 
     required = feature_cols + ["oracle_action", "ticker", "close"]
     clean = frame.dropna(subset=required).copy()
@@ -251,11 +395,26 @@ def make_datasets(
     selected_fold = int(split_cfg.get("selected_fold", -1))
     split = splits[selected_fold]
 
-    holdout_tickers = select_holdout_tickers(
-        tickers=frame["ticker"].unique().tolist(),
-        fraction=float(split_cfg.get("ticker_holdout_fraction", 0.0)),
-        seed=int(split_cfg.get("seed", 7)),
-    )
+    configured_holdout_tickers = split_cfg.get("holdout_tickers")
+    if configured_holdout_tickers is not None:
+        if not isinstance(configured_holdout_tickers, list):
+            raise ValueError("split.holdout_tickers must be a list when provided.")
+        available_tickers = set(frame["ticker"].astype(str).unique().tolist())
+        holdout_tickers = [str(ticker) for ticker in configured_holdout_tickers]
+        unknown_tickers = sorted(set(holdout_tickers) - available_tickers)
+        if unknown_tickers:
+            raise ValueError(
+                "Configured holdout tickers are absent from the dataset: "
+                + ", ".join(unknown_tickers)
+            )
+        if len(set(holdout_tickers)) != len(holdout_tickers):
+            raise ValueError("split.holdout_tickers must not contain duplicates.")
+    else:
+        holdout_tickers = select_holdout_tickers(
+            tickers=frame["ticker"].unique().tolist(),
+            fraction=float(split_cfg.get("ticker_holdout_fraction", 0.0)),
+            seed=int(split_cfg.get("seed", 7)),
+        )
 
     periods = {
         "train": filter_frame_by_period(
@@ -377,9 +536,41 @@ def compute_class_weights(actions: pd.Series) -> torch.Tensor:
 
 
 def make_loader(
-    dataset: CycleSequenceDataset, batch_size: int, shuffle: bool
+    dataset: CycleSequenceDataset,
+    batch_size: int,
+    shuffle: bool,
+    market_balanced: bool = False,
 ) -> DataLoader:
-    return DataLoader(dataset, batch_size=batch_size, shuffle=shuffle, drop_last=False)
+    # Use a seeded torch.Generator tied to the global PyTorch RNG seed for deterministic shuffling
+    gen = torch.Generator()
+    try:
+        seed_val = int(torch.initial_seed() & 0x7FFFFFFF)
+    except Exception:
+        seed_val = 7
+    gen.manual_seed(seed_val)
+    sampler = None
+    if market_balanced:
+        markets = np.asarray(dataset.sample_markets, dtype=str)
+        labels, counts = np.unique(markets, return_counts=True)
+        inverse = {label: 1.0 / count for label, count in zip(labels, counts)}
+        weights = torch.as_tensor([inverse[label] for label in markets], dtype=torch.double)
+        sampler = WeightedRandomSampler(
+            weights,
+            num_samples=len(weights),
+            replacement=True,
+            generator=gen,
+        )
+    return DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=shuffle and sampler is None,
+        sampler=sampler,
+        drop_last=False,
+        generator=gen,
+        num_workers=4,
+        pin_memory=True,
+        persistent_workers=True,
+    )
 
 
 def _forward_model(
@@ -436,12 +627,64 @@ def _apply_self_supervised_mask(
 def _compute_future_loss(
     prediction: torch.Tensor, target: torch.Tensor
 ) -> torch.Tensor:
-    valid_mask = ~torch.isnan(target)
+    valid_mask = torch.isfinite(target)
     if not valid_mask.any():
         return prediction.new_tensor(0.0)
     return F.smooth_l1_loss(
         prediction[valid_mask], target[valid_mask], reduction="mean"
     )
+
+
+def _batch_debug_payload(batch: dict[str, Any]) -> dict[str, Any]:
+    payload = {}
+    for key, value in batch.items():
+        if torch.is_tensor(value):
+            payload[key] = value.detach().cpu()
+        else:
+            payload[key] = value
+    return payload
+
+
+def _dump_training_failure(
+    *,
+    reason: str,
+    model: nn.Module,
+    optimizer: torch.optim.Optimizer,
+    batch: dict[str, Any] | None,
+    extra: dict[str, Any] | None = None,
+) -> None:
+    dump_path = Path("debug")
+    dump_path.mkdir(parents=True, exist_ok=True)
+    ts = int(time.time())
+    payload = {
+        "reason": reason,
+        "model_state": model.state_dict(),
+        "optimizer_state": optimizer.state_dict(),
+        "batch": _batch_debug_payload(batch) if batch is not None else None,
+        "extra": extra or {},
+    }
+    torch.save(payload, dump_path / f"emergency_checkpoint_{reason}_{ts}.pt")
+
+
+def _first_nonfinite_parameter(model: nn.Module) -> str | None:
+    for name, param in model.named_parameters():
+        if not torch.isfinite(param.detach()).all():
+            return name
+    return None
+
+
+def _first_nonfinite_gradient(model: nn.Module) -> str | None:
+    for name, param in model.named_parameters():
+        if param.grad is not None and not torch.isfinite(param.grad.detach()).all():
+            return name
+    return None
+
+
+def _global_norm(tensors: list[torch.Tensor]) -> float:
+    if not tensors:
+        return 0.0
+    total = sum(t.detach().to(torch.float64).norm().pow(2) for t in tensors)
+    return float(torch.sqrt(total).item())
 
 
 def train_one_epoch(
@@ -451,23 +694,85 @@ def train_one_epoch(
     class_weights: torch.Tensor,
     device: torch.device,
     config: dict[str, Any],
+    target_normalizer: OutcomeTargetNormalizer | None = None,
+    loss_config: OutcomeGeometryLossConfig | None = None,
+    scaler: GradScaler | None = None,
+    start_batch: int = 0,
+    initial_total_loss: float = 0.0,
+    initial_total_count: int = 0,
+    progress_callback: Callable[[int, float, int], None] | None = None,
 ) -> float:
+    """Train for one epoch with stability guards and masked Huber future-outcome loss."""
     model.train()
-    total_loss = 0.0
-    total_count = 0
-    action_loss_weight = float(config["training"].get("action_loss_weight", 1.0))
-    future_loss_weight = float(config["training"]["future_loss_weight"])
-    hard_negative_weight = float(config["training"]["hard_negative_weight"])
-    grad_clip = float(config["training"]["grad_clip"])
+    total_loss = float(initial_total_loss)
+    total_count = int(initial_total_count)
+
+    # training hyperparams & new knobs
+    training_cfg = config["training"]
+    action_loss_weight = float(training_cfg.get("action_loss_weight", 1.0))
+    future_loss_weight = float(training_cfg["future_loss_weight"])
+    hard_negative_weight = float(training_cfg["hard_negative_weight"])
+    grad_clip = float(training_cfg.get("grad_clip", 1.0))
     reconstruction_loss_weight = float(
         config.get("self_supervised", {}).get("reconstruction_loss_weight", 0.0)
     )
 
-    for batch in loader:
-        sequence = batch["sequence"].to(device)
-        action = batch["action"].to(device)
-        future_target = batch["future_target"].to(device)
-        hard_negative = batch["hard_negative"].to(device)
+    profit_weight_lambda = float(training_cfg.get("profit_weight_lambda", 4.0))
+    profit_weight_Rmax = float(training_cfg.get("profit_weight_Rmax", 0.5))
+    label_smoothing = float(training_cfg.get("label_smoothing", 0.05))
+
+    # precompute target index for ROI signal
+    target_names = list(getattr(loader.dataset, "future_target_cols", []))
+    ret_idx = None
+    if "future_max_return_63" in target_names:
+        ret_idx = target_names.index("future_max_return_63")
+    elif "future_return_63" in target_names:
+        ret_idx = target_names.index("future_return_63")
+
+    use_amp = scaler is not None and getattr(scaler, "is_enabled", lambda: False)()
+    non_blocking = device.type == "cuda"
+
+    for batch_idx, batch in enumerate(loader):
+        if batch_idx < start_batch:
+            continue
+        sequence = batch["sequence"].to(device, non_blocking=non_blocking)
+        action = batch["action"].to(device, non_blocking=non_blocking)
+        future_target = batch["future_target"].to(device, non_blocking=non_blocking)
+        hard_negative = batch["hard_negative"].to(device, non_blocking=non_blocking)
+
+        # Missing future targets are represented as NaN and masked in the Huber loss.
+        # Inputs, labels, hard-negative flags, and infinite targets must still be clean.
+        has_bad_target_inf = torch.isinf(future_target).any()
+        has_bad_action = bool(((action < 0) | (action > 3)).any().item())
+        if (
+            not torch.isfinite(sequence).all()
+            or not torch.isfinite(action.float()).all()
+            or not torch.isfinite(hard_negative).all()
+            or has_bad_target_inf
+            or has_bad_action
+        ):
+            _dump_training_failure(
+                reason="nonfinite_input",
+                model=model,
+                optimizer=optimizer,
+                batch=batch,
+                extra={
+                    "future_target_has_inf": bool(has_bad_target_inf.item()),
+                    "bad_action_label": has_bad_action,
+                },
+            )
+            raise RuntimeError("Non-finite values found in input batch; dumped debug artifacts.")
+
+        bad_param = _first_nonfinite_parameter(model)
+        if bad_param is not None:
+            _dump_training_failure(
+                reason="nonfinite_parameter_before_forward",
+                model=model,
+                optimizer=optimizer,
+                batch=batch,
+                extra={"parameter": bad_param},
+            )
+            raise RuntimeError(f"Non-finite parameter before forward: {bad_param}")
 
         model_input = sequence
         reconstruction_mask = None
@@ -477,60 +782,216 @@ def train_one_epoch(
                 config,
             )
 
-        outputs = _forward_model(
-            model,
-            model_input,
-            return_reconstruction=reconstruction_loss_weight > 0,
-        )
-        ce = F.cross_entropy(
-            outputs["action_logits"],
-            action,
-            weight=class_weights,
-            reduction="none",
-        )
-        row_weights = 1.0 + hard_negative * hard_negative_weight
-        action_loss = (ce * row_weights).mean()
-        # Weighted future loss focusing on max/min return targets
-        target_names = list(getattr(loader.dataset, "future_target_cols", []))
-        pred = outputs["future_pred"]
-        # construct per-target weights (default 1.0)
-        weights = [1.0] * (pred.size(1) if pred.dim() > 1 else 1)
-        try:
-            idx = target_names.index("future_max_return_63")
-            weights[idx] = float(config["training"].get("max_return_loss_weight", 2.0))
-        except ValueError:
-            pass
-        try:
-            idx = target_names.index("future_min_return_63")
-            weights[idx] = float(config["training"].get("min_return_loss_weight", 2.0))
-        except ValueError:
-            pass
-        future_loss_total = pred.new_tensor(0.0)
-        total_w = 0.0
-        for k, w in enumerate(weights):
-            future_loss_total = future_loss_total + float(w) * _compute_future_loss(
-                pred[:, k], future_target[:, k]
+        # Forward + loss under AMP if enabled
+        with autocast(device_type=device.type, enabled=use_amp):
+            outputs = _forward_model(
+                model,
+                model_input,
+                return_reconstruction=reconstruction_loss_weight > 0,
             )
-            total_w += float(w)
-        future_loss = future_loss_total / max(total_w, 1e-9)
-        loss = action_loss_weight * action_loss + future_loss_weight * future_loss
-        if reconstruction_loss_weight > 0 and reconstruction_mask is not None:
-            if reconstruction_mask.any():
-                reconstruction_loss = F.smooth_l1_loss(
-                    outputs["reconstruction"][reconstruction_mask],
-                    sequence[reconstruction_mask],
-                    reduction="mean",
-                )
-                loss = loss + reconstruction_loss_weight * reconstruction_loss
 
+            logits = outputs["action_logits"]
+            pred = outputs["future_pred"]
+            if not torch.isfinite(logits).all() or not torch.isfinite(pred).all():
+                _dump_training_failure(
+                    reason="nonfinite_model_output",
+                    model=model,
+                    optimizer=optimizer,
+                    batch=batch,
+                    extra={
+                        "logits_finite": bool(torch.isfinite(logits).all().item()),
+                        "future_pred_finite": bool(torch.isfinite(pred).all().item()),
+                    },
+                )
+                raise FloatingPointError("Non-finite model output.")
+
+            action_loss = pred.new_tensor(0.0)
+            if action_loss_weight > 0:
+                ce = F.cross_entropy(
+                    logits,
+                    action,
+                    weight=class_weights,
+                    reduction="none",
+                    label_smoothing=label_smoothing,
+                )
+                row_weights = 1.0 + hard_negative * hard_negative_weight
+                batch_size = int(sequence.size(0))
+                if ret_idx is not None and profit_weight_lambda > 0:
+                    ret_vals = future_target[:, ret_idx]
+                    finite_mask = torch.isfinite(ret_vals)
+                    base_ret = torch.where(finite_mask, ret_vals, torch.zeros_like(ret_vals))
+                    pos_ret = torch.clamp(base_ret, min=0.0)
+                    normalized = torch.clamp(pos_ret, max=profit_weight_Rmax) / float(profit_weight_Rmax)
+                    profit_weights = 1.0 + profit_weight_lambda * normalized
+                else:
+                    profit_weights = torch.ones(batch_size, device=device, dtype=ce.dtype)
+
+                instance_weights = row_weights.to(dtype=ce.dtype) * profit_weights.to(dtype=ce.dtype)
+                weighted_sum = (ce * instance_weights).sum()
+                denom = instance_weights.sum().clamp_min(1e-9)
+                action_loss = weighted_sum / denom
+
+            if loss_config is not None and target_normalizer is not None:
+                # New Phase 4 loss logic
+                loss_breakdown = compute_market_memory_loss(
+                    latent=outputs["latent"],
+                    future_prediction=pred,
+                    future_target=future_target,
+                    ticker=batch["ticker"],
+                    target_names=target_names,
+                    target_normalizer=target_normalizer,
+                    config=loss_config,
+                )
+                
+                # We need to compute gradients occasionally for diagnostics
+                if batch_idx % 100 == 0:
+                    try:
+                        # Extract components that require grad
+                        L_reg = loss_breakdown.regression * loss_config.lambda_reg
+                        L_ana = loss_breakdown.analogue * loss_config.lambda_analogue
+                        L_rnk = loss_breakdown.ranking * loss_config.lambda_rank
+                        
+                        shared_latent = outputs["latent"]
+                        # Just a quick check to see if we can autograd
+                        if shared_latent.requires_grad:
+                            if L_reg.requires_grad and float(L_reg) > 0:
+                                g_reg = torch.autograd.grad(L_reg, shared_latent, retain_graph=True)[0]
+                            if L_ana.requires_grad and float(L_ana) > 0:
+                                g_ana = torch.autograd.grad(L_ana, shared_latent, retain_graph=True)[0]
+                            if L_rnk.requires_grad and float(L_rnk) > 0:
+                                g_rnk = torch.autograd.grad(L_rnk, shared_latent, retain_graph=True)[0]
+                    except Exception as e:
+                        logger.debug(f"Gradient diagnostic failed: {e}")
+                
+                future_loss = loss_breakdown.total
+                loss = action_loss_weight * action_loss + future_loss
+            else:
+                # Future regression loss (Huber / smooth L1) across configured future targets
+                weights = [1.0] * (pred.size(1) if pred.dim() > 1 else 1)
+                try:
+                    idx = target_names.index("future_max_return_63")
+                    weights[idx] = float(training_cfg.get("max_return_loss_weight", 2.0))
+                except ValueError:
+                    pass
+                try:
+                    idx = target_names.index("future_min_return_63")
+                    weights[idx] = float(training_cfg.get("min_return_loss_weight", 2.0))
+                except ValueError:
+                    pass
+    
+                future_loss_total = pred.new_tensor(0.0)
+                total_w = 0.0
+                for k, w in enumerate(weights):
+                    future_loss_total = future_loss_total + float(w) * _compute_future_loss(
+                        pred[:, k], future_target[:, k]
+                    )
+                    total_w += float(w)
+                future_loss = future_loss_total / max(total_w, 1e-9)
+    
+                loss = action_loss_weight * action_loss + future_loss_weight * future_loss
+
+            if reconstruction_loss_weight > 0 and reconstruction_mask is not None:
+                if reconstruction_mask.any():
+                    reconstruction_loss = F.smooth_l1_loss(
+                        outputs["reconstruction"][reconstruction_mask],
+                        sequence[reconstruction_mask],
+                        reduction="mean",
+                    )
+                    loss = loss + reconstruction_loss_weight * reconstruction_loss
+
+        # Sanity check on loss
+        if not torch.isfinite(loss):
+            min_latent_norm = float(outputs["latent"].norm(p=2, dim=1).min().item()) if "latent" in outputs else None
+            extra_payload = {
+                "loss": float(loss.detach().cpu()) if loss.numel() == 1 else None,
+                "min_latent_norm": min_latent_norm
+            }
+            if loss_config is not None and 'loss_breakdown' in locals():
+                extra_payload.update({
+                    "regression_loss": float(loss_breakdown.regression.detach().cpu()),
+                    "analogue_loss": float(loss_breakdown.analogue.detach().cpu()),
+                    "ranking_loss": float(loss_breakdown.ranking.detach().cpu()),
+                    "variance_loss": float(loss_breakdown.variance.detach().cpu()),
+                    "covariance_loss": float(loss_breakdown.covariance.detach().cpu()),
+                })
+            _dump_training_failure(
+                reason="nonfinite_loss",
+                model=model,
+                optimizer=optimizer,
+                batch=batch,
+                extra=extra_payload,
+            )
+            logger.error(f"Non-finite loss encountered! extra payload: {extra_payload}")
+            raise RuntimeError("Non-finite loss encountered; dumped debug artifacts.")
+
+        # Backward + optimizer step with optional AMP scaling and gradient clipping
         optimizer.zero_grad()
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
-        optimizer.step()
+        if scaler is not None and getattr(scaler, "is_enabled", lambda: False)():
+            scaler.scale(loss).backward()
+            # unscale before clipping
+            scaler.unscale_(optimizer)
+            grads = [p.grad for p in model.parameters() if p.grad is not None]
+            bad_grad = _first_nonfinite_gradient(model)
+            if bad_grad is not None:
+                _dump_training_failure(
+                    reason="nonfinite_gradient",
+                    model=model,
+                    optimizer=optimizer,
+                    batch=batch,
+                    extra={"parameter": bad_grad},
+                )
+                raise RuntimeError(f"Non-finite gradient: {bad_grad}")
+            grad_norm = _global_norm(grads)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+            scaler.step(optimizer)
+            scaler.update()
+        else:
+            loss.backward()
+            grads = [p.grad for p in model.parameters() if p.grad is not None]
+            bad_grad = _first_nonfinite_gradient(model)
+            if bad_grad is not None:
+                _dump_training_failure(
+                    reason="nonfinite_gradient",
+                    model=model,
+                    optimizer=optimizer,
+                    batch=batch,
+                    extra={"parameter": bad_grad},
+                )
+                raise RuntimeError(f"Non-finite gradient: {bad_grad}")
+            grad_norm = _global_norm(grads)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+            optimizer.step()
+
+        # parameter norm for diagnostics
+        params = [p.data for p in model.parameters() if p.data is not None]
+        bad_param = _first_nonfinite_parameter(model)
+        if bad_param is not None:
+            _dump_training_failure(
+                reason="nonfinite_parameter_after_step",
+                model=model,
+                optimizer=optimizer,
+                batch=batch,
+                extra={"parameter": bad_param},
+            )
+            raise RuntimeError(f"Non-finite parameter after optimizer step: {bad_param}")
+        param_norm = _global_norm(params)
+
+        # log diagnostics
+        current_lr = float(optimizer.param_groups[0]["lr"]) if optimizer.param_groups else 0.0
+        logger.info(
+            "batch=%d loss=%.5f lr=%.6g param_norm=%.4f grad_norm=%.4f",
+            batch_idx,
+            float(loss.item()),
+            current_lr,
+            param_norm,
+            grad_norm,
+        )
 
         batch_size = int(sequence.size(0))
         total_loss += float(loss.item()) * batch_size
         total_count += batch_size
+        if progress_callback is not None:
+            progress_callback(batch_idx + 1, total_loss, total_count)
 
     return total_loss / max(total_count, 1)
 
@@ -540,6 +1001,9 @@ def collect_predictions(
     model: nn.Module,
     loader: DataLoader,
     device: torch.device,
+    split_name: str | None = None,
+    export_latents: bool = False,
+    latent_output_dir: str | None = None,
 ) -> tuple[pd.DataFrame, dict[str, float]]:
     model.eval()
     records = []
@@ -547,10 +1011,11 @@ def collect_predictions(
     future_pred_batches = []
 
     target_names = list(getattr(loader.dataset, "future_target_cols", []))
+    non_blocking = device.type == "cuda"
     for batch in loader:
-        sequence = batch["sequence"].to(device)
+        sequence = batch["sequence"].to(device, non_blocking=non_blocking)
         action = batch["action"].cpu().numpy()
-        future_target = batch["future_target"].to(device)
+        future_target = batch["future_target"].to(device, non_blocking=non_blocking)
  
         outputs = _forward_model(model, sequence)
         logits = outputs["action_logits"]
@@ -560,6 +1025,9 @@ def collect_predictions(
         future_pred_batches.append(outputs["future_pred"].cpu().numpy())
  
         future_preds = outputs["future_pred"].cpu().numpy()
+        latent_vals = outputs.get("latent")
+        if latent_vals is not None:
+            latent_vals = latent_vals.cpu().numpy()
         for i, (ticker, timestamp, true_action, predicted_action) in enumerate(zip(
             batch["ticker"],
             batch["timestamp"],
@@ -568,17 +1036,35 @@ def collect_predictions(
         )):
             rec = {
                 "ticker": ticker,
+                "market": batch.get("market", ["unknown"] * len(action))[i],
                 "timestamp": timestamp,
                 "true_action": int(true_action),
                 "pred_action": int(predicted_action),
             }
+            # include latent vector (as list) if available
+            if latent_vals is not None:
+                try:
+                    rec["latent"] = latent_vals[i].astype(float).tolist()
+                except Exception:
+                    rec["latent"] = None
             # attach per-target future predictions so they can be joined later
             if future_preds is not None and len(target_names) == future_preds.shape[1]:
                 for tname, val in zip(target_names, future_preds[i]):
                     try:
-                        rec[str(tname)] = float(val) if np.isfinite(val) else float("nan")
+                        rec[f"pred_{tname}"] = float(val) if np.isfinite(val) else float("nan")
                     except Exception:
-                        rec[str(tname)] = float("nan")
+                        rec[f"pred_{tname}"] = float("nan")
+            # also include true future target values for export convenience
+            try:
+                true_vals = future_target.cpu().numpy()[i]
+                if len(true_vals) == len(target_names):
+                    for tname, val in zip(target_names, true_vals):
+                        try:
+                            rec[f"true_{tname}"] = float(val) if np.isfinite(val) else float("nan")
+                        except Exception:
+                            rec[f"true_{tname}"] = float("nan")
+            except Exception:
+                pass
             records.append(rec)
 
     pred_df = pd.DataFrame(records)
@@ -611,7 +1097,53 @@ def collect_predictions(
         np.concatenate(future_pred_batches, axis=0),
         target_names=target_names,
     )
+    if export_latents:
+        try:
+            latent_path = _export_latents_for_analysis(pred_df, split_name or "unknown", latent_output_dir)
+            future_metrics["latent_export_path"] = latent_path
+        except Exception:
+            logger.exception("Failed to export latent analysis data")
     return pred_df, {**action_metrics, **future_metrics}
+
+
+def _export_latents_for_analysis(pred_df: pd.DataFrame, split_name: str, output_dir: str | None = None) -> str:
+    if output_dir:
+        latent_dir = Path(output_dir)
+        latent_name = f"{split_name}_latents.parquet"
+    else:
+        latent_dir = Path("reports/latent_analysis")
+        ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        latent_name = f"{split_name}_latents_{ts}.parquet"
+    latent_dir.mkdir(parents=True, exist_ok=True)
+    latent_path = latent_dir / latent_name
+
+    rows = []
+    for rec in pred_df.to_dict("records"):
+        latent = rec.get("latent")
+        if not isinstance(latent, list):
+            continue
+        row = {
+            "split": split_name,
+            "ticker": rec.get("ticker"),
+            "market": rec.get("market", "unknown"),
+            "timestamp": rec.get("timestamp"),
+        }
+        for idx, value in enumerate(latent):
+            row[f"latent_{idx}"] = float(value)
+        for col in pred_df.columns:
+            is_target_col = col.startswith("true_future_") or col.startswith("pred_future_")
+            is_event_col = col.startswith("true_event_") or col.startswith("pred_event_")
+            if is_target_col or is_event_col:
+                export_col = col.replace("true_", "")
+                row[export_col] = rec.get(col)
+        rows.append(row)
+
+    export_df = pd.DataFrame(rows)
+    if export_df.empty:
+        raise ValueError("No latent vectors were available to export.")
+    export_df.to_parquet(latent_path, index=False)
+    logger.info("Exported %s latent vectors to %s", len(export_df), str(latent_path))
+    return str(latent_path)
 
 
 def evaluate_split(
@@ -620,6 +1152,7 @@ def evaluate_split(
     raw_frame: pd.DataFrame,
     device: torch.device,
     config: dict[str, Any],
+    split_name: str | None = None,
 ) -> dict[str, Any]:
     if len(dataset) == 0 or raw_frame.empty:
         empty_cycle = compute_cycle_metrics([], [])
@@ -636,7 +1169,14 @@ def evaluate_split(
     loader = make_loader(
         dataset, batch_size=int(config["training"]["batch_size"]), shuffle=False
     )
-    pred_df, action_metrics = collect_predictions(model, loader, device)
+    pred_df, action_metrics = collect_predictions(
+        model,
+        loader,
+        device,
+        split_name=split_name or config.get("_active_split_name"),
+        export_latents=_should_export_latents(config, split_name or config.get("_active_split_name")),
+        latent_output_dir=config.get("latent_export", {}).get("output_dir"),
+    )
 
     catastrophic_return = float(config["evaluation"]["catastrophic_return"])
     late_penalty_factor = float(config["evaluation"]["late_exit_penalty_factor"])
@@ -652,8 +1192,9 @@ def evaluate_split(
         if ticker_pred.empty:
             continue
         ticker_pred = ticker_pred.set_index("timestamp").sort_index()
+        cols_to_join = ["pred_action", "true_action"] + [c for c in ticker_pred.columns if c.startswith("pred_future_")]
         eval_frame = eval_frame.join(
-            ticker_pred[["pred_action", "true_action"]], how="inner"
+            ticker_pred[cols_to_join], how="inner"
         )
         if eval_frame.empty:
             continue
@@ -667,8 +1208,8 @@ def evaluate_split(
             cooldown_days = int(config.get("evaluation", {}).get("return_cooldown_days", 0))
             predicted_cycles = decode_return_spans(
                 eval_frame,
-                pred_max_col="future_max_return_63",
-                pred_min_col="future_min_return_63",
+                pred_max_col="pred_future_max_return_63",
+                pred_min_col="pred_future_min_return_63",
                 enter_threshold=enter,
                 risk_threshold=risk_thr,
                 exit_threshold=exit_thr,
@@ -710,6 +1251,18 @@ def evaluate_split(
         "moving_avg_count": float(moving_summary.get("moving_avg_count", 0.0)),
         "per_ticker": per_ticker,
     }
+
+
+def _should_export_latents(config: dict[str, Any], split_name: str | None) -> bool:
+    if bool(config.get("_export_latents", False)):
+        return True
+    if not split_name:
+        return False
+    export_cfg = config.get("latent_export", {})
+    splits = export_cfg.get("splits", [])
+    if isinstance(splits, str):
+        splits = [s.strip() for s in splits.split(",") if s.strip()]
+    return split_name in set(splits)
 
 
 def write_report(
@@ -789,8 +1342,82 @@ def save_checkpoint(
         "evaluation_config": deepcopy(config["evaluation"]),
         "split_meta": split_meta,
     }
-    torch.save(payload, checkpoint_path)
+    _atomic_torch_save(payload, checkpoint_path)
     return str(checkpoint_path)
+
+
+def _save_training_state(
+    path: Path,
+    *,
+    model: nn.Module,
+    optimizer: torch.optim.Optimizer,
+    scaler: GradScaler,
+    config_fingerprint: str,
+    runtime_fingerprint: dict[str, Any],
+    loader: DataLoader,
+    next_epoch: int,
+    next_batch: int,
+    epoch_total_loss: float,
+    epoch_total_count: int,
+    epoch_loader_state: torch.Tensor | None,
+    best_val_score: float,
+    best_state: dict[str, torch.Tensor] | None,
+) -> None:
+    """Persist a complete optimizer-level continuation point."""
+    payload = {
+        "format_version": 1,
+        "saved_at": datetime.now(timezone.utc).isoformat(),
+        "config_fingerprint": config_fingerprint,
+        "runtime_fingerprint": runtime_fingerprint,
+        "model_state": model.state_dict(),
+        "optimizer_state": optimizer.state_dict(),
+        "scaler_state": scaler.state_dict(),
+        "rng_state": _rng_state(loader),
+        "next_epoch": int(next_epoch),
+        "next_batch": int(next_batch),
+        "epoch_total_loss": float(epoch_total_loss),
+        "epoch_total_count": int(epoch_total_count),
+        "epoch_loader_state": epoch_loader_state,
+        "best_val_score": float(best_val_score),
+        "best_state": best_state,
+    }
+    _atomic_torch_save(payload, path)
+
+
+def _load_training_state(
+    path: Path,
+    *,
+    model: nn.Module,
+    optimizer: torch.optim.Optimizer,
+    scaler: GradScaler,
+    config_fingerprint: str,
+    runtime_fingerprint: dict[str, Any],
+    loader: DataLoader,
+    allow_hardware_mismatch: bool,
+) -> dict[str, Any]:
+    """Load and validate an optimizer-level continuation point."""
+    payload = torch.load(path, map_location="cpu", weights_only=False)
+    if payload.get("config_fingerprint") != config_fingerprint:
+        raise RuntimeError(
+            "Refusing to resume because the training configuration changed. "
+            "Start a new run directory for the new experiment."
+        )
+    previous_runtime = payload.get("runtime_fingerprint", {})
+    if previous_runtime != runtime_fingerprint and not allow_hardware_mismatch:
+        raise RuntimeError(
+            "Refusing to resume on a different software or accelerator testbed. "
+            "Set training.allow_hardware_mismatch_resume=true only for a run that "
+            "will be explicitly marked non-comparable."
+        )
+    model.load_state_dict(payload["model_state"])
+    optimizer.load_state_dict(payload["optimizer_state"])
+    for state in optimizer.state.values():
+        for key, value in state.items():
+            if torch.is_tensor(value):
+                state[key] = value.to(next(model.parameters()).device)
+    scaler.load_state_dict(payload.get("scaler_state", {}))
+    _restore_rng_state(payload["rng_state"], loader)
+    return payload
 
 
 def load_checkpoint(
@@ -816,14 +1443,68 @@ def load_checkpoint(
     return model, payload
 
 
-def train(config_path: str = DEFAULT_CONFIG_PATH) -> dict[str, Any]:
+def train(
+    config_path: str = DEFAULT_CONFIG_PATH,
+    resume: bool | None = None,
+) -> dict[str, Any]:
+    """Train an encoder, optionally resuming an exact optimizer-level checkpoint."""
+    global _STOP_REQUESTED
+    _STOP_REQUESTED = False
     config = load_config(config_path)
     training_cfg = config["training"]
+    resume_enabled = bool(training_cfg.get("auto_resume", False)) if resume is None else resume
+    checkpoint_interval = max(int(training_cfg.get("checkpoint_interval_steps", 250)), 1)
     device_name = training_cfg.get("device", "auto")
     if device_name == "auto":
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     else:
         device = torch.device(device_name)
+        if device.type == "cuda" and not torch.cuda.is_available():
+            raise RuntimeError("CUDA was requested, but this PyTorch installation cannot access a CUDA GPU.")
+
+    if device.type == "cuda":
+        vram_fraction = float(
+            os.environ.get(
+                "CORE_RL_VRAM_FRACTION",
+                config.get("hardware", {}).get("vram_fraction", 0.80),
+            )
+        )
+        if not 0.0 < vram_fraction <= 1.0:
+            raise ValueError("VRAM fraction must be in the interval (0, 1].")
+        device_index = device.index if device.index is not None else torch.cuda.current_device()
+        torch.cuda.set_per_process_memory_fraction(vram_fraction, device_index)
+        torch.cuda.reset_peak_memory_stats(device_index)
+        torch.set_float32_matmul_precision("high")
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
+        torch.backends.cudnn.benchmark = True
+        logger.info("Training on CUDA device: %s", torch.cuda.get_device_name(device))
+        logger.info("CUDA allocator capped at %.1f%% of physical VRAM", 100.0 * vram_fraction)
+
+    model_dir = Path(training_cfg["model_dir"])
+    training_state_path = model_dir / "latest_training_state.pt"
+    completion_path = model_dir / "training_complete.json"
+    config_fingerprint = _config_fingerprint(config)
+    runtime_fingerprint = _runtime_fingerprint(device)
+    if resume_enabled and completion_path.exists():
+        completion = json.loads(completion_path.read_text(encoding="utf-8"))
+        if completion.get("config_fingerprint") != config_fingerprint:
+            raise RuntimeError(
+                "A completion marker exists for a different training configuration. "
+                "Use a new model directory."
+            )
+        required_outputs = [
+            completion.get("summary", {}).get("checkpoint_path"),
+            completion.get("summary", {}).get("report_json"),
+            completion.get("summary", {}).get("report_md"),
+        ]
+        if not all(value and Path(value).is_file() for value in required_outputs):
+            raise RuntimeError(
+                "Training completion marker exists, but a final artifact is missing. "
+                "Restore the run directory or start a new run ID."
+            )
+        logger.info("Training is already complete; reusing %s", completion_path)
+        return completion["summary"]
 
     set_seed(int(training_cfg["seed"]))
 
@@ -848,74 +1529,216 @@ def train(config_path: str = DEFAULT_CONFIG_PATH) -> dict[str, Any]:
         datasets["train"],
         batch_size=int(training_cfg["batch_size"]),
         shuffle=True,
+        market_balanced=bool(config.get("data", {}).get("market_balanced_sampling", False)),
     )
-    best_state = None
-    best_val_score = float("-inf")
 
-    for epoch in range(int(training_cfg["epochs"])):
-        train_loss = train_one_epoch(
+    # AMP scaler and option. Avoid positional args here because older torch
+    # GradScaler variants interpret the first positional argument as init_scale.
+    use_amp = bool(training_cfg.get("use_amp", True))
+    scaler = GradScaler(enabled=(use_amp and device.type == "cuda"))
+    
+    loss_cfg = config["training"].get("loss")
+    loss_config = None
+    target_normalizer = None
+    if loss_cfg:
+        loss_config = OutcomeGeometryLossConfig(
+            lambda_reg=float(loss_cfg.get("lambda_reg", 1.0)),
+            lambda_analogue=float(loss_cfg.get("lambda_analogue", 0.0)),
+            lambda_rank=float(loss_cfg.get("lambda_rank", 0.0)),
+            lambda_var=float(loss_cfg.get("lambda_var", 0.0)),
+            is_supcon_control=bool(loss_cfg.get("is_supcon_control", False)),
+            is_triplet_control=bool(loss_cfg.get("is_triplet_control", False)),
+            triplet_margin=float(loss_cfg.get("triplet_margin", 0.20)),
+            future_loss_weight=float(training_cfg.get("future_loss_weight", 1.0)),
+            max_return_loss_weight=float(training_cfg.get("max_return_loss_weight", 1.0)),
+            min_return_loss_weight=float(training_cfg.get("min_return_loss_weight", 1.0)),
+        )
+        target_normalizer = OutcomeTargetNormalizer()
+        target_names = list(getattr(datasets["train"], "future_target_cols", []))
+        train_targets = torch.tensor(datasets["train"].frame[target_names].to_numpy(), dtype=torch.float32, device=device)
+        target_normalizer.fit(train_targets, target_names)
+
+    best_state: dict[str, torch.Tensor] | None = None
+    best_val_score = float("-inf")
+    start_epoch = 0
+    start_batch = 0
+    initial_total_loss = 0.0
+    initial_total_count = 0
+    resumed_epoch_loader_state = None
+    if resume_enabled and training_state_path.exists():
+        resumed = _load_training_state(
+            training_state_path,
             model=model,
-            loader=train_loader,
             optimizer=optimizer,
-            class_weights=class_weights,
-            device=device,
-            config=config,
+            scaler=scaler,
+            config_fingerprint=config_fingerprint,
+            runtime_fingerprint=runtime_fingerprint,
+            loader=train_loader,
+            allow_hardware_mismatch=bool(
+                training_cfg.get("allow_hardware_mismatch_resume", False)
+            ),
         )
-        val_metrics = evaluate_split(
-            model=model,
-            dataset=datasets["val"],
-            raw_frame=raw_frames["val"],
-            device=device,
-            config=config,
-        )
-        score = (
-            val_metrics["cycle_precision"]
-            + val_metrics["cycle_recall"]
-            + val_metrics["profitable_cycle_rate"]
-            - val_metrics["catastrophic_cycle_rate"]
-            - val_metrics["bounded_exit_error"]
-        )
+        start_epoch = int(resumed["next_epoch"])
+        start_batch = int(resumed["next_batch"])
+        initial_total_loss = float(resumed.get("epoch_total_loss", 0.0))
+        initial_total_count = int(resumed.get("epoch_total_count", 0))
+        resumed_epoch_loader_state = resumed.get("epoch_loader_state")
+        best_val_score = float(resumed.get("best_val_score", float("-inf")))
+        best_state = resumed.get("best_state")
         logger.info(
-            "Epoch %s train_loss=%.4f val_precision=%.4f val_recall=%.4f profitable=%.4f catastrophic=%.4f",
-            epoch + 1,
-            train_loss,
-            val_metrics["cycle_precision"],
-            val_metrics["cycle_recall"],
-            val_metrics["profitable_cycle_rate"],
-            val_metrics["catastrophic_cycle_rate"],
+            "Resuming epoch %d at batch %d from %s",
+            start_epoch + 1,
+            start_batch,
+            training_state_path,
         )
-        if score > best_val_score:
-            best_val_score = score
-            best_state = deepcopy(model.state_dict())
+
+    previous_handlers: dict[int, Any] = {}
+    termination_signals = {
+        signal.SIGINT,
+        getattr(signal, "SIGTERM", signal.SIGINT),
+        getattr(signal, "SIGBREAK", signal.SIGINT),
+    }
+    if resume_enabled:
+        for signum in termination_signals:
+            try:
+                previous_handlers[signum] = signal.getsignal(signum)
+                signal.signal(signum, _request_training_stop)
+            except (OSError, ValueError):
+                pass
+
+    try:
+        for epoch in range(start_epoch, int(training_cfg["epochs"])):
+            if start_batch > 0:
+                if resumed_epoch_loader_state is None:
+                    raise RuntimeError("Mid-epoch checkpoint is missing its loader state.")
+                train_loader.generator.set_state(resumed_epoch_loader_state)
+                epoch_loader_state = resumed_epoch_loader_state
+            else:
+                epoch_loader_state = train_loader.generator.get_state()
+
+            def save_progress(next_batch: int, running_loss: float, running_count: int) -> None:
+                should_save = resume_enabled and (
+                    next_batch % checkpoint_interval == 0 or _STOP_REQUESTED
+                )
+                if should_save:
+                    _save_training_state(
+                        training_state_path,
+                        model=model,
+                        optimizer=optimizer,
+                        scaler=scaler,
+                        config_fingerprint=config_fingerprint,
+                        runtime_fingerprint=runtime_fingerprint,
+                        loader=train_loader,
+                        next_epoch=epoch,
+                        next_batch=next_batch,
+                        epoch_total_loss=running_loss,
+                        epoch_total_count=running_count,
+                        epoch_loader_state=epoch_loader_state,
+                        best_val_score=best_val_score,
+                        best_state=best_state,
+                    )
+                    logger.info("Saved resumable state at epoch %d batch %d", epoch + 1, next_batch)
+                if _STOP_REQUESTED:
+                    raise TrainingInterrupted(
+                        f"Shutdown requested; continuation saved to {training_state_path}"
+                    )
+
+            train_loss = train_one_epoch(
+                model=model,
+                loader=train_loader,
+                optimizer=optimizer,
+                class_weights=class_weights,
+                device=device,
+                config=config,
+                target_normalizer=target_normalizer,
+                loss_config=loss_config,
+                scaler=scaler,
+                start_batch=start_batch,
+                initial_total_loss=initial_total_loss,
+                initial_total_count=initial_total_count,
+                progress_callback=save_progress,
+            )
+            config["_active_split_name"] = "val"
+            config["_export_latents"] = False
+            val_metrics = evaluate_split(
+                model=model,
+                dataset=datasets["val"],
+                raw_frame=raw_frames["val"],
+                device=device,
+                config=config,
+            )
+            selection_metric = str(training_cfg.get("validation_selection_metric", "future_target_mae"))
+            selection_mode = str(training_cfg.get("validation_selection_mode", "min")).lower()
+            metric_value = float(val_metrics.get(selection_metric, 0.0))
+            score = -metric_value if selection_mode == "min" else metric_value
+            logger.info(
+                "Epoch %s train_loss=%.4f val_%s=%.6f val_future_mae=%.6f",
+                epoch + 1,
+                train_loss,
+                selection_metric,
+                metric_value,
+                val_metrics["future_target_mae"],
+            )
+            if score > best_val_score:
+                best_val_score = score
+                best_state = deepcopy(model.state_dict())
+
+            if resume_enabled:
+                _save_training_state(
+                    training_state_path,
+                    model=model,
+                    optimizer=optimizer,
+                    scaler=scaler,
+                    config_fingerprint=config_fingerprint,
+                    runtime_fingerprint=runtime_fingerprint,
+                    loader=train_loader,
+                    next_epoch=epoch + 1,
+                    next_batch=0,
+                    epoch_total_loss=0.0,
+                    epoch_total_count=0,
+                    epoch_loader_state=None,
+                    best_val_score=best_val_score,
+                    best_state=best_state,
+                )
+            if _STOP_REQUESTED:
+                raise TrainingInterrupted(
+                    f"Shutdown requested; continuation saved to {training_state_path}"
+                )
+            start_batch = 0
+            initial_total_loss = 0.0
+            initial_total_count = 0
+            resumed_epoch_loader_state = None
+    finally:
+        for signum, handler in previous_handlers.items():
+            signal.signal(signum, handler)
 
     if best_state is None:
         raise RuntimeError("Training finished without a best checkpoint.")
 
     model.load_state_dict(best_state)
 
-    report = {
-        "val": evaluate_split(
+    report = {}
+    for split_name in ("train", "val", "test"):
+        config["_active_split_name"] = split_name
+        config["_export_latents"] = False
+        report[split_name] = evaluate_split(
             model=model,
-            dataset=datasets["val"],
-            raw_frame=raw_frames["val"],
+            dataset=datasets[split_name],
+            raw_frame=raw_frames[split_name],
             device=device,
             config=config,
-        ),
-        "test": evaluate_split(
-            model=model,
-            dataset=datasets["test"],
-            raw_frame=raw_frames["test"],
-            device=device,
-            config=config,
-        ),
-    }
+            split_name=split_name,
+        )
     if "holdout" in datasets:
+        config["_active_split_name"] = "holdout"
+        config["_export_latents"] = False
         report["holdout"] = evaluate_split(
             model=model,
             dataset=datasets["holdout"],
             raw_frame=raw_frames["holdout"],
             device=device,
             config=config,
+            split_name="holdout",
         )
 
     checkpoint_path = save_checkpoint(model, standardizer, config, split_meta)
@@ -927,7 +1750,31 @@ def train(config_path: str = DEFAULT_CONFIG_PATH) -> dict[str, Any]:
         "report_md": report_paths[1],
         "split_meta": split_meta,
         "metrics": report,
+        "latent_exports": {
+            split: metrics.get("latent_export_path")
+            for split, metrics in report.items()
+            if isinstance(metrics, dict) and metrics.get("latent_export_path")
+        },
+        "runtime": {
+            **runtime_fingerprint,
+            "vram_fraction": vram_fraction if device.type == "cuda" else None,
+            "peak_memory_allocated": (
+                int(torch.cuda.max_memory_allocated(device)) if device.type == "cuda" else None
+            ),
+            "peak_memory_reserved": (
+                int(torch.cuda.max_memory_reserved(device)) if device.type == "cuda" else None
+            ),
+        },
     }
+    _atomic_json_write(
+        {
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+            "config_fingerprint": config_fingerprint,
+            "runtime_fingerprint": runtime_fingerprint,
+            "summary": summary,
+        },
+        completion_path,
+    )
     logger.info("Saved checkpoint to %s", checkpoint_path)
     logger.info("Saved reports to %s and %s", *report_paths)
     return summary
@@ -936,5 +1783,11 @@ def train(config_path: str = DEFAULT_CONFIG_PATH) -> dict[str, Any]:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--config-path", default=DEFAULT_CONFIG_PATH)
+    parser.add_argument(
+        "--resume",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Resume from model_dir/latest_training_state.pt when present.",
+    )
     args = parser.parse_args()
-    train(config_path=args.config_path)
+    train(config_path=args.config_path, resume=args.resume)

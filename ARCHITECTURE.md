@@ -531,6 +531,9 @@ Training writes:
 models/cycle_reasoner/final_model.pt
 reports/experiments/*.json
 reports/experiments/*.md
+reports/research_phase1/*.json
+reports/research_phase1/*.md
+reports/latent_analysis/*.parquet
 ```
 
 Evaluation writes:
@@ -548,5 +551,7 @@ The numeric evaluation reports include:
 - future/event MAE, RMSE, mean R2, and mean Pearson correlation
 - per-target future/event regression metrics
 - cycle precision, recall, F1, return statistics, catastrophic rate, and exit error
+- exported per-sample latent vectors (when requested) with columns: `ticker`, `timestamp`, `latent`, `true_future_max_return_63`, `true_future_min_return_63` — written to `reports/latent_analysis/` as parquet (CSV fallback)
+ - phase-1 analysis reports: PCA/UMAP projections, neighbor-future correlation stats, and opportunity-ranking results are produced by `scripts/phase1_analysis.py` and written to `reports/research_phase1/`.
 
 Generated outputs are ignored by git.

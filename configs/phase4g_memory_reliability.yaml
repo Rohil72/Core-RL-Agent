@@ -1,0 +1,55 @@
+experiment:
+  phase: 4G
+  name: memory_transfer_reliability
+  source_run: reports/phase4e/phase4e_v1
+  source_config: configs/phase4e_cross_market_sharpe.yaml
+  source_phase4c_run: reports/phase4c/phase4c_v1
+  output_root: reports/phase4g
+  source_candidate: A2_base
+  source_semantic: A2_blended_alpha_identity
+  expected_folds: 5
+  expected_seeds: [7, 17, 37]
+  minimum_complete_runs: 14
+  active_folds: []
+  active_seeds: [7, 17, 37]
+  training_split: train
+  validation_split: val
+  confirmation_splits: [test, holdout]
+
+reliability:
+  fit_fraction: 0.70
+  calibration_embargo_sessions: 63
+  minimum_fit_rows: 500
+  minimum_calibration_rows: 200
+  logistic_c: 0.10
+  useful_alpha_after_costs: 0.002
+  isotonic_minimum_unique_scores: 10
+  random_seed: 7
+
+coverage_candidates:
+  - id: coverage_100
+    nominal_coverage: 1.00
+  - id: coverage_075
+    nominal_coverage: 0.75
+  - id: coverage_050
+    nominal_coverage: 0.50
+  - id: coverage_025
+    nominal_coverage: 0.25
+
+selection:
+  baseline_candidate: coverage_100
+  target_pooled_sharpe: 2.0
+  target_cross_market_oof_sharpe: 2.0
+  minimum_mean_excess_return: 0.0
+  minimum_positive_fold_excess_fraction: 0.60
+  maximum_worst_drawdown: 0.25
+  minimum_mean_trade_count: 10
+  minimum_deflated_sharpe_probability: 0.80
+  maximum_pbo: 0.50
+  minimum_positive_brier_skill_fraction: 0.60
+  minimum_positive_top_bottom_spread_fraction: 0.60
+  objective:
+    pooled_sharpe_weight: 1.0
+    minimum_fold_sharpe_weight: 0.25
+    mean_excess_return_weight: 2.0
+    drawdown_weight: 0.50

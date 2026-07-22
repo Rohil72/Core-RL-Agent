@@ -1,0 +1,79 @@
+experiment:
+  phase: 5B-v2
+  source_phase4c_run: reports/phase4c/phase4c_v1
+  source_phase4e_run: reports/phase4e/phase4e_v1
+  precomputed_glob: data/precomputed_v2/*.parquet
+  output_root: reports/phase5
+  validation_split: val
+  active_folds: []
+  active_seeds: [7, 17, 37]
+
+decision_dataset:
+  horizons: [5, 10, 21, 42, 63]
+  primary_horizon: 63
+  stop_loss: 0.10
+  min_hold_sessions: 5
+  max_hold_sessions: 63
+  exit_score_fraction: 0.50
+  exit_min_score: 0.0
+  adverse_excursion_weight: 0.50
+  holding_penalty_per_session: 0.0001
+  slippage_bps_per_side: 10.0
+  benchmark_column: future_blended_alpha_63
+  utility_return_mode: fixed_horizon
+
+adapter:
+  input_dim: 128
+  hidden_dim: 64
+  decision_dim: 32
+  dropout: 0.10
+  quantiles: [0.10, 0.50, 0.90]
+
+training:
+  epochs: 60
+  batch_size: 256
+  learning_rate: 0.0002
+  weight_decay: 0.0001
+  patience: 6
+  gradient_clip: 1.0
+  device: auto
+  neighbors: 25
+  selection_metric: retrieval_utility
+  selection_interval: 2
+  minimum_epochs: 12
+  retrieval_spearman_weight: 0.25
+  learning_rate_patience: 4
+  learning_rate_decay: 0.50
+  minimum_learning_rate: 0.00001
+
+loss:
+  quantile_weight: 1.0
+  ranking_weight: 0.10
+  analogue_weight: 0.20
+  vicreg_weight: 0.01
+  rank_temperature: 0.20
+  outcome_temperature: 0.50
+  latent_temperature: 0.20
+  vicreg_variance_target: 0.20
+
+alignment:
+  epochs: 4
+  encoder_learning_rate: 0.00003
+  adapter_learning_rate: 0.0001
+  weight_decay: 0.0001
+  gradient_clip: 1.0
+  maximum_future_mae_regression: 0.05
+
+adapter_gate:
+  minimum_fold_wins: 4
+  minimum_oof_sharpe: 1.90
+  maximum_drawdown: 0.20
+  minimum_trades: 20
+
+policy_gate:
+  minimum_oof_sharpe: 2.0
+  maximum_drawdown: 0.20
+  minimum_positive_fold_fraction: 0.80
+  minimum_deflated_sharpe_probability: 0.80
+  maximum_pbo: 0.50
+  minimum_trades: 20

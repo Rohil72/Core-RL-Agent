@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import random
 from dataclasses import dataclass
-from typing import Sequence
+from typing import Any, Sequence
 
 import numpy as np
 import pandas as pd
@@ -139,8 +139,10 @@ class CycleSequenceDataset(Dataset):
         self.window_size = int(window_size)
         self.target_start = target_start
         self.target_end = target_end
-        self.series: dict[str, dict[str, np.ndarray | pd.DatetimeIndex]] = {}
+        self.frame = frame
+        self.series: dict[str, dict[str, Any]] = {}
         self.samples: list[tuple[str, int]] = []
+        self.sample_markets: list[str] = []
 
         for ticker, group in frame.groupby("ticker"):
             g = group.sort_index().copy()
@@ -170,6 +172,7 @@ class CycleSequenceDataset(Dataset):
                 "hard_negative": hard_negative_values,
                 "close": close_values,
                 "index": g.index,
+                "market": str(g["market"].iloc[0]) if "market" in g else "unknown",
             }
 
             for end_idx in range(self.window_size - 1, len(g)):
@@ -179,6 +182,7 @@ class CycleSequenceDataset(Dataset):
                 if self.target_end is not None and timestamp > self.target_end:
                     continue
                 self.samples.append((ticker, end_idx))
+                self.sample_markets.append(str(self.series[ticker]["market"]))
 
     def __len__(self) -> int:
         return len(self.samples)
@@ -200,5 +204,6 @@ class CycleSequenceDataset(Dataset):
             ),
             "close": torch.tensor(series["close"][end_idx], dtype=torch.float32),
             "ticker": ticker,
+            "market": str(series["market"]),
             "timestamp": timestamp.isoformat(),
         }

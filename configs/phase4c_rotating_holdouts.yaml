@@ -1,0 +1,17 @@
+experiment:
+  name: phase4c_rotating_unseen_tickers
+  evaluation_period: "2024"
+  primary_mode: cross_ticker_only
+  seeds: [7, 17, 37]
+
+folds:
+  - id: fold_01
+    holdout_tickers: [MSFT, CRM, NVDA, AMGN, ENPH, GOOGL]
+  - id: fold_02
+    holdout_tickers: [ORCL, ADBE, AMD, GILD, SEDG, META]
+  - id: fold_03
+    holdout_tickers: [SNOW, INTU, AVGO, ISRG, NEE, BIDU]
+  - id: fold_04
+    holdout_tickers: [AAPL, PYPL, MDT, RTX, LMT]
+  - id: fold_05
+    holdout_tickers: [SONY, V, SYK, REGN, NOC]

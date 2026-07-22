@@ -59,11 +59,13 @@ def test_cycle_model_training_smoke(tmp_path: Path):
         },
         "model": {
             "window_size": 21,
-            "encoder": "hierarchical_lstm",
-            "lstm_hidden_dim": 16,
-            "lstm_layers": 1,
+            "encoder": "patch_transformer",
+            "d_model": 32,
+            "nhead": 4,
+            "num_layers": 2,
             "patch_size": 5,
             "latent_dim": 32,
+            "num_memory_slots": 8,
             "dropout": 0.0,
         },
         "training": {
@@ -78,6 +80,8 @@ def test_cycle_model_training_smoke(tmp_path: Path):
             "hard_negative_weight": 0.5,
             "grad_clip": 1.0,
             "model_dir": str(tmp_path / "models"),
+            "auto_resume": True,
+            "checkpoint_interval_steps": 100000,
         },
         "self_supervised": {
             "reconstruction_loss_weight": 0.05,
@@ -114,6 +118,7 @@ def test_cycle_model_training_smoke(tmp_path: Path):
                 "event_upside_before_drawdown_126",
             ],
         },
+        "latent_export": {"splits": ["train", "val", "test"]},
         "evaluation": {
             "cooldown_days": 42,
             "catastrophic_return": -0.10,
@@ -131,3 +136,11 @@ def test_cycle_model_training_smoke(tmp_path: Path):
     assert Path(result["report_json"]).exists()
     assert Path(result["report_md"]).exists()
     assert "test" in result["metrics"]
+    assert {"train", "val", "test"}.issubset(set(result["latent_exports"]))
+    for path in result["latent_exports"].values():
+        assert Path(path).exists()
+    assert (tmp_path / "models" / "latest_training_state.pt").exists()
+    assert (tmp_path / "models" / "training_complete.json").exists()
+
+    resumed = train(str(config_path), resume=True)
+    assert resumed["checkpoint_path"] == result["checkpoint_path"]

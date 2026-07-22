@@ -1,0 +1,105 @@
+experiment:
+  phase: 5C-consensus-exposure
+  source_consensus_run: reports/phase5/consensus/phase5_consensus_v1
+  source_variant: C0_median_control
+  source_phase4e_run: reports/phase4e/phase4e_v1
+  phase4e_config: configs/phase4e_cross_market_sharpe.yaml
+  output_root: reports/phase5/consensus_exposure
+  minimum_folds: 5
+
+controllers:
+  - id: E0_c0_static
+    description: Exact frozen C0 consensus policy with full exposure.
+    config:
+      enabled: false
+
+  - id: E1_volatility_15
+    description: Causal 15 percent annualized volatility budget with no leverage.
+    config:
+      enabled: true
+      target_annualized_volatility: 0.15
+      volatility_lookback: 20
+      volatility_min_observations: 10
+      volatility_floor: 0.05
+      maximum_volatility_scalar: 1.0
+      drawdown_soft_limit: null
+      drawdown_hard_limit: null
+      evidence_enabled: false
+      minimum_exposure: 0.25
+      maximum_exposure: 1.0
+      rebalance_threshold: 0.15
+
+  - id: E2_volatility_drawdown
+    description: Volatility budget plus smooth drawdown-aware capital preservation.
+    config:
+      enabled: true
+      target_annualized_volatility: 0.15
+      volatility_lookback: 20
+      volatility_min_observations: 10
+      volatility_floor: 0.05
+      maximum_volatility_scalar: 1.0
+      drawdown_soft_limit: 0.08
+      drawdown_hard_limit: 0.20
+      drawdown_floor_scalar: 0.35
+      evidence_enabled: false
+      combination: minimum
+      minimum_exposure: 0.25
+      maximum_exposure: 1.0
+      rebalance_threshold: 0.15
+
+  - id: E3_consensus_risk_budget
+    description: Scale-free volatility, drawdown, memory breadth, and seed-stability budget.
+    config:
+      enabled: true
+      target_annualized_volatility: 0.15
+      volatility_lookback: 20
+      volatility_min_observations: 10
+      volatility_floor: 0.05
+      maximum_volatility_scalar: 1.0
+      drawdown_soft_limit: 0.08
+      drawdown_hard_limit: 0.20
+      drawdown_floor_scalar: 0.35
+      evidence_enabled: true
+      evidence_top_fraction: 0.25
+      evidence_score_column: consensus_entry_rank
+      confidence_reference: 0.60
+      agreement_reference: 0.50
+      effective_sample_size_reference: 24.0
+      positive_breadth_reference: 0.75
+      confidence_weight: 0.15
+      agreement_weight: 0.15
+      effective_sample_size_weight: 0.05
+      positive_breadth_weight: 0.15
+      seed_consensus_enabled: true
+      seed_vote_reference: 0.67
+      seed_rank_dispersion_limit: 0.20
+      seed_positive_reference: 0.67
+      seed_vote_weight: 0.20
+      seed_rank_stability_weight: 0.15
+      seed_positive_weight: 0.15
+      evidence_floor_scalar: 0.45
+      combination: minimum
+      minimum_exposure: 0.25
+      maximum_exposure: 1.0
+      rebalance_threshold: 0.15
+
+selection:
+  baseline_candidate: E0_c0_static
+  minimum_pooled_sharpe: 2.0
+  minimum_cross_fold_oof_sharpe: 2.0
+  minimum_fold_sharpe: 0.50
+  maximum_worst_drawdown: 0.20
+  minimum_mean_excess_return: 0.0
+  minimum_positive_fold_fraction: 0.80
+  minimum_deflated_sharpe_probability: 0.80
+  maximum_pbo: 0.50
+  minimum_bootstrap_probability: 0.80
+  minimum_mean_trade_count: 20
+  bootstrap_samples: 2000
+  bootstrap_block_length: 21
+  objective:
+    pooled_sharpe_weight: 1.0
+    minimum_fold_sharpe_weight: 0.50
+    mean_excess_return_weight: 2.0
+    drawdown_weight: 1.0
+    fold_dispersion_weight: 0.25

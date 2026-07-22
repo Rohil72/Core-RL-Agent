@@ -1,0 +1,37 @@
+experiment:
+  phase: 5D-opportunity-allocation
+  source_phase5_run: reports/phase5/phase5_v2
+  phase4e_config: configs/phase4e_cross_market_sharpe.yaml
+  output_root: reports/phase5/opportunity_allocator
+  minimum_folds: 5
+  allocator_query_start: 2022-01-01
+
+allocator:
+  downside_weight: 0.35
+  learning_rate: 0.05
+  max_iter: 200
+  max_leaf_nodes: 15
+  min_samples_leaf: 50
+  l2_regularization: 0.10
+  random_state: 7
+  action_rank_thresholds: [0.50, 0.65, 0.80, 0.90]
+  action_levels: [0.0, 0.25, 0.50, 0.75, 1.0]
+
+learnability:
+  fit_date_fraction: 0.60
+  minimum_obvious_positive_folds: 4
+  minimum_nonlinear_fold_wins: 4
+
+selection:
+  baseline_candidate: B0_c0_static
+  minimum_pooled_sharpe: 2.0
+  minimum_fold_sharpe: 0.50
+  maximum_worst_drawdown: 0.20
+  minimum_mean_excess_return: 0.0
+  minimum_positive_fold_fraction: 0.80
+  minimum_deflated_sharpe_probability: 0.80
+  maximum_pbo: 0.50
+  minimum_bootstrap_probability: 0.80
+  minimum_mean_trade_count: 20
+  bootstrap_samples: 2000
+  bootstrap_block_length: 21

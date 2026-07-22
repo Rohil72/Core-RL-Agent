@@ -1,0 +1,37 @@
+experiment:
+  phase: 5B-consensus
+  source_phase5_run: reports/phase5/phase5_v2
+  source_phase4e_run: reports/phase4e/phase4e_v1
+  phase4e_config: configs/phase4e_cross_market_sharpe.yaml
+  output_root: reports/phase5/consensus
+  minimum_folds: 5
+  minimum_seed_models: 2
+
+variants:
+  - id: C0_median_control
+    minimum_votes: 0
+    exit_smoothing_span: 1
+    exit_score_quantile: 0.50
+  - id: C1_majority_entry
+    minimum_votes: 2
+    exit_smoothing_span: 1
+    exit_score_quantile: 0.50
+  - id: C2_majority_persistent
+    minimum_votes: 2
+    exit_smoothing_span: 10
+    exit_score_quantile: 0.50
+  - id: C3_upper_consensus_persistent
+    minimum_votes: 2
+    exit_smoothing_span: 10
+    exit_score_quantile: 0.75
+
+selection:
+  minimum_pooled_sharpe: 2.0
+  maximum_worst_drawdown: 0.20
+  minimum_mean_excess_return: 0.0
+  minimum_positive_fold_fraction: 0.60
+  minimum_deflated_sharpe_probability: 0.80
+  maximum_pbo: 0.50
+  minimum_bootstrap_probability: 0.80
+  bootstrap_samples: 2000
+  bootstrap_block_length: 21

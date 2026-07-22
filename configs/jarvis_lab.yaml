@@ -1,0 +1,22 @@
+# Template configuration for launching jobs on Jarvis Lab (fill in values).
+# This file is a template only — actual submission depends on Jarvis Lab's API/CLI.
+
+project_id: "<your-jarvis-project-id>"
+registry: "<your-docker-registry>"
+image_name: "core-rl-agent:latest"
+num_gpus: 1
+gpu_type: "A100"
+gpu_memory: "40GB"
+cpu: 8
+memory: "64GB"
+mounts:
+  - host_path: "/path/to/precomputed"
+    container_path: "/workspace/data/precomputed"
+  - host_path: "/path/to/output"
+    container_path: "/workspace/output"
+
+# command to run inside the container (overrides Dockerfile CMD)
+command: ["python", "trainers.py", "--data-dir", "data/precomputed", "--device", "cuda", "--epochs", "20"]
+
+# optional: registry push + remote run instructions
+push_and_run: true

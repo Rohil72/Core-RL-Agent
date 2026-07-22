@@ -1,0 +1,120 @@
+experiment:
+  phase: 4F
+  name: causal_exposure_controller
+  source_run: reports/phase4e/phase4e_v1
+  source_config: configs/phase4e_cross_market_sharpe.yaml
+  output_root: reports/phase4f
+  source_candidate: A2_base
+  source_semantic: A2_blended_alpha_identity
+  expected_folds: 5
+  expected_seeds: [7, 17, 37]
+  minimum_complete_runs: 14
+  active_folds: []
+  active_seeds: [7, 17, 37]
+  validation_split: val
+  confirmation_splits: [test, holdout]
+
+controllers:
+  - id: F0_a2_static
+    description: Frozen A2 policy parameters with no controller under corrected causal execution timing.
+    config:
+      enabled: false
+
+  - id: F1_volatility
+    description: Long-only volatility targeting with no leverage.
+    config:
+      enabled: true
+      target_annualized_volatility: 0.15
+      volatility_lookback: 20
+      volatility_min_observations: 10
+      volatility_floor: 0.05
+      maximum_volatility_scalar: 1.0
+      drawdown_soft_limit: null
+      drawdown_hard_limit: null
+      evidence_enabled: false
+      combination: minimum
+      minimum_exposure: 0.0
+      maximum_exposure: 1.0
+      rebalance_threshold: 0.10
+
+  - id: F2_drawdown
+    description: Smooth conditional-drawdown de-risking only.
+    config:
+      enabled: true
+      target_annualized_volatility: null
+      drawdown_soft_limit: 0.10
+      drawdown_hard_limit: 0.25
+      drawdown_floor_scalar: 0.25
+      evidence_enabled: false
+      combination: minimum
+      minimum_exposure: 0.0
+      maximum_exposure: 1.0
+      rebalance_threshold: 0.10
+
+  - id: F3_evidence
+    description: Cross-sectional memory-quality coverage control only.
+    config:
+      enabled: true
+      target_annualized_volatility: null
+      drawdown_soft_limit: null
+      drawdown_hard_limit: null
+      evidence_enabled: true
+      confidence_reference: 0.60
+      agreement_reference: 0.50
+      effective_sample_size_reference: 20.0
+      positive_breadth_reference: 0.40
+      confidence_weight: 0.35
+      agreement_weight: 0.25
+      effective_sample_size_weight: 0.20
+      positive_breadth_weight: 0.20
+      evidence_floor_scalar: 0.35
+      combination: minimum
+      minimum_exposure: 0.0
+      maximum_exposure: 1.0
+      rebalance_threshold: 0.10
+
+  - id: F4_combined
+    description: Minimum of volatility, drawdown, and memory-evidence budgets.
+    config:
+      enabled: true
+      target_annualized_volatility: 0.15
+      volatility_lookback: 20
+      volatility_min_observations: 10
+      volatility_floor: 0.05
+      maximum_volatility_scalar: 1.0
+      drawdown_soft_limit: 0.10
+      drawdown_hard_limit: 0.25
+      drawdown_floor_scalar: 0.25
+      evidence_enabled: true
+      confidence_reference: 0.60
+      agreement_reference: 0.50
+      effective_sample_size_reference: 20.0
+      positive_breadth_reference: 0.40
+      confidence_weight: 0.35
+      agreement_weight: 0.25
+      effective_sample_size_weight: 0.20
+      positive_breadth_weight: 0.20
+      evidence_floor_scalar: 0.35
+      combination: minimum
+      minimum_exposure: 0.0
+      maximum_exposure: 1.0
+      rebalance_threshold: 0.10
+
+selection:
+  baseline_candidate: F0_a2_static
+  target_pooled_sharpe: 2.0
+  target_cross_market_oof_sharpe: 2.0
+  minimum_sharpe_improvement_over_baseline: 0.05
+  minimum_fold_sharpe: 0.50
+  minimum_mean_excess_return: 0.0
+  minimum_positive_run_fraction: 0.70
+  minimum_positive_fold_excess_fraction: 0.60
+  maximum_worst_drawdown: 0.25
+  minimum_mean_trade_count: 10
+  minimum_deflated_sharpe_probability: 0.80
+  maximum_pbo: 0.50
+  objective:
+    pooled_sharpe_weight: 1.0
+    minimum_fold_sharpe_weight: 0.25
+    mean_excess_return_weight: 2.0
+    drawdown_weight: 0.50
