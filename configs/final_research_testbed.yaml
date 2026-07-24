@@ -42,7 +42,7 @@ hardware:
   cuda_visible_devices: "0"
   minimum_vram_gb: 6
   minimum_compute_capability: [7, 5]
-  vram_fraction: 0.80
+  vram_fraction: 0.95
   allow_cpu_fallback: false
   amp: true
   checkpoint_interval_steps: 250
