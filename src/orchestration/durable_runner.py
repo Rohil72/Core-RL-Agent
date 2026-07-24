@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import platform
+import fnmatch
 import shutil
 import signal
 import socket
@@ -20,6 +21,17 @@ from pathlib import Path
 from typing import Any, Iterable
 
 import yaml
+
+
+FORBIDDEN_SOURCE_MIGRATION_PATTERNS = (
+    "configs/**",
+    "requirements*.txt",
+    "src/data/**",
+    "src/features/**",
+    "src/losses/**",
+    "src/models/**",
+    "scripts/build_final_testbed.py",
+)
 
 
 def _utc_now() -> str:
@@ -68,6 +80,35 @@ def _fingerprint_files(root: Path, patterns: Iterable[str]) -> dict[str, Any]:
         rows.append({"path": label, "size": path.stat().st_size, "sha256": _file_sha256(path)})
     digest = _sha256_bytes(json.dumps(rows, sort_keys=True).encode("utf-8"))
     return {"sha256": digest, "file_count": len(rows), "files": rows}
+
+
+def _fingerprint_changes(
+    previous: dict[str, Any],
+    current: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Return file-level additions, removals, and modifications."""
+    previous_files = {row["path"]: row for row in previous.get("files", [])}
+    current_files = {row["path"]: row for row in current.get("files", [])}
+    changes: list[dict[str, Any]] = []
+    for path in sorted(set(previous_files) | set(current_files)):
+        before = previous_files.get(path)
+        after = current_files.get(path)
+        if before == after:
+            continue
+        changes.append(
+            {
+                "path": path.replace("\\", "/"),
+                "change": "added" if before is None else "removed" if after is None else "modified",
+                "before": before,
+                "after": after,
+            }
+        )
+    return changes
+
+
+def _matches_any(path: str, patterns: Iterable[str]) -> bool:
+    normalized = path.replace("\\", "/")
+    return any(fnmatch.fnmatchcase(normalized, pattern.replace("\\", "/")) for pattern in patterns)
 
 
 def _runtime_fingerprint() -> dict[str, Any]:
@@ -318,6 +359,152 @@ class DurableExperimentRunner:
                 "Use a new run ID/state directory instead of mixing testbeds or artifacts."
             )
         return saved
+
+    def migrate_source_contract(
+        self,
+        *,
+        reason: str,
+        allowed_paths: Iterable[str],
+        operator: str | None = None,
+    ) -> dict[str, Any]:
+        """Audit and accept an operational source-only change for checkpoint resume."""
+        reason = reason.strip()
+        if len(reason) < 20:
+            raise ValueError("Migration reason must contain at least 20 characters.")
+        normalized_allowed = tuple(
+            sorted({str(path).replace("\\", "/").strip() for path in allowed_paths if str(path).strip()})
+        )
+        if not normalized_allowed:
+            raise ValueError("At least one explicitly allowed source path is required.")
+        if any(Path(path).is_absolute() or ".." in Path(path).parts for path in normalized_allowed):
+            raise ValueError("Allowed source paths must be project-relative and cannot contain '..'.")
+
+        self._acquire_lock()
+        try:
+            if not self.contract_path.exists():
+                raise RuntimeError("Cannot migrate a run before its initial contract has been created.")
+            saved = json.loads(self.contract_path.read_text(encoding="utf-8"))
+            current = self._build_contract()
+            self.runtime_fingerprint = current["runtime"]
+
+            immutable_keys = ["run_id", "manifest_sha256", "inputs", "job_runtimes"]
+            if self.manifest.strict_environment:
+                immutable_keys.append("runtime")
+            incompatible = [key for key in immutable_keys if saved.get(key) != current.get(key)]
+            if incompatible:
+                raise RuntimeError(
+                    "Source migration refused because non-source contract fields changed: "
+                    + ", ".join(incompatible)
+                )
+            required_source = self.manifest.hardware.get("required_source_fingerprint")
+            if required_source is not None:
+                raise RuntimeError(
+                    "Source migration is forbidden for a confirmation run with a pinned source fingerprint."
+                )
+
+            changes = _fingerprint_changes(saved.get("source", {}), current["source"])
+            if not changes:
+                raise RuntimeError("Source migration requested, but the source fingerprint is unchanged.")
+            undeclared = [
+                change["path"]
+                for change in changes
+                if not _matches_any(change["path"], normalized_allowed)
+            ]
+            if undeclared:
+                raise RuntimeError(
+                    "Source migration contains undeclared changed files: " + ", ".join(undeclared)
+                )
+            forbidden = [
+                change["path"]
+                for change in changes
+                if _matches_any(change["path"], FORBIDDEN_SOURCE_MIGRATION_PATTERNS)
+            ]
+            if forbidden:
+                raise RuntimeError(
+                    "Source migration touches architecture, data, loss, configuration, dependency, "
+                    "or testbed-design files and requires a new run: " + ", ".join(forbidden)
+                )
+
+            migration_dir = self.state_dir / "migrations"
+            migration_dir.mkdir(parents=True, exist_ok=True)
+            existing_records = sorted(migration_dir.glob("*.json"))
+            sequence = len(existing_records) + 1
+            previous_record_sha256 = (
+                _file_sha256(existing_records[-1]) if existing_records else None
+            )
+            reset_jobs: list[dict[str, str]] = []
+            completed_jobs: list[str] = []
+            for job in self.manifest.jobs:
+                state = self._job_state(job.job_id)
+                if not state:
+                    continue
+                status = str(state.get("status", ""))
+                if status == "completed":
+                    self._is_complete(job)
+                    completed_jobs.append(job.job_id)
+                elif status in {"failed", "interrupted"}:
+                    reset_jobs.append({"job_id": job.job_id, "previous_status": status})
+
+            record = {
+                "format_version": 1,
+                "sequence": sequence,
+                "run_id": self.manifest.run_id,
+                "migrated_at": _utc_now(),
+                "operator": operator or os.environ.get("USER") or os.environ.get("USERNAME") or "unknown",
+                "reason": reason,
+                "previous_record_sha256": previous_record_sha256,
+                "old_source_sha256": saved.get("source", {}).get("sha256"),
+                "new_source_sha256": current["source"]["sha256"],
+                "allowed_paths": list(normalized_allowed),
+                "changes": changes,
+                "verified_unchanged": immutable_keys,
+                "checkpoint_resume_contract": [
+                    "training_config_fingerprint",
+                    "runtime_fingerprint",
+                    "model_state",
+                    "optimizer_state",
+                    "grad_scaler_state",
+                    "rng_state",
+                    "data_loader_position",
+                ],
+                "completed_jobs_preserved": completed_jobs,
+                "jobs_reset_to_pending": reset_jobs,
+            }
+            record_payload_sha256 = _sha256_bytes(
+                json.dumps(record, sort_keys=True).encode("utf-8")
+            )
+            record["record_payload_sha256"] = record_payload_sha256
+            record_path = migration_dir / f"{sequence:04d}_source_migration.json"
+            _atomic_json(record_path, record)
+            record_file_sha256 = _file_sha256(record_path)
+
+            for reset in reset_jobs:
+                state = self._job_state(reset["job_id"])
+                assert state is not None
+                state["status"] = "pending"
+                state["migration_sequence"] = sequence
+                state["status_before_migration"] = reset["previous_status"]
+                state["migrated_at"] = record["migrated_at"]
+                _atomic_json(self._job_path(reset["job_id"]), state)
+
+            migrated_contract = current
+            migrated_contract["created_at"] = saved.get("created_at", record["migrated_at"])
+            migrated_contract["last_migrated_at"] = record["migrated_at"]
+            migrated_contract["migration_count"] = sequence
+            migrated_contract["migration_head_sha256"] = record_file_sha256
+            _atomic_json(self.contract_path, migrated_contract)
+            return {
+                "status": "migrated",
+                "run_id": self.manifest.run_id,
+                "record": str(record_path),
+                "old_source_sha256": record["old_source_sha256"],
+                "new_source_sha256": record["new_source_sha256"],
+                "changed_paths": [change["path"] for change in changes],
+                "completed_jobs_preserved": len(completed_jobs),
+                "jobs_reset_to_pending": reset_jobs,
+            }
+        finally:
+            self._release_lock()
 
     def _validate_hardware(self, job: JobSpec) -> None:
         if not job.uses_gpu:

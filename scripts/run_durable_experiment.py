@@ -22,6 +22,19 @@ def main() -> None:
     parser.add_argument("--stage", action="append", dest="stages", help="Run only this stage (repeatable).")
     parser.add_argument("--plan", action="store_true", help="Validate and print the DAG without executing it.")
     parser.add_argument("--plan-summary", action="store_true", help="Print compact stage/job counts without executing.")
+    parser.add_argument(
+        "--migrate-source",
+        action="store_true",
+        help="Audit and accept an operational source-only change before checkpoint resume.",
+    )
+    parser.add_argument("--migration-reason", help="Detailed reason for the source migration.")
+    parser.add_argument(
+        "--allow-source-path",
+        action="append",
+        default=[],
+        help="Project-relative changed source path or glob allowed by the migration.",
+    )
+    parser.add_argument("--migration-operator", help="Person or automation approving the migration.")
     args = parser.parse_args()
 
     runner = DurableExperimentRunner(
@@ -30,7 +43,17 @@ def main() -> None:
         Path(args.project_root),
     )
     selected_stages = set(args.stages) if args.stages else None
-    if args.plan or args.plan_summary:
+    if args.migrate_source:
+        if args.plan or args.plan_summary or args.jobs or args.stages:
+            parser.error("--migrate-source cannot be combined with plan, job, or stage execution.")
+        if not args.migration_reason:
+            parser.error("--migration-reason is required with --migrate-source.")
+        result = runner.migrate_source_contract(
+            reason=args.migration_reason,
+            allowed_paths=args.allow_source_path,
+            operator=args.migration_operator,
+        )
+    elif args.plan or args.plan_summary:
         plan = runner.plan(selected_stages)
         if args.plan_summary:
             result = {

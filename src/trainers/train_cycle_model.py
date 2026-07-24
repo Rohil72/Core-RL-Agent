@@ -687,6 +687,18 @@ def _global_norm(tensors: list[torch.Tensor]) -> float:
     return float(torch.sqrt(total).item())
 
 
+def _recover_amp_overflow(
+    scaler: GradScaler,
+    optimizer: torch.optim.Optimizer,
+) -> tuple[float, float]:
+    """Skip an overflowed AMP update and let GradScaler reduce its scale."""
+    previous_scale = float(scaler.get_scale())
+    scaler.step(optimizer)
+    scaler.update()
+    optimizer.zero_grad(set_to_none=True)
+    return previous_scale, float(scaler.get_scale())
+
+
 def train_one_epoch(
     model: nn.Module,
     loader: DataLoader,
@@ -731,6 +743,12 @@ def train_one_epoch(
 
     use_amp = scaler is not None and getattr(scaler, "is_enabled", lambda: False)()
     non_blocking = device.type == "cuda"
+    consecutive_amp_overflows = 0
+    maximum_consecutive_amp_overflows = int(
+        training_cfg.get("maximum_consecutive_amp_overflows", 8)
+    )
+    if maximum_consecutive_amp_overflows < 1:
+        raise ValueError("training.maximum_consecutive_amp_overflows must be at least 1.")
 
     for batch_idx, batch in enumerate(loader):
         if batch_idx < start_batch:
@@ -933,14 +951,42 @@ def train_one_epoch(
             grads = [p.grad for p in model.parameters() if p.grad is not None]
             bad_grad = _first_nonfinite_gradient(model)
             if bad_grad is not None:
-                _dump_training_failure(
-                    reason="nonfinite_gradient",
-                    model=model,
-                    optimizer=optimizer,
-                    batch=batch,
-                    extra={"parameter": bad_grad},
+                consecutive_amp_overflows += 1
+                previous_scale, updated_scale = _recover_amp_overflow(
+                    scaler,
+                    optimizer,
                 )
-                raise RuntimeError(f"Non-finite gradient: {bad_grad}")
+                logger.warning(
+                    "AMP overflow at batch=%d parameter=%s scale=%.6g->%.6g "
+                    "consecutive=%d/%d; optimizer update skipped",
+                    batch_idx,
+                    bad_grad,
+                    previous_scale,
+                    updated_scale,
+                    consecutive_amp_overflows,
+                    maximum_consecutive_amp_overflows,
+                )
+                if consecutive_amp_overflows >= maximum_consecutive_amp_overflows:
+                    _dump_training_failure(
+                        reason="repeated_amp_overflow",
+                        model=model,
+                        optimizer=optimizer,
+                        batch=batch,
+                        extra={
+                            "parameter": bad_grad,
+                            "previous_scale": previous_scale,
+                            "updated_scale": updated_scale,
+                            "consecutive_overflows": consecutive_amp_overflows,
+                        },
+                    )
+                    raise RuntimeError(
+                        "Repeated AMP gradient overflow: "
+                        f"{bad_grad} ({consecutive_amp_overflows} consecutive batches)"
+                    )
+                if progress_callback is not None:
+                    progress_callback(batch_idx + 1, total_loss, total_count)
+                continue
+            consecutive_amp_overflows = 0
             grad_norm = _global_norm(grads)
             torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
             scaler.step(optimizer)
