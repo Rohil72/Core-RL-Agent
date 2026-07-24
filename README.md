@@ -1,142 +1,102 @@
-﻿# Core RL Agent
+# Core RL Agent
 
-This repository is currently a cycle-oriented equity modeling research pipeline. Despite the name, the active path is not the old PPO reinforcement-learning stack. The current workflow trains a PyTorch sequence model to predict cycle actions from daily technical and report-aware fundamental features.
+Core RL Agent is a research codebase for causal, retrieval-grounded equity
+decisions. It is not a live-trading system and no policy is currently promoted.
+The active path is a patch Transformer market-state encoder, a historical
+market-memory layer, and offline policies that choose portfolio exposure from
+retrieved evidence.
 
-## Active Workflow
+The cycle detector remains only for earlier experiments. The final encoder uses
+`patch_transformer`, disables detector targets, and sets detector action loss to
+zero.
 
-```bash
-python scripts/precompute_ground_truth.py
-python src/trainers/train_cycle_model.py
-# Orchestrated Phase-1 experiment (baseline -> detector-ablation -> analysis)
-python scripts/orchestrate_phase1.py
-python scripts/evaluate_agent.py
-pytest -q
+## Research Status
+
+Development results support further work on the frozen latent representation and
+historical memory, but they do not support a performance claim. Several Phase 5
+policy/allocation selectors were explicitly rejected by their robustness gates.
+The current task is the frozen six-market regional/global/RL testbed, not more
+tuning on those single-market development results.
+
+See [Research Status](docs/RESEARCH_STATUS.md) for the evidence boundary,
+rejected hypotheses, promotion standard, and known limitations.
+
+```text
+daily technical and point-in-time fundamental features
+  -> 252-session patch Transformer
+  -> 128-dimensional latent state
+  -> causal market memory and analogue evidence
+  -> offline exposure policy
+  -> market-level and pooled robustness gates
 ```
 
-Default settings live in `configs/cycle_model.yaml`.
+## Clean-Start Setup
 
-For the detailed current architecture, including the world-model framing,
-memory system, input shapes, preprocessing, LSTM dimensions, targets, losses,
-and outputs, see [ARCHITECTURE.md](ARCHITECTURE.md).
-
-New tooling added for Phase-1 experiments
-- `scripts/orchestrate_phase1.py` — runs the baseline training, a detector-ablation
-  run (same seed/hyperparams, `configs/cycle_model_detector_ablation.yaml`), then
-  runs the analysis pipeline to generate numeric reports and latent exports.
-- `scripts/phase1_analysis.py` — latent PCA/UMAP projection, nearest-neighbor
-  future-similarity tests, and opportunity ranking analysis. Writes summaries to
-  `reports/research_phase1/` and latent exports to `reports/latent_analysis/`.
-
-These additions implement the experiments described in the research plan without
-changing model code paths or datasets: the ablation is applied by setting
-`training.action_loss_weight: 0.0` in `configs/cycle_model_detector_ablation.yaml`.
-
-## What The Project Does
-
-1. `config/market_universe.yaml` defines the ticker universe.
-2. `src/data/loader.py` fetches OHLCV, earnings dates, EPS, and revenue data.
-3. `src/data/features.py` builds technical features, Minervini-style trend-template features, and report-aware fundamental features without lookahead.
-4. `src/cycle/cycle_detector.py` detects heuristic price cycles.
-5. `src/cycle/oracle.py` converts cycles into per-row action targets, cycle metadata, future-return targets, and price-derived event targets.
-6. `src/data/sequence_dataset.py` builds rolling sequence windows and walk-forward train/validation/test splits.
-7. `src/models/` defines the active sequence models and model factory.
-8. `src/trainers/train_cycle_model.py` trains the model and writes a checkpoint.
-9. `scripts/evaluate_agent.py` evaluates predicted action spans against oracle cycle spans.
-
-## Current Model
-
-The default active model is `HierarchicalLSTMCycleModel` in
-`src/models/hierarchical_lstm_model.py`.
-
-It currently uses:
-
-- a daily LSTM over the full `252` trading-day window
-- patch-level LSTM reasoning over short chunks of the daily state sequence
-- attention pooling over both daily and patch-level states
-- a fused latent state using daily context, patch context, latest recurrent state, and the latest raw feature vector
-- a future-target regression head
-- a 4-class action head
-- an optional masked sequence reconstruction head used only during training
-
-Action classes are:
-
-- `0`: neutral
-- `1`: enter
-- `2`: hold_or_renew
-- `3`: exit
-
-The old PPO/Stable-Baselines RL path has been removed from the active tree. The previous Conv1D model is still available as `CycleReasoningModel` for ablation, but the active config uses the LSTM backbone. Future work can replace the LSTM with a Transformer while preserving the same model output contract:
-
-```python
-{
-    "latent": latent,
-    "future_pred": future_pred,
-    "action_logits": action_logits,
-}
-```
-
-## Repository Layout
-
-- `config/market_universe.yaml`: ticker universe
-- `configs/cycle_model.yaml`: active runtime configuration
-- `scripts/precompute_ground_truth.py`: builds per-ticker feature/target parquet files
-- `scripts/run_detector_on_precomputed.py`: refreshes detector labels on existing precomputed files
-- `scripts/plot_detector_on_precomputed.py`: renders detector-only inspection plots
-- `scripts/evaluate_agent.py`: evaluates a saved checkpoint and writes numeric metrics plus comparison plots
- - `scripts/orchestrate_phase1.py`: run baseline -> ablation -> analysis, create phase1 reports
- - `scripts/phase1_analysis.py`: latent export, PCA/UMAP, neighbor similarity, ranking tests
-- `src/cycle/`: cycle detection, oracle labeling, and span decoding
-- `src/data/`: data loading, feature engineering, IO, and sequence datasets
-- `src/eval/`: action and cycle-level evaluation metrics
-- `src/models/`: active model definitions
-- `src/trainers/`: training and checkpoint logic
-- `src/visualization/`: lightweight plotting helpers
-- `tests/`: active pytest suite
-
-## Generated Outputs
-
-These are generated during runs and are ignored by git:
-
-- `data/precomputed/*.parquet`
-- `data/evaluation_plots/`
-- `data/detector_plots/`
-- `models/`
-- `reports/`
-- `logs/`
-- Python cache directories
-
-## Development Notes
-
-The cycle detector should be treated as a weak heuristic labeler, not ground truth. The current LSTM training path includes two self-supervised/outcome-driven signals:
-
-- random feature values and short time spans are masked during training, and the model learns to reconstruct the original standardized sequence
-- event targets are derived directly from future prices: time-to-future-peak, time-to-future-drawdown, upside-before-drawdown, upside hit, and drawdown hit
-
-The detector action loss is now separately weighted by `training.action_loss_weight`, so detector imitation can be reduced while outcome/event learning carries more of the representation. A Transformer backbone remains a later ablation once these self-supervised objectives are stable.
-
-Run tests with:
-
-```bash
-pytest -q
-```
-
-## Phase 5 Consensus Exposure
-
-The consensus exposure experiment keeps the transformer, market memory, C0 seed aggregation,
-and A2 hold/exit rules frozen. It evaluates four predeclared gross-exposure policies using
-causal percentage, volatility, and dimensionless evidence inputs. The output is development
-evidence only; cross-market confirmation remains locked even when the local gates pass.
+Python 3.11 and a CUDA-capable NVIDIA GPU are required for the final testbed.
+The encoder and offline-RL stack use separate environments.
 
 ```powershell
-python scripts/run_phase5_consensus_exposure.py --config configs/phase5_consensus_exposure.yaml --run-id phase5_consensus_exposure_v1
+py -3.11 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+
+py -3.11 -m venv .venv-phase5-rl
+.\.venv-phase5-rl\Scripts\python.exe -m pip install --upgrade pip
+.\.venv-phase5-rl\Scripts\python.exe -m pip install -r requirements-phase5-rl.txt
 ```
 
-## Phase 5 Opportunity Allocation
-
-This stage reconstructs causal 2022 retrieval evidence from outcome-available 2021 memory,
-tests obvious versus nonlinear inference on a later 2022 slice, and then evaluates fixed-grid
-per-entry sizing over the frozen 2023 C0 signals. Retrieval generation is cached and resumable.
+Compile the final DAG on the machine that will execute it:
 
 ```powershell
-python scripts/run_phase5_opportunity_allocator.py --config configs/phase5_opportunity_allocator.yaml --run-id phase5_opportunity_allocator_v1 --stage all
+.\.venv\Scripts\python.exe scripts\build_final_testbed.py `
+  --config configs\final_research_testbed.yaml `
+  --base-encoder configs\final_encoder_training.yaml `
+  --run-id phase6_international_v1 `
+  --core-python .venv\Scripts\python.exe `
+  --rl-python .venv-phase5-rl\Scripts\python.exe
 ```
+
+The stage-by-stage execution and confirmation-lock procedure is in
+[Resumable Experiments](docs/RESUMABLE_EXPERIMENTS.md).
+
+## Final Testbed
+
+`configs/final_research_testbed.yaml` fixes the current protocol:
+
+- Encoder: train 2013-2020, validate 2021, test 2022.
+- Policy development: 2022-2023; selection: 2024.
+- Locked confirmation: 2025-01-01 through 2026-03-31, with outcomes matured
+  through 2026-06-30.
+- Markets: US, India, China, Brazil, France, and UK.
+- Representations: regional encoder and pooled global encoder.
+- Policies: contextual bandit, CQL, IQL, and TD3+BC. A four-market pilot picks
+  exactly two algorithms before a six-market, three-seed comparison.
+- Promotion: Sharpe >= 2.0, drawdown <= 20%, at least five positive markets,
+  bounded profit concentration, non-degenerate exposure, and locked confirmation.
+
+The testbed requires CUDA, one GPU with at least 6 GB VRAM, and limits the
+process to 80% of selected GPU VRAM. `minimum_free_gb: 60` is a conservative
+start-time guard, not a predicted disk requirement.
+
+## Repository Map
+
+- `src/models/patch_transformer_model.py`: active encoder.
+- `src/losses/outcome_geometry.py`: regression and optional geometry losses.
+- `src/memory/`: causal retrieval, evidence aggregation, and confidence.
+- `src/decision/`: counterfactual decision outcomes.
+- `src/policy/`: offline-policy dataset and contextual bandit.
+- `src/backtest/`: memory-policy backtesting.
+- `src/trainers/train_cycle_model.py`: encoder training and resumable state.
+- `src/orchestration/`: immutable durable experiment runner.
+- `scripts/build_final_testbed.py`: final international DAG compiler.
+- `scripts/build_confirmation_testbed.py`: post-promotion confirmation compiler.
+
+Generated data, checkpoints, models, reports, virtual environments, and
+Graphify outputs are ignored by Git. A clean clone contains runnable code,
+configuration, tests, and the small sample CSV fixture only.
+
+## Documentation
+
+- [Architecture](ARCHITECTURE.md)
+- [Research Status](docs/RESEARCH_STATUS.md)
+- [Resumable Experiments](docs/RESUMABLE_EXPERIMENTS.md)
