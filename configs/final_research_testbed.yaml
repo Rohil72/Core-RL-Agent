@@ -49,7 +49,7 @@ hardware:
 
 storage:
   persistent_required: true
-  minimum_free_gb: 60
+  minimum_free_gb: 20
   state_subdir: orchestration_state
   retain_latest_training_state: true
   retain_logs: true
