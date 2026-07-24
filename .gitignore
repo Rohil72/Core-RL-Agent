@@ -25,14 +25,17 @@ htmlcov/
 temp_*.yaml
 
 # Generated research data and model artifacts. Keep only the small, canonical
-# CSV fixture needed for a clean-clone smoke test.
+# CSV fixture and provenance manifests needed for a clean-clone reproduction.
 data/**
 !data/examples/
 !data/examples/sample_prices.csv
+!data/manifests/
+!data/manifests/**
 
 # Training and evaluation outputs
 /models/
 reports/
+.experiment_state/
 *.pt
 *.pth
 *.ckpt
@@ -43,6 +46,13 @@ reports/
 *.pkl
 *.pickle
 graphify-out/
+
+# Compact, publication-grade evidence is intentionally tracked. Large binary
+# artifacts remain ignored even inside this directory via the global patterns.
+!reports/
+reports/*
+!reports/research_evidence/
+!reports/research_evidence/**
 
 # Local OS/editor noise
 .DS_Store
