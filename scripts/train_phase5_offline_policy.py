@@ -21,8 +21,20 @@ def _d3rlpy_train(algorithm: str, data: dict[str, np.ndarray], output: Path, ste
         import d3rlpy
     except ImportError as exc:
         raise RuntimeError("Install requirements-phase5-rl.txt in the isolated .venv-phase5-rl environment.") from exc
+    actions = np.asarray(data["actions"], dtype=np.float32)
+    if actions.ndim != 2 or actions.shape[1] != 1:
+        raise ValueError(f"Expected continuous exposure actions with shape (N, 1), got {actions.shape}.")
+    if not np.isfinite(actions).all():
+        raise ValueError("Offline-policy actions contain non-finite values.")
+    if np.any((actions < 0.0) | (actions > 1.0)):
+        raise ValueError("Offline-policy exposure actions must lie in [0, 1].")
     dataset = d3rlpy.dataset.MDPDataset(
-        observations=data["observations"], actions=data["actions"], rewards=data["rewards"], terminals=data["terminals"]
+        observations=data["observations"],
+        actions=actions,
+        rewards=data["rewards"],
+        terminals=data["terminals"],
+        action_space=d3rlpy.constants.ActionSpace.CONTINUOUS,
+        action_size=1,
     )
     configs = {
         "cql": d3rlpy.algos.CQLConfig,
