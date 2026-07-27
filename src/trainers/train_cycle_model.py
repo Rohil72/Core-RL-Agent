@@ -300,7 +300,7 @@ def load_precomputed_frame(config: dict[str, Any]) -> pd.DataFrame:
         df["ticker"] = ticker
         df["market"] = market
         df = ensure_sequence_model_features(df)
-        use_detector_targets = bool(config.get("data", {}).get("use_detector_targets", False))
+        use_detector_targets = bool(config.get("data", {}).get("use_detector_targets", True))
         if not use_detector_targets:
             df["oracle_action"] = 0
             df["oracle_cycle_id"] = -1

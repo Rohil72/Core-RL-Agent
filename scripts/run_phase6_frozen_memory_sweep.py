@@ -17,6 +17,12 @@ import yaml
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
+SOURCE_TOPOLOGIES = {
+    "regional_regional": "regional",
+    "global_global": "global",
+}
+GENERATED_TOPOLOGIES = {"global_regional"}
+
 from src.backtest.consensus_policy import (  # noqa: E402
     ConsensusSignalConfig,
     build_consensus_signals,
@@ -89,6 +95,23 @@ def _load(config_path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
         raise ValueError(f"Markets absent from source testbed configuration: {missing}")
     if len(config["experiment"]["seeds"]) < int(config["consensus"]["minimum_votes"]):
         raise ValueError("The sweep has fewer seeds than the consensus vote requirement.")
+    topology_ids = [str(item["id"]) for item in config["topologies"]]
+    unknown = sorted(set(topology_ids) - set(SOURCE_TOPOLOGIES) - GENERATED_TOPOLOGIES)
+    if unknown:
+        raise ValueError(f"Unsupported frozen-memory topologies: {unknown}")
+    if len(topology_ids) != len(set(topology_ids)):
+        raise ValueError("Frozen-memory topology identifiers must be unique.")
+    coverage_ids = [str(item["id"]) for item in config["coverage_candidates"]]
+    require_pbo = bool(config["selection"].get("require_pbo", True))
+    if not require_pbo and len(topology_ids) * len(coverage_ids) != 1:
+        raise ValueError("PBO may be disabled only for one preselected topology/coverage candidate.")
+    protocol = config.get("protocol")
+    if protocol and str(protocol.get("status")) == "frozen":
+        configured = {f"{topology}__{coverage}" for topology in topology_ids for coverage in coverage_ids}
+        if configured != {str(protocol.get("candidate"))}:
+            raise ValueError("Frozen protocol candidate does not exactly match the configured candidate.")
+        if bool(protocol.get("further_development_tuning_allowed", True)):
+            raise ValueError("A frozen protocol cannot permit further development tuning.")
     return config, testbed
 
 
@@ -100,10 +123,10 @@ def _source_signal_root(
     seed: int,
     period: str,
 ) -> Path:
-    if topology not in {"regional_regional", "global_global"}:
+    if topology not in SOURCE_TOPOLOGIES:
         return sweep_root / "memory" / f"{topology}_{market}_seed_{seed}" / period / "eval"
     source = _resolve(config["experiment"]["source_run"])
-    representation = "regional" if topology == "regional_regional" else "global"
+    representation = SOURCE_TOPOLOGIES[topology]
     return source / "memory" / f"{representation}_{market}_seed_{seed}" / period / "eval"
 
 
@@ -111,27 +134,33 @@ def _required_source_paths(config: dict[str, Any]) -> list[Path]:
     source = _resolve(config["experiment"]["source_run"])
     development = str(config["experiment"]["development_period"])
     selection = str(config["experiment"]["selection_period"])
+    topology_ids = {str(item["id"]) for item in config["topologies"]}
     required: list[Path] = []
     for seed in map(int, config["experiment"]["seeds"]):
-        required.append(source / "adapters" / f"global_seed_{seed}" / "train_decisions.parquet")
+        if "global_regional" in topology_ids:
+            required.append(source / "adapters" / f"global_seed_{seed}" / "train_decisions.parquet")
         for market in config["experiment"]["markets"]:
-            for representation in ("regional", "global"):
+            for topology in sorted(topology_ids & set(SOURCE_TOPOLOGIES)):
+                representation = SOURCE_TOPOLOGIES[topology]
                 for period in (development, selection):
                     root = source / "memory" / f"{representation}_{market}_seed_{seed}" / period / "eval"
                     required.extend((root / "signals.parquet", root / "neighbors.parquet"))
-            for period in (development, selection):
-                required.append(
-                    source / "decisions" / f"global_{market}_seed_{seed}" / f"{period}.parquet"
-                )
+            if "global_regional" in topology_ids:
+                for period in (development, selection):
+                    required.append(
+                        source / "decisions" / f"global_{market}_seed_{seed}" / f"{period}.parquet"
+                    )
     return required
 
 
 def _preflight(config: dict[str, Any], testbed: dict[str, Any]) -> dict[str, Any]:
     missing = [str(path) for path in _required_source_paths(config) if not path.exists()]
-    data_root = _resolve(testbed["experiment"]["data_root"])
-    for market in config["experiment"]["markets"]:
-        if not list((data_root / market).glob("*.parquet")):
-            missing.append(str(data_root / market / "*.parquet"))
+    topology_ids = {str(item["id"]) for item in config["topologies"]}
+    if topology_ids & GENERATED_TOPOLOGIES:
+        data_root = _resolve(testbed["experiment"]["data_root"])
+        for market in config["experiment"]["markets"]:
+            if not list((data_root / market).glob("*.parquet")):
+                missing.append(str(data_root / market / "*.parquet"))
     if missing:
         preview = "\n".join(f"- {path}" for path in missing[:20])
         suffix = f"\n... and {len(missing) - 20} more" if len(missing) > 20 else ""
@@ -417,6 +446,7 @@ def _summarize(config: dict[str, Any], output: Path) -> dict[str, Any]:
     trial_count = len(pooled_returns)
     return_matrix = pd.concat(pooled_returns, axis=1).dropna(how="all").fillna(0.0)
     pbo = probability_of_backtest_overfitting(return_matrix.to_numpy())
+    pbo_applicable = bool(np.isfinite(pbo))
     rows: list[dict[str, Any]] = []
     for candidate, group in markets.groupby("candidate", sort=False):
         returns = pooled_returns[candidate]
@@ -443,6 +473,8 @@ def _summarize(config: dict[str, Any], output: Path) -> dict[str, Any]:
     leaderboard = pd.DataFrame(rows)
     gates = config["selection"]
     leaderboard["reaches_sharpe_target"] = leaderboard["pooled_sharpe"] >= float(gates["target_pooled_sharpe"])
+    require_pbo = bool(gates.get("require_pbo", True))
+    pbo_pass = (leaderboard["pbo"] <= float(gates["maximum_pbo"])) if require_pbo else True
     leaderboard["robustness_pass"] = (
         (leaderboard["median_market_sharpe"] >= float(gates["minimum_median_market_sharpe"]))
         & (leaderboard["positive_markets"] >= int(gates["minimum_positive_markets"]))
@@ -461,7 +493,7 @@ def _summarize(config: dict[str, Any], output: Path) -> dict[str, Any]:
             leaderboard["deflated_sharpe_probability"]
             >= float(gates["minimum_deflated_sharpe_probability"])
         )
-        & (leaderboard["pbo"] <= float(gates["maximum_pbo"]))
+        & pbo_pass
     )
     leaderboard["passes"] = leaderboard["reaches_sharpe_target"] & leaderboard["robustness_pass"]
     leaderboard = leaderboard.sort_values(
@@ -475,7 +507,9 @@ def _summarize(config: dict[str, Any], output: Path) -> dict[str, Any]:
         "selected_candidate": str(eligible.iloc[0]["candidate"]) if not eligible.empty else None,
         "best_observed_candidate": str(leaderboard.iloc[0]["candidate"]),
         "best_observed_pooled_sharpe": float(leaderboard.iloc[0]["pooled_sharpe"]),
-        "pbo": pbo,
+        "pbo": pbo if pbo_applicable else None,
+        "pbo_applicable": pbo_applicable,
+        "pbo_required": require_pbo,
         "candidate_count": len(leaderboard),
         "development_split_only": True,
         "transformer_retrained": False,
@@ -525,67 +559,67 @@ def _build_manifest(
     preflight = _preflight(config, testbed)
     jobs: list[dict[str, Any]] = []
     source = _resolve(config["experiment"]["source_run"])
+    topology_ids = {str(item["id"]) for item in config["topologies"]}
     script = _rel(Path(__file__))
     common = [python, script, "--config", _rel(config_path), "--run-id", output.name]
     filter_jobs: dict[int, str] = {}
-    for seed in map(int, config["experiment"]["seeds"]):
-        identifier = f"filter_global_seed_{seed}"
-        filter_jobs[seed] = identifier
-        jobs.append(
-            _job(
-                identifier,
-                [*common, "--stage", "filter", "--seed", str(seed)],
-                [
-                    output / "filtered_memory" / f"global_seed_{seed}" / f"{market}.parquet"
-                    for market in config["experiment"]["markets"]
-                ]
-                + [output / "filtered_memory" / f"global_seed_{seed}" / "summary.json"],
-                stage="prepare",
-                inputs=[source / "adapters" / f"global_seed_{seed}" / "train_decisions.parquet"],
-            )
-        )
-    retrieval_jobs: list[str] = []
-    development = str(config["experiment"]["development_period"])
-    selection = str(config["experiment"]["selection_period"])
-    for seed in map(int, config["experiment"]["seeds"]):
-        for market in config["experiment"]["markets"]:
-            identifier = f"retrieve_global_regional_{market}_seed_{seed}"
-            retrieval_jobs.append(identifier)
-            outputs: list[Path] = [output / "retrieval_status" / f"global_regional_{market}_seed_{seed}.json"]
-            for period in (development, selection):
-                root = output / "memory" / f"global_regional_{market}_seed_{seed}" / period / "eval"
-                outputs.extend((root / "signals.parquet", root / "neighbors.parquet", root / "metrics.json"))
+    if "global_regional" in topology_ids:
+        for seed in map(int, config["experiment"]["seeds"]):
+            identifier = f"filter_global_seed_{seed}"
+            filter_jobs[seed] = identifier
             jobs.append(
                 _job(
                     identifier,
-                    [*common, "--stage", "retrieve", "--market", market, "--seed", str(seed)],
-                    outputs,
-                    stage="retrieve",
-                    dependencies=[filter_jobs[seed]],
-                    inputs=[
-                        output / "filtered_memory" / f"global_seed_{seed}" / f"{market}.parquet",
-                        source / "decisions" / f"global_{market}_seed_{seed}" / f"{development}.parquet",
-                        source / "decisions" / f"global_{market}_seed_{seed}" / f"{selection}.parquet",
-                        f"{testbed['experiment']['data_root']}/{market}/*.parquet",
-                    ],
+                    [*common, "--stage", "filter", "--seed", str(seed)],
+                    [
+                        output / "filtered_memory" / f"global_seed_{seed}" / f"{market}.parquet"
+                        for market in config["experiment"]["markets"]
+                    ]
+                    + [output / "filtered_memory" / f"global_seed_{seed}" / "summary.json"],
+                    stage="prepare",
+                    inputs=[source / "adapters" / f"global_seed_{seed}" / "train_decisions.parquet"],
                 )
             )
+    retrieval_jobs: list[str] = []
+    development = str(config["experiment"]["development_period"])
+    selection = str(config["experiment"]["selection_period"])
+    if "global_regional" in topology_ids:
+        for seed in map(int, config["experiment"]["seeds"]):
+            for market in config["experiment"]["markets"]:
+                identifier = f"retrieve_global_regional_{market}_seed_{seed}"
+                retrieval_jobs.append(identifier)
+                outputs: list[Path] = [
+                    output / "retrieval_status" / f"global_regional_{market}_seed_{seed}.json"
+                ]
+                for period in (development, selection):
+                    root = output / "memory" / f"global_regional_{market}_seed_{seed}" / period / "eval"
+                    outputs.extend((root / "signals.parquet", root / "neighbors.parquet", root / "metrics.json"))
+                jobs.append(
+                    _job(
+                        identifier,
+                        [*common, "--stage", "retrieve", "--market", market, "--seed", str(seed)],
+                        outputs,
+                        stage="retrieve",
+                        dependencies=[filter_jobs[seed]],
+                        inputs=[
+                            output / "filtered_memory" / f"global_seed_{seed}" / f"{market}.parquet",
+                            source / "decisions" / f"global_{market}_seed_{seed}" / f"{development}.parquet",
+                            source / "decisions" / f"global_{market}_seed_{seed}" / f"{selection}.parquet",
+                            f"{testbed['experiment']['data_root']}/{market}/*.parquet",
+                        ],
+                    )
+                )
     evidence_inputs: list[str | Path] = []
-    for representation in ("regional", "global"):
+    for topology in sorted(topology_ids):
         for market in config["experiment"]["markets"]:
             for seed in map(int, config["experiment"]["seeds"]):
                 for period in (development, selection):
-                    root = source / "memory" / f"{representation}_{market}_seed_{seed}" / period / "eval"
+                    if topology in SOURCE_TOPOLOGIES:
+                        representation = SOURCE_TOPOLOGIES[topology]
+                        root = source / "memory" / f"{representation}_{market}_seed_{seed}" / period / "eval"
+                    else:
+                        root = output / "memory" / f"{topology}_{market}_seed_{seed}" / period / "eval"
                     evidence_inputs.extend((root / "signals.parquet", root / "neighbors.parquet"))
-    evidence_inputs.extend(
-        (
-            output / "memory" / f"global_regional_{market}_seed_{seed}" / period / "eval" / artifact
-        )
-        for market in config["experiment"]["markets"]
-        for seed in map(int, config["experiment"]["seeds"])
-        for period in (development, selection)
-        for artifact in ("signals.parquet", "neighbors.parquet")
-    )
     jobs.append(
         _job(
             "evaluate_frozen_memory_sweep",
@@ -609,7 +643,7 @@ def _build_manifest(
                 "src/memory/**/*.py",
                 "scripts/run_phase6_frozen_memory_sweep.py",
                 "scripts/run_market_memory_backtest.py",
-                "configs/phase6_frozen_memory_sweep.yaml",
+                _rel(config_path),
             ],
             "hardware": {"minimum_free_storage_gb": 5},
             "budgets": {},

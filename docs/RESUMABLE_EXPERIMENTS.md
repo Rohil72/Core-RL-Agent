@@ -98,7 +98,39 @@ records an interruption rather than a false completion.
 Do not set `allow_hardware_mismatch_resume` for comparable experiments. If a
 machine must change, start a new run ID and treat it as a separate testbed.
 
-## Final international testbed
+## Locked final memory policy
+
+The active final configuration is `configs/final_memory_policy.yaml`. It
+replays one preselected global/global memory candidate and contains no encoder
+training or RL jobs. Restore the ignored `phase6_a30_final_v1` artifacts, then
+compile and execute:
+
+```powershell
+$run = "final_memory_policy_v1"
+
+.\.venv\Scripts\python.exe scripts\run_phase6_frozen_memory_sweep.py `
+  --config configs\final_memory_policy.yaml `
+  --run-id $run `
+  --stage build `
+  --python .venv\Scripts\python.exe
+
+$manifest = "reports\final_memory_policy\$run\experiment_manifest.yaml"
+$state = "reports\final_memory_policy\$run\orchestration_state"
+
+.\.venv\Scripts\python.exe scripts\run_durable_experiment.py `
+  --manifest $manifest `
+  --state-dir $state `
+  --plan-summary
+
+.\.venv\Scripts\python.exe scripts\run_durable_experiment.py `
+  --manifest $manifest `
+  --state-dir $state
+```
+
+The compiled canonical DAG contains one CPU evaluation job. Reissuing the final
+command is safe: completed outputs are validated and skipped.
+
+## Historical international RL testbed
 
 The frozen research schema is `configs/final_research_testbed.yaml`. It defines
 the six local markets, 2013-2026 chronology, regional/global encoders, pilot RL

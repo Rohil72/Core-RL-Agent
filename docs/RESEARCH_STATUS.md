@@ -22,26 +22,40 @@ The following local Phase 5 runs were rejected by their own gates:
   but it did not pass the complete promotion contract.
 - Final opportunity allocator: improved several folds but had no out-of-year
   positive folds under its configured criterion.
+- The Phase 6 offline-RL comparison selected IQL and TD3+BC at pilot, but every
+  final policy/representation candidate failed the six-market development gate.
+- Global transformer plus regionally adapted internal and external memory
+  reached only about 0.69 pooled Sharpe and was rejected.
 
-These figures are development evidence from ignored local `reports/phase5/`
-artifacts. They are not confirmation evidence and are deliberately absent from
-a clean GitHub clone.
+These figures are development evidence from ignored local report artifacts.
+They are not confirmation evidence and are deliberately absent from a clean
+GitHub clone.
 
-## Current Question
+## Frozen Candidate
 
-Can one predeclared offline-policy algorithm turn a frozen regional or global
-encoder plus regional historical memory into consistent exposure decisions across
-different local markets?
+The remaining candidate is fixed in `configs/final_memory_policy.yaml`:
 
-The executable answer is fixed in `configs/final_research_testbed.yaml`:
+1. Shared global patch Transformer.
+2. Global static internal memory.
+3. Global external historical memory.
+4. Three-seed consensus with the 25% reliability-coverage candidate.
+5. Deterministic threshold policy; no RL.
 
-1. Audit six market datasets.
-2. Pilot bandit, CQL, IQL, and TD3+BC on US, India, China, and Brazil with seed 7.
-3. Select exactly two algorithms, then compare regional/global encoders across
-   six markets and seeds 7, 17, and 37.
-4. Promote at most one candidate only if all development gates pass.
-5. Lock source, data, runtime, models, and datasets; evaluate the untouched
-   candidate on 2025 through 2026 Q1.
+The earlier global/global development sweep reached approximately 1.50 pooled
+Sharpe but still failed the complete promotion contract. This is the strongest
+remaining architecture, not a claimed profitable strategy. Its structure and
+thresholds are frozen to prevent further selection-period overfitting.
+
+## Next Evaluation
+
+The next work is comparison rather than architecture tuning:
+
+1. Reproduce the locked candidate and conventional baselines under one cost and
+   chronology contract.
+2. Evaluate additional markets or datasets without changing the candidate.
+3. Run the untouched temporal confirmation only under a predeclared protocol.
+4. Report failed markets, drawdown, turnover, calibration, and profit
+   concentration alongside pooled Sharpe.
 
 ## Promotion Standard
 
@@ -60,5 +74,5 @@ requires pooled Sharpe at least 2.0, five positive markets, drawdown at most
   result as fundamental-aware transfer.
 - Each market declares a benchmark, but decision data falls back to local
   cross-sectional median return when benchmark alpha is unavailable.
-- The final international DAG has been compiled and tested, but no final
-  encoder or offline-RL training has been launched from it yet.
+- The Phase 6 international RL testbed was executed and rejected. Its compiler
+  remains historical infrastructure, not the active research direction.

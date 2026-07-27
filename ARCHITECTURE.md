@@ -8,7 +8,8 @@ exposure decisions. It is no longer a detector-centric cycle classifier.
 
 ```text
 feature history -> patch Transformer -> latent state -> causal memory
--> evidence distribution -> offline exposure policy -> backtest and gates
+-> evidence distribution -> deterministic consensus/reliability policy
+-> backtest and gates
 ```
 
 ## Data and Targets
@@ -81,11 +82,16 @@ net alpha, and utility after slippage. The final protocol uses a 63-session
 primary horizon and 10 bps per side. When benchmark alpha is unavailable, it
 uses a local cross-sectional median fallback.
 
-`src/policy/offline_policy.py` builds chronological trajectories from cash,
-full, score-scaled, volatility-targeted, and exploratory behaviour. Policies
-observe memory evidence, previous exposure, and drawdown, then select one of
-`[0, 0.25, 0.5, 0.75, 1.0]` exposure. The research matrix compares a contextual
-bandit, CQL, IQL, and TD3+BC; none is currently selected.
+The final policy is deterministic. It combines three seed-specific retrieval
+runs, requires two votes, ranks opportunities by consensus evidence, and applies
+a chronologically fitted reliability model. The locked candidate uses the 25%
+reliability threshold, top-three allocation, downside and CVaR limits, a
+63-session maximum hold, a 10% stop, and the configured market execution costs.
+
+`src/policy/offline_policy.py` and the contextual-bandit/CQL/IQL/TD3+BC scripts
+remain for reproducibility. Phase 6 showed that those learned exposure policies
+did not preserve the memory signal consistently across markets, so none is part
+of the final architecture.
 
 ## Integrity and Evaluation
 
@@ -98,3 +104,7 @@ Development selection requires market wins, non-degenerate exposure, positive
 median excess Sharpe, bounded drawdown, and bounded PBO. Confirmation can only
 be compiled after promotion; it locks source, data, models, and policy datasets
 before evaluating the untouched candidate across 2025 through 2026 Q1.
+
+`configs/final_memory_policy.yaml` is the frozen architecture contract: global
+transformer, global internal memory, global external memory, no RL, and no
+further development-threshold search.
