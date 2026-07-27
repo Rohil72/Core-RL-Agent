@@ -20,6 +20,11 @@ class AlignmentConfig:
     weight_decay: float = 1e-4
     gradient_clip: float = 1.0
     maximum_future_mae_regression: float = 0.05
+    encoder_parameter_scope: str = "approved_blocks"
+
+    def __post_init__(self) -> None:
+        if self.encoder_parameter_scope not in {"approved_blocks", "memory_only"}:
+            raise ValueError("encoder_parameter_scope must be 'approved_blocks' or 'memory_only'.")
 
 
 class AlignedDecisionModel(nn.Module):
@@ -36,19 +41,27 @@ class AlignedDecisionModel(nn.Module):
         return state
 
 
-def configure_alignment_parameters(model: AlignedDecisionModel) -> tuple[list[nn.Parameter], list[nn.Parameter]]:
-    """Freeze early representation layers and expose only the approved final blocks."""
+def configure_alignment_parameters(
+    model: AlignedDecisionModel,
+    scope: str = "approved_blocks",
+) -> tuple[list[nn.Parameter], list[nn.Parameter]]:
+    """Freeze the encoder and expose only the configured alignment parameter scope."""
     for parameter in model.encoder.parameters():
         parameter.requires_grad_(False)
-    prefixes = (
-        "transformer.layers.3",
-        "patch_transformer.layers.1",
-        "memory_slots",
-        "memory_attn",
-        "memory_query_proj",
-        "context",
-        "future_head",
-    )
+    if scope == "memory_only":
+        prefixes = ("memory_slots", "memory_attn", "memory_query_proj")
+    elif scope == "approved_blocks":
+        prefixes = (
+            "transformer.layers.3",
+            "patch_transformer.layers.1",
+            "memory_slots",
+            "memory_attn",
+            "memory_query_proj",
+            "context",
+            "future_head",
+        )
+    else:
+        raise ValueError(f"Unknown alignment parameter scope: {scope}")
     for name, parameter in model.encoder.named_parameters():
         if name.startswith(prefixes):
             parameter.requires_grad_(True)

@@ -100,8 +100,8 @@ def _source_signal_root(
     seed: int,
     period: str,
 ) -> Path:
-    if topology == "global_regional":
-        return sweep_root / "memory" / f"global_regional_{market}_seed_{seed}" / period / "eval"
+    if topology not in {"regional_regional", "global_global"}:
+        return sweep_root / "memory" / f"{topology}_{market}_seed_{seed}" / period / "eval"
     source = _resolve(config["experiment"]["source_run"])
     representation = "regional" if topology == "regional_regional" else "global"
     return source / "memory" / f"{representation}_{market}_seed_{seed}" / period / "eval"

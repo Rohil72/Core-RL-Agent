@@ -372,6 +372,7 @@ def load_precomputed_frame(config: dict[str, Any]) -> pd.DataFrame:
 def make_datasets(
     frame: pd.DataFrame,
     config: dict[str, Any],
+    standardizer_override: FeatureStandardizer | None = None,
 ) -> tuple[
     dict[str, pd.DataFrame],
     dict[str, CycleSequenceDataset],
@@ -461,7 +462,7 @@ def make_datasets(
             "One of the train/val/test splits is empty after applying holdouts."
         )
 
-    standardizer = FeatureStandardizer.from_frame(train_frame, feature_cols)
+    standardizer = standardizer_override or FeatureStandardizer.from_frame(train_frame, feature_cols)
     scaled_frames = {
         "train": standardizer.transform(train_frame, feature_cols),
         "val": standardizer.transform(val_frame, feature_cols),

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import sys
 from dataclasses import asdict
@@ -26,6 +27,7 @@ from src.decision.alignment import (  # noqa: E402
     target_indices,
 )
 from src.decision.losses import DecisionLossConfig  # noqa: E402
+from src.data.sequence_dataset import FeatureStandardizer  # noqa: E402
 from src.trainers.train_cycle_model import (  # noqa: E402
     load_checkpoint,
     load_precomputed_frame,
@@ -49,7 +51,29 @@ def _evaluate(model, loader, device, indices, loss_cfg):
     return {"future_mae": float(np.mean(future_errors)), "decision_loss": float(np.mean(decision_losses))}
 
 
-def run(base_checkpoint: str, base_config_path: str, adapter_checkpoint: str, output: str, config_path: str) -> dict[str, object]:
+def build_transfer_encoder_payload(
+    source_payload: dict[str, object],
+    encoder: torch.nn.Module,
+) -> dict[str, object]:
+    """Build a standard encoder checkpoint that reads the adapted static memory."""
+    transfer_payload = dict(source_payload)
+    model_config = copy.deepcopy(source_payload["model_config"])
+    model_config["memory_mode"] = "static_parameter"
+    transfer_payload["model_config"] = model_config
+    transfer_payload["model_state"] = encoder.state_dict()
+    return transfer_payload
+
+
+def run(
+    base_checkpoint: str,
+    base_config_path: str,
+    adapter_checkpoint: str,
+    output: str,
+    config_path: str,
+    transfer_encoder_output: str | None = None,
+    transfer_adapter_output: str | None = None,
+    require_eligible: bool = False,
+) -> dict[str, object]:
     config = yaml.safe_load(Path(config_path).read_text(encoding="utf-8"))
     align_cfg = AlignmentConfig(**config.get("alignment", {}))
     loss_cfg = DecisionLossConfig(**config["loss"])
@@ -57,13 +81,18 @@ def run(base_checkpoint: str, base_config_path: str, adapter_checkpoint: str, ou
     encoder, payload = load_checkpoint(base_checkpoint, device)
     if not hasattr(encoder, "memory_mode"):
         raise TypeError("Phase 5C alignment requires the patch transformer.")
+    source_memory_mode = str(encoder.memory_mode)
+    if source_memory_mode != "static_parameter":
+        encoder.initialise_static_memory_from_runtime()
     encoder.memory_mode = "static_parameter"
     encoder.enable_memory_update = False
-    encoder.initialise_static_memory_from_runtime()
     adapter_payload = torch.load(adapter_checkpoint, map_location=device)
     adapter = DecisionAdapter.from_checkpoint(adapter_payload)
     model = AlignedDecisionModel(encoder, adapter).to(device)
-    encoder_params, adapter_params = configure_alignment_parameters(model)
+    encoder_params, adapter_params = configure_alignment_parameters(
+        model,
+        align_cfg.encoder_parameter_scope,
+    )
     optimizer = torch.optim.AdamW(
         [
             {"params": encoder_params, "lr": align_cfg.encoder_learning_rate},
@@ -73,7 +102,12 @@ def run(base_checkpoint: str, base_config_path: str, adapter_checkpoint: str, ou
     )
     base_config = yaml.safe_load(Path(base_config_path).read_text(encoding="utf-8"))
     frame = load_precomputed_frame(base_config)
-    _, datasets, _, split_meta = make_datasets(frame, base_config)
+    source_standardizer = FeatureStandardizer(**payload["standardizer"])
+    _, datasets, _, split_meta = make_datasets(
+        frame,
+        base_config,
+        standardizer_override=source_standardizer,
+    )
     batch_size = int(base_config["training"]["batch_size"])
     train_loader = make_loader(datasets["train"], batch_size=batch_size, shuffle=True)
     val_loader = make_loader(datasets["val"], batch_size=batch_size, shuffle=False)
@@ -112,7 +146,20 @@ def run(base_checkpoint: str, base_config_path: str, adapter_checkpoint: str, ou
         "promotion_status": "eligible_for_backtest" if future_preserved else "rejected",
     }
     save_aligned_checkpoint(output, model, metadata)
+    if transfer_encoder_output:
+        encoder_payload = build_transfer_encoder_payload(payload, model.encoder)
+        destination = Path(transfer_encoder_output)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        torch.save(encoder_payload, destination)
+        metadata["transfer_encoder_output"] = str(destination)
+    if transfer_adapter_output:
+        destination = Path(transfer_adapter_output)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        torch.save(model.adapter.checkpoint(), destination)
+        metadata["transfer_adapter_output"] = str(destination)
     Path(output).with_suffix(".json").write_text(json.dumps(metadata, indent=2, default=str), encoding="utf-8")
+    if require_eligible and not future_preserved:
+        raise RuntimeError("Regional memory alignment exceeded the future-MAE preservation gate.")
     return metadata
 
 
@@ -123,8 +170,26 @@ def main() -> None:
     parser.add_argument("--adapter-checkpoint", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--config", default="configs/phase5_decision_alignment.yaml")
+    parser.add_argument("--transfer-encoder-output")
+    parser.add_argument("--transfer-adapter-output")
+    parser.add_argument("--require-eligible", action="store_true")
     args = parser.parse_args()
-    print(json.dumps(run(args.base_checkpoint, args.base_config, args.adapter_checkpoint, args.output, args.config), indent=2, default=str))
+    print(
+        json.dumps(
+            run(
+                args.base_checkpoint,
+                args.base_config,
+                args.adapter_checkpoint,
+                args.output,
+                args.config,
+                args.transfer_encoder_output,
+                args.transfer_adapter_output,
+                args.require_eligible,
+            ),
+            indent=2,
+            default=str,
+        )
+    )
 
 
 if __name__ == "__main__":
