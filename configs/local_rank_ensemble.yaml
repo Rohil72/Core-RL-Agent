@@ -1,0 +1,151 @@
+schema_version: 1
+
+protocol:
+  status: exploratory_reconstruction
+  source_hypothesis: phase5_c0_median_control
+  failed_confirmation_immutable: true
+  reliability_filter_used: false
+  minimum_seed_votes: 0
+  rank_aggregation: median
+  promotion_claim_allowed: false
+
+experiment:
+  source_run: reports/final_testbed/phase6_a30_final_v1
+  source_testbed_config: configs/final_research_testbed.yaml
+  output_root: reports/local_rank_ensemble
+  markets: [US, India, China, Brazil, France, UK]
+  seeds: [7, 17, 37]
+
+periods:
+  development:
+    source_name: policy_development
+    start: 2022-01-01
+    end: 2023-12-31
+    evidence_status: development
+  selection:
+    source_name: policy_selection
+    start: 2024-01-01
+    end: 2024-12-31
+    evidence_status: development_selection
+  observed_confirmation:
+    source_name: observed_confirmation
+    start: 2025-01-01
+    end: 2026-03-31
+    evidence_status: contaminated_diagnostic_only
+
+adapter:
+  input_dim: 128
+  hidden_dim: 64
+  decision_dim: 32
+  dropout: 0.10
+  quantiles: [0.10, 0.50, 0.90]
+
+training:
+  epochs: 60
+  batch_size: 256
+  learning_rate: 0.0002
+  weight_decay: 0.0001
+  patience: 6
+  gradient_clip: 1.0
+  device: auto
+  neighbors: 25
+  selection_metric: retrieval_utility
+  selection_interval: 2
+  minimum_epochs: 12
+  retrieval_spearman_weight: 0.25
+  learning_rate_patience: 4
+  learning_rate_decay: 0.50
+  minimum_learning_rate: 0.00001
+
+loss:
+  quantile_weight: 1.0
+  ranking_weight: 0.10
+  analogue_weight: 0.20
+  vicreg_weight: 0.01
+  rank_temperature: 0.20
+  outcome_temperature: 0.50
+  latent_temperature: 0.20
+  vicreg_variance_target: 0.20
+
+decision_dataset:
+  horizons: [5, 10, 21, 42, 63]
+  primary_horizon: 63
+  stop_loss: 0.10
+  min_hold_sessions: 5
+  max_hold_sessions: 63
+  exit_score_fraction: 0.50
+  exit_min_score: 0.0
+  adverse_excursion_weight: 0.50
+  holding_penalty_per_session: 0.0001
+  slippage_bps_per_side: 10.0
+  benchmark_column: future_blended_alpha_63
+  utility_return_mode: fixed_horizon
+
+memory:
+  k: 25
+  causal_horizon_sessions: 126
+  minimum_neighbor_separation_sessions: 21
+  same_ticker_mode: exclude
+  same_ticker_neighbor_limit: null
+  exclude_query_sector: false
+  exclude_query_industry: false
+  target_upside: decision_mfe
+  target_alpha: decision_net_alpha
+  target_downside: decision_mae
+  target_path_quality: decision_path_quality
+  target_holding_period: decision_holding_sessions
+  aggregation_method: gaussian
+  trim_fraction: 0.10
+  tail_fraction: 0.25
+  min_neighbors: 15
+  max_median_distance: null
+  confidence_reference_distance: null
+  score_mode: alpha_lcb
+  require_outcome_availability: true
+  retrieval_batch_size: 128
+
+policy:
+  top_k: 3
+  min_score: 0.0
+  min_expected_upside: 0.0
+  max_expected_downside: 0.12
+  min_confidence: 0.20
+  min_alpha_lcb: 0.0
+  max_downside_cvar: 0.12
+  min_neighbor_count: 15
+  require_ood_pass: true
+  min_hold_days: 5
+  max_hold_days: 63
+  exit_score_fraction: 0.50
+  exit_min_score: 0.0
+  stop_loss: 0.10
+  initial_capital: 100000
+  risk_guard_enabled: true
+  cooldown_sessions: 63
+  rolling_loss_window_sessions: 126
+  quarantine_sessions: 126
+  max_stop_losses: 2
+  cumulative_loss_limit: -0.15
+
+consensus:
+  minimum_votes: 0
+  exit_smoothing_span: 1
+  exit_score_quantile: 0.50
+  rank_aggregation: median
+
+baselines:
+  momentum_window: 21
+  random_trials: 20
+  random_seed: 7
+
+gates:
+  target_pooled_sharpe: 2.0
+  maximum_drawdown: 0.20
+  minimum_positive_markets: 5
+  maximum_profit_concentration: 0.35
+  minimum_ensemble_seed_lift: 0.0
+
+hardware:
+  adapter_gpu_hours: 1.0
+  export_gpu_hours: 0.30
+  max_gpu_hours: 40.0

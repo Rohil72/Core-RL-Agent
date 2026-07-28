@@ -98,9 +98,45 @@ records an interruption rather than a false completion.
 Do not set `allow_hardware_mismatch_resume` for comparable experiments. If a
 machine must change, start a new run ID and treat it as a separate testbed.
 
-## Locked final memory policy
+## Active local-rank reconstruction
 
-The active final configuration is `configs/final_memory_policy.yaml`. It
+The active exploratory DAG is generated from
+`configs/local_rank_ensemble.yaml`. It reuses the ignored regional Phase 6
+encoder checkpoints and latent exports, trains only lightweight decision
+adapters, and contains no transformer or RL jobs:
+
+```powershell
+$run = "local_rank_ensemble_v1"
+
+.\.venv\Scripts\python.exe scripts\run_local_rank_ensemble.py `
+  --config configs\local_rank_ensemble.yaml `
+  --run-id $run `
+  --stage build `
+  --python .venv\Scripts\python.exe
+
+$manifest = "reports\local_rank_ensemble\$run\experiment_manifest.yaml"
+$state = "reports\local_rank_ensemble\$run\orchestration_state"
+
+.\.venv\Scripts\python.exe scripts\run_durable_experiment.py `
+  --manifest $manifest `
+  --state-dir $state `
+  --stage full `
+  --plan-summary
+
+.\.venv\Scripts\python.exe scripts\run_durable_experiment.py `
+  --manifest $manifest `
+  --state-dir $state `
+  --stage full
+```
+
+Reissuing the final command validates and skips completed jobs. The declared
+graph contains 202 jobs and at most 34.2 estimated GPU-hours. See
+[Local Rank Ensemble](LOCAL_RANK_ENSEMBLE.md) for its causal and evidentiary
+contract.
+
+## Historical locked memory policy
+
+The rejected locked configuration is `configs/final_memory_policy.yaml`. It
 replays one preselected global/global memory candidate and contains no encoder
 training or RL jobs. Restore the ignored `phase6_a30_final_v1` artifacts, then
 compile and execute:
@@ -127,12 +163,12 @@ $state = "reports\final_memory_policy\$run\orchestration_state"
   --state-dir $state
 ```
 
-The compiled canonical DAG contains one CPU evaluation job. Reissuing the final
+The compiled historical DAG contains one CPU evaluation job. Reissuing the final
 command is safe: completed outputs are validated and skipped.
 
-## Sealed external evaluation
+## Historical sealed external evaluation
 
-After freezing the candidate, use
+The completed failed-confirmation procedure used
 `configs/final_memory_confirmation.yaml` and
 `scripts/run_final_memory_confirmation.py` for the one-shot 2025-2026 Q1
 evaluation. It runs frozen inference, causal retrieval, five predeclared

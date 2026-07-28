@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pandas as pd
 import torch
+import yaml
 from torch.utils.data import DataLoader
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -44,6 +45,7 @@ def run(
     start: str,
     end: str,
     output: str,
+    config: str | None = None,
 ) -> dict[str, object]:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     encoder, payload = load_checkpoint(encoder_checkpoint, device)
@@ -79,13 +81,18 @@ def run(
                 row.update({f"pred_utility_q{int(q * 100):02d}": float(quantiles[index, i]) for i, q in enumerate(adapter.config.quantiles)})
                 row.update({name: float(targets[index, i]) for i, name in enumerate(target_cols)})
                 rows.append(row)
-    frame = build_decision_frame(pd.DataFrame(rows), paths, DecisionDatasetConfig())
+    values = (
+        yaml.safe_load(Path(config).read_text(encoding="utf-8")) if config else {}
+    ) or {}
+    dataset_config = DecisionDatasetConfig(**values.get("decision_dataset", {}))
+    frame = build_decision_frame(pd.DataFrame(rows), paths, dataset_config)
     destination = Path(output); destination.parent.mkdir(parents=True, exist_ok=True)
     frame.to_parquet(destination, index=False)
     summary = {
         "output": str(destination), "rows": len(frame), "tickers": int(frame["ticker"].nunique()),
         "source_normalization": str(encoder_checkpoint), "target_fit_performed": False,
         "period": [start, end],
+        "decision_dataset": values.get("decision_dataset", {}),
     }
     destination.with_suffix(".json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     return summary
@@ -99,6 +106,7 @@ def main() -> None:
     parser.add_argument("--start", required=True)
     parser.add_argument("--end", required=True)
     parser.add_argument("--output", required=True)
+    parser.add_argument("--config", default=None)
     args = parser.parse_args()
     print(json.dumps(run(**vars(args)), indent=2))
 

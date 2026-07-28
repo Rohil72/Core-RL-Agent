@@ -26,43 +26,51 @@ The following local Phase 5 runs were rejected by their own gates:
   final policy/representation candidate failed the six-market development gate.
 - Global transformer plus regionally adapted internal and external memory
   reached only about 0.69 pooled Sharpe and was rejected.
+- The sealed global/global reliability candidate also failed its observed
+  2025-2026 Q1 evaluation. Raw memory remained positive but weak, while the
+  reliability gate made the result worse. This closed the reliability-filter
+  branch rather than supporting a profitable-strategy claim.
 
 These figures are development evidence from ignored local report artifacts.
 They are not confirmation evidence and are deliberately absent from a clean
 GitHub clone.
 
-## Frozen Candidate
+## Exploratory Reconstruction
 
-The remaining candidate is fixed in `configs/final_memory_policy.yaml`:
+The failed confirmation artifacts and `configs/final_memory_policy.yaml` remain
+frozen. The next and final development hypothesis is separately fixed in
+`configs/local_rank_ensemble.yaml`:
 
-1. Shared global patch Transformer.
-2. Global static internal memory.
-3. Global external historical memory.
-4. Three-seed consensus with the 25% reliability-coverage candidate.
-5. Deterministic threshold policy; no RL.
+1. Reuse each market's existing regional patch Transformer checkpoint.
+2. Train only a market-local 128-to-64-to-32 decision adapter.
+3. Build an expanding local memory whose outcomes are unavailable until their
+   exact maturity timestamp.
+4. Rank each market-date independently in three seed spaces and use the median
+   percentile rank.
+5. Require zero binary seed votes and apply no reliability filter.
+6. Execute the deterministic top-k policy; no RL.
 
-The earlier global/global development sweep reached approximately 1.50 pooled
-Sharpe but still failed the complete promotion contract. This is the strongest
-remaining architecture, not a claimed profitable strategy. Its structure and
-thresholds are frozen to prevent further selection-period overfitting.
+This reconstructs the mechanism behind the earlier Phase 5 result instead of
+adding another policy layer. That earlier result was not conclusive: folds
+shared much of the same US universe, performance was seed/fold concentrated,
+drawdown was material, and the full promotion contract failed. The purpose of
+the new six-market run is to determine whether its rank mechanism transfers.
 
 ## Next Evaluation
 
-The next work is comparison rather than architecture tuning:
+The active work is one predeclared comparison:
 
-1. Reproduce the locked candidate and conventional baselines under one cost and
-   chronology contract.
-2. Evaluate additional markets or datasets without changing the candidate.
-3. Run the untouched temporal confirmation only under a predeclared protocol.
-4. Report failed markets, drawdown, turnover, calibration, and profit
-   concentration alongside pooled Sharpe.
+1. Refit the lightweight adapter for each existing regional encoder and seed.
+2. Evaluate development, 2024 selection, and already-observed 2025-2026 Q1
+   diagnostic periods separately.
+3. Compare memory rank against equal-weight buy-and-hold, momentum, direct
+   adapter output, repeated random rank, and each individual seed.
+4. Report every failed market, drawdown, ensemble lift, and profit concentration.
 
-The executable sealed protocol is now
-`configs/final_memory_confirmation.yaml`. It evaluates 2025 through 2026 Q1
-against equal-weight buy-and-hold, raw memory, momentum, the direct adapter
-head, and repeated random rankings. It reports China or any other dominant
-profit contributor explicitly rather than hiding concentration inside a pooled
-metric. See [Final Memory Confirmation](FINAL_MEMORY_CONFIRMATION.md).
+The executable protocol is `scripts/run_local_rank_ensemble.py`; see
+[Local Rank Ensemble](LOCAL_RANK_ENSEMBLE.md). The 2025-2026 Q1 period has
+already been inspected and is therefore diagnostic only. A successful result
+would justify a future untouched dataset, not retroactive promotion.
 
 ## Promotion Standard
 
@@ -83,3 +91,6 @@ requires pooled Sharpe at least 2.0, five positive markets, drawdown at most
   cross-sectional median return when benchmark alpha is unavailable.
 - The Phase 6 international RL testbed was executed and rejected. Its compiler
   remains historical infrastructure, not the active research direction.
+- The six fixed liquid-company universes and all already-inspected periods are
+  development evidence. Publication-quality validation still requires an
+  untouched universe or later time period fixed before results are viewed.

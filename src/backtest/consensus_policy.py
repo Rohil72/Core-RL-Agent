@@ -15,6 +15,7 @@ class ConsensusSignalConfig:
     minimum_votes: int = 2
     exit_smoothing_span: int = 1
     exit_score_quantile: float = 0.50
+    rank_aggregation: str = "mean"
 
     def __post_init__(self) -> None:
         if self.minimum_votes < 0:
@@ -23,6 +24,8 @@ class ConsensusSignalConfig:
             raise ValueError("exit_smoothing_span must be positive.")
         if not 0.0 <= self.exit_score_quantile <= 1.0:
             raise ValueError("exit_score_quantile must lie in [0, 1].")
+        if self.rank_aggregation not in {"mean", "median"}:
+            raise ValueError("rank_aggregation must be 'mean' or 'median'.")
 
 
 MEDIAN_EVIDENCE_COLUMNS = (
@@ -99,7 +102,9 @@ def build_consensus_signals(
                     f"{int(seed)}:{int(vote)}" for seed, vote in zip(group["seed"], votes)
                 ),
                 "consensus_economic_score": float(scores.median()),
-                "consensus_entry_rank": float(ranks.mean()),
+                "consensus_entry_rank": float(
+                    ranks.median() if cfg.rank_aggregation == "median" else ranks.mean()
+                ),
                 "consensus_exit_raw": float(scores.quantile(cfg.exit_score_quantile)),
                 "seed_score_std": float(scores.std(ddof=0)),
                 "seed_score_range": float(scores.max() - scores.min()),
