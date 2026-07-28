@@ -9,7 +9,7 @@ import pandas as pd
 
 from src.memory.aggregator import AggregationConfig
 from src.memory.confidence import ConfidenceConfig
-from src.memory.evidence import build_evidence_summary
+from src.memory.evidence import EvidenceSummary, build_evidence_summary
 from src.memory.experience import ExperienceMemory, ExperienceSchema, latent_columns, resolve_column
 from src.memory.retrieval import RetrievalConfig, build_retrieval_index, normalise_latents, retrieve_neighbors
 from src.memory.metric import RetrievalMetric
@@ -26,6 +26,7 @@ class MarketMemoryConfig:
     exclude_query_sector: bool = False
     exclude_query_industry: bool = False
     same_ticker_neighbor_limit: float | None = 0.50
+    max_neighbors_per_ticker: int | None = None
     target_upside: str = "future_max_return_63"
     target_alpha: str | None = None
     target_downside: str = "future_min_return_63"
@@ -47,6 +48,8 @@ class MarketMemoryConfig:
     max_median_distance: float | None = None
     confidence_reference_distance: float | None = None
     score_mode: str = "legacy"
+    neighbor_scales: tuple[int, ...] | None = None
+    multiscale_disagreement_weight: float = 0.25
     require_outcome_availability: bool = False
     retrieval_batch_size: int = 128
 
@@ -114,14 +117,19 @@ def score_market_memory(
     else:
         mem_x = retrieval_metric.transform(experience_memory.latent_matrix)
         qry_x = retrieval_metric.transform(query_matrix)
+    scales = tuple(sorted(set(int(value) for value in (cfg.neighbor_scales or ()))))
+    if any(value <= 0 for value in scales):
+        raise ValueError("neighbor_scales must contain positive integers.")
+    retrieval_k = max((cfg.k, *scales))
     retrieval_cfg = RetrievalConfig(
-        k=cfg.k,
+        k=retrieval_k,
         causal_horizon_sessions=cfg.causal_horizon_sessions,
         minimum_neighbor_separation_sessions=cfg.minimum_neighbor_separation_sessions,
         same_ticker_mode=cfg.same_ticker_mode,
         exclude_query_sector=cfg.exclude_query_sector,
         exclude_query_industry=cfg.exclude_query_industry,
         same_ticker_neighbor_limit=cfg.same_ticker_neighbor_limit,
+        max_neighbors_per_ticker=cfg.max_neighbors_per_ticker,
         max_distance=cfg.max_distance,
         min_confidence=cfg.min_memory_confidence,
         require_outcome_availability=cfg.require_outcome_availability,
@@ -192,10 +200,12 @@ def score_market_memory(
             continue
 
         neighbors = memory.iloc[neighbor_idx]
-        evidence = build_evidence_summary(
-            neighbors,
-            neighbor_dist,
-            str(qrow["ticker"]),
+        evidence, evidence_payload = _build_evidence_payload(
+            neighbors=neighbors,
+            distances=neighbor_dist,
+            query_ticker=str(qrow["ticker"]),
+            scales=scales,
+            disagreement_weight=cfg.multiscale_disagreement_weight,
             upside_col=experience_memory.upside_col,
             alpha_col=experience_memory.alpha_col,
             downside_col=experience_memory.downside_col,
@@ -205,7 +215,7 @@ def score_market_memory(
             confidence=confidence_cfg,
             score_weights=score_weights,
         )
-        row.update(evidence.to_signal_payload())
+        row.update(evidence_payload)
         signal_rows.append(row)
 
         for rank, (midx, dist) in enumerate(zip(neighbor_idx, neighbor_dist), start=1):
@@ -257,6 +267,106 @@ def score_market_memory(
     return pd.DataFrame(signal_rows), pd.DataFrame(neighbor_rows)
 
 
+def _build_evidence_payload(
+    *,
+    neighbors: pd.DataFrame,
+    distances: np.ndarray,
+    query_ticker: str,
+    scales: tuple[int, ...],
+    disagreement_weight: float,
+    upside_col: str,
+    alpha_col: str | None,
+    downside_col: str,
+    path_quality_col: str | None,
+    holding_period_col: str | None,
+    aggregation: AggregationConfig,
+    confidence: ConfidenceConfig,
+    score_weights: dict,
+) -> tuple[EvidenceSummary, dict]:
+    """Build one evidence payload, optionally requiring stability across scales."""
+
+    usable_scales = [scale for scale in scales if scale <= len(neighbors)]
+    if not usable_scales:
+        usable_scales = [len(neighbors)]
+    summaries = [
+        build_evidence_summary(
+            neighbors.iloc[:scale],
+            distances[:scale],
+            query_ticker,
+            upside_col=upside_col,
+            alpha_col=alpha_col,
+            downside_col=downside_col,
+            path_quality_col=path_quality_col,
+            holding_period_col=holding_period_col,
+            aggregation=aggregation,
+            confidence=confidence,
+            score_weights=score_weights,
+        )
+        for scale in usable_scales
+    ]
+    if len(summaries) == 1:
+        payload = summaries[0].to_signal_payload()
+        payload.update(
+            {
+                "retrieval_scale_count": 1,
+                "retrieval_scale_score_std": 0.0,
+                "retrieval_scale_sign_agreement": 1.0,
+            }
+        )
+        return summaries[0], payload
+
+    payloads = [summary.to_signal_payload() for summary in summaries]
+    combined: dict[str, object] = {}
+    for key in payloads[0]:
+        values = [
+            float(payload[key])
+            for payload in payloads
+            if isinstance(payload.get(key), (int, float))
+            and not isinstance(payload.get(key), bool)
+            and np.isfinite(float(payload[key]))
+        ]
+        combined[key] = float(np.median(values)) if values else payloads[-1].get(key)
+
+    scores = np.asarray(
+        [summary.score for summary in summaries if summary.score is not None],
+        dtype=float,
+    )
+    signs = scores >= 0.0
+    sign_agreement = (
+        float(max(signs.mean(), 1.0 - signs.mean())) if len(signs) else 0.0
+    )
+    score_std = float(np.std(scores, ddof=0)) if len(scores) else float("nan")
+    if len(scores):
+        combined["opportunity_score"] = float(
+            np.median(scores) - disagreement_weight * score_std
+        )
+    alpha_lows = [
+        value for value in (summary.alpha.ci_low for summary in summaries) if value is not None
+    ]
+    alpha_highs = [
+        value for value in (summary.alpha.ci_high for summary in summaries) if value is not None
+    ]
+    combined["retrieval_alpha_ci_low"] = min(alpha_lows) if alpha_lows else None
+    combined["retrieval_alpha_ci_high"] = max(alpha_highs) if alpha_highs else None
+    combined["retrieval_confidence"] = float(
+        np.median([summary.confidence.confidence for summary in summaries])
+        * sign_agreement
+    )
+    combined["retrieval_agreement_score"] = float(
+        np.median([summary.confidence.agreement_score for summary in summaries])
+        * sign_agreement
+    )
+    combined["retrieval_disagreement_score"] = (
+        1.0 - float(combined["retrieval_agreement_score"])
+    )
+    combined["retrieval_neighbor_count"] = int(max(usable_scales))
+    combined["retrieval_ood_pass"] = all(summary.ood_pass for summary in summaries)
+    combined["retrieval_scale_count"] = len(summaries)
+    combined["retrieval_scale_score_std"] = score_std
+    combined["retrieval_scale_sign_agreement"] = sign_agreement
+    return summaries[-1], combined
+
+
 def _safe_float(value: float) -> float | None:
     return float(value) if np.isfinite(value) else None
 
@@ -296,6 +406,9 @@ def _empty_signal_payload(reason: str | None = None) -> dict:
         "retrieval_median_distance": None,
         "retrieval_ood_pass": reason != "ood",
         "retrieval_rejection_reason": reason,
+        "retrieval_scale_count": 0,
+        "retrieval_scale_score_std": None,
+        "retrieval_scale_sign_agreement": 0.0,
         "opportunity_quality": None,
         "opportunity_score": None,
     }

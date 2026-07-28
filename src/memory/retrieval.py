@@ -15,6 +15,7 @@ class RetrievalConfig:
     minimum_neighbor_separation_sessions: int = 21
     same_ticker_mode: str = "allow"  # "allow", "only", "exclude"
     same_ticker_neighbor_limit: float | None = 0.50
+    max_neighbors_per_ticker: int | None = None
     max_distance: float | None = None
     exclude_query_sector: bool = False
     exclude_query_industry: bool = False
@@ -177,6 +178,12 @@ def _progressive_filtered_neighbors(
                 sessions,
                 config.minimum_neighbor_separation_sessions,
             )
+        if config.max_neighbors_per_ticker is not None:
+            ordered = cap_ticker_concentration(
+                ordered,
+                tickers,
+                config.max_neighbors_per_ticker,
+            )
         capped = cap_same_ticker_neighbors(
             ordered,
             tickers,
@@ -187,6 +194,26 @@ def _progressive_filtered_neighbors(
         if len(capped) >= config.k or pool_size >= count:
             return capped
         pool_size = min(count, pool_size * 2)
+
+
+def cap_ticker_concentration(
+    ordered_indices: np.ndarray,
+    tickers: np.ndarray,
+    maximum_per_ticker: int,
+) -> np.ndarray:
+    """Cap every ticker's contribution while preserving distance order."""
+
+    if maximum_per_ticker <= 0:
+        raise ValueError("maximum_per_ticker must be positive.")
+    counts: dict[str, int] = {}
+    kept: list[int] = []
+    for idx in ordered_indices:
+        ticker = str(tickers[idx])
+        if counts.get(ticker, 0) >= maximum_per_ticker:
+            continue
+        kept.append(int(idx))
+        counts[ticker] = counts.get(ticker, 0) + 1
+    return np.asarray(kept, dtype=int)
 
 def deduplicate_close_neighbors(
     ordered_indices: np.ndarray,

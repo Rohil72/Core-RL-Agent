@@ -4,8 +4,10 @@ Core RL Agent is a research codebase for causal, retrieval-grounded equity
 decisions. It is not a live-trading system and no policy is currently promoted.
 The active path is a patch Transformer market-state encoder, market-local
 historical memory, and a deterministic continuous-rank policy that converts
-three independent retrieval views into trades. Offline RL remains available
-only as a rejected Phase 6 comparison path.
+three independent retrieval views into trades. The final bounded study compares
+raw and adapter retrieval, C0 and rally outcomes, ticker-balanced evidence, and
+multi-scale causal memory. Offline RL remains only as a rejected Phase 6
+comparison path.
 
 The cycle detector remains only for earlier experiments. The final encoder uses
 `patch_transformer`, disables detector targets, and sets detector action loss to
@@ -14,11 +16,11 @@ zero.
 ## Research Status
 
 The sealed global/global reliability candidate failed confirmation and remains
-immutable. A separate exploratory reconstruction now tests the strongest
-mechanism seen in the earlier Phase 5 development result: regional encoders,
-market-local decision adapters and growing memory, and an ungated three-seed
-median-rank policy. It does not reopen or overwrite the failed confirmation,
-and no policy is promoted.
+immutable. The subsequent local-rank reconstruction also failed to transfer
+consistently and exposed an embedding-selection ambiguity. The active final
+memory study reuses its frozen artifacts to isolate raw versus adapter memory,
+then tests richer rally evidence and multi-scale agreement. It does not reopen
+or overwrite the failed confirmation, and no policy is promoted.
 
 See [Research Status](docs/RESEARCH_STATUS.md) for the evidence boundary,
 rejected hypotheses, promotion standard, and known limitations.
@@ -27,9 +29,10 @@ rejected hypotheses, promotion standard, and known limitations.
 daily technical and point-in-time fundamental features
   -> 252-session patch Transformer
   -> 128-dimensional latent state
-  -> causal market memory and analogue evidence
-  -> market-local growing causal memory
-  -> continuous three-seed median-rank policy
+  -> explicit raw or 32-dimensional adapter retrieval view
+  -> static or market-local growing causal memory
+  -> robust rally evidence and optional multi-scale agreement
+  -> continuous three-seed mean-rank policy
   -> market-level and pooled robustness gates
 ```
 
@@ -44,13 +47,13 @@ py -3.11 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
-Compile the local-rank reconstruction after restoring the ignored Phase 6
-regional checkpoints and latent exports:
+Compile the final memory study after restoring the ignored
+`local_rank_ensemble_v1` artifacts:
 
 ```powershell
-.\.venv\Scripts\python.exe scripts\run_local_rank_ensemble.py `
-  --config configs\local_rank_ensemble.yaml `
-  --run-id local_rank_ensemble_v1 `
+.\.venv\Scripts\python.exe scripts\run_final_memory_study.py `
+  --config configs\final_memory_study.yaml `
+  --run-id final_memory_study_v1 `
   --stage build `
   --python .venv\Scripts\python.exe
 ```
@@ -60,12 +63,13 @@ The stage-by-stage execution and confirmation-lock procedure is in
 
 ## Active Testbed
 
-`configs/local_rank_ensemble.yaml` fixes the exploratory reconstruction:
+`configs/final_memory_study.yaml` fixes the final bounded comparison:
 
-- Existing regional patch Transformer checkpoints; no encoder retraining.
-- Market-local 128-to-64-to-32 decision adapters.
-- Growing causal memory that admits an outcome only after it matures.
-- Three-seed continuous median rank with zero required binary votes.
+- Existing regional patch Transformer and adapter outputs; no retraining.
+- Explicit raw 128-dimensional and adapter 32-dimensional retrieval views.
+- Exact C0, rally-path, ticker-balanced, and multi-scale memory variants.
+- Static and growing causal memory that admits outcomes only after maturity.
+- Three-seed continuous mean rank with zero required binary votes.
 - Deterministic top-k trading policy and declared standard baselines.
 - Markets: US, India, China, Brazil, France, and UK.
 - No RL and no reliability filter.
@@ -76,9 +80,10 @@ The stage-by-stage execution and confirmation-lock procedure is in
 preserve the completed regional/global/offline-RL experiment for reproducibility,
 but they are no longer the active execution path.
 
-The reconstruction contract and commands are documented in
-[Local Rank Ensemble](docs/LOCAL_RANK_ENSEMBLE.md). The failed sealed procedure
-remains documented in
+The active contract and commands are documented in
+[Final Memory Study](docs/FINAL_MEMORY_STUDY.md). The rejected reconstruction is
+documented in [Local Rank Ensemble](docs/LOCAL_RANK_ENSEMBLE.md), and the failed
+sealed procedure remains documented in
 [Final Memory Confirmation](docs/FINAL_MEMORY_CONFIRMATION.md).
 
 ## Repository Map
@@ -91,7 +96,8 @@ remains documented in
 - `src/backtest/`: memory-policy backtesting.
 - `src/trainers/train_cycle_model.py`: encoder training and resumable state.
 - `src/orchestration/`: immutable durable experiment runner.
-- `scripts/run_local_rank_ensemble.py`: active exploratory DAG and aggregation.
+- `scripts/run_final_memory_study.py`: active memory-only DAG and aggregation.
+- `scripts/run_local_rank_ensemble.py`: rejected reconstruction infrastructure.
 - `src/eval/policy_baselines.py`: shared deterministic baseline contract.
 - `scripts/run_final_memory_confirmation.py`: sealed external evaluation and baselines.
 - `scripts/build_final_testbed.py`: historical Phase 6 RL testbed compiler.
@@ -105,5 +111,6 @@ configuration, tests, and the small sample CSV fixture only.
 - [Architecture](ARCHITECTURE.md)
 - [Research Status](docs/RESEARCH_STATUS.md)
 - [Resumable Experiments](docs/RESUMABLE_EXPERIMENTS.md)
+- [Final Memory Study](docs/FINAL_MEMORY_STUDY.md)
 - [Local Rank Ensemble](docs/LOCAL_RANK_ENSEMBLE.md)
 - [Final Memory Confirmation](docs/FINAL_MEMORY_CONFIRMATION.md)

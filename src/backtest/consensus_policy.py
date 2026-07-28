@@ -56,6 +56,9 @@ MEDIAN_EVIDENCE_COLUMNS = (
     "retrieval_same_ticker_rate",
     "retrieval_cross_ticker_rate",
     "retrieval_median_distance",
+    "retrieval_scale_count",
+    "retrieval_scale_score_std",
+    "retrieval_scale_sign_agreement",
     "opportunity_quality",
     "pred_utility_q50",
 )

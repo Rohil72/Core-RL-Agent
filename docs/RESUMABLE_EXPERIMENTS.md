@@ -98,9 +98,45 @@ records an interruption rather than a false completion.
 Do not set `allow_hardware_mismatch_resume` for comparable experiments. If a
 machine must change, start a new run ID and treat it as a separate testbed.
 
-## Active local-rank reconstruction
+## Active final memory study
 
-The active exploratory DAG is generated from
+The active CPU-only DAG is generated from
+`configs/final_memory_study.yaml`. It reuses the completed
+`local_rank_ensemble_v1` adapter and decision artifacts and contains no
+Transformer, adapter-training, or RL jobs:
+
+```powershell
+$run = "final_memory_study_v1"
+
+.\.venv\Scripts\python.exe scripts\run_final_memory_study.py `
+  --config configs\final_memory_study.yaml `
+  --run-id $run `
+  --stage build `
+  --python .venv\Scripts\python.exe
+
+$manifest = "reports\final_memory_study\$run\experiment_manifest.yaml"
+$state = "reports\final_memory_study\$run\orchestration_state"
+
+.\.venv\Scripts\python.exe scripts\run_durable_experiment.py `
+  --manifest $manifest `
+  --state-dir $state `
+  --stage full `
+  --plan-summary
+
+.\.venv\Scripts\python.exe scripts\run_durable_experiment.py `
+  --manifest $manifest `
+  --state-dir $state `
+  --stage full
+```
+
+The declared graph contains 322 jobs and zero GPU-hour allowance. Reissuing the
+last command validates and skips completed artifacts. See
+[Final Memory Study](FINAL_MEMORY_STUDY.md) for the variant and evidence
+contract.
+
+## Historical local-rank reconstruction
+
+The rejected exploratory DAG is generated from
 `configs/local_rank_ensemble.yaml`. It reuses the ignored regional Phase 6
 encoder checkpoints and latent exports, trains only lightweight decision
 adapters, and contains no transformer or RL jobs:

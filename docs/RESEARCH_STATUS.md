@@ -35,42 +35,45 @@ These figures are development evidence from ignored local report artifacts.
 They are not confirmation evidence and are deliberately absent from a clean
 GitHub clone.
 
-## Exploratory Reconstruction
+## Rejected Local-Rank Reconstruction
 
 The failed confirmation artifacts and `configs/final_memory_policy.yaml` remain
-frozen. The next and final development hypothesis is separately fixed in
+frozen. The subsequent development hypothesis was separately fixed in
 `configs/local_rank_ensemble.yaml`:
 
 1. Reuse each market's existing regional patch Transformer checkpoint.
 2. Train only a market-local 128-to-64-to-32 decision adapter.
 3. Build an expanding local memory whose outcomes are unavailable until their
    exact maturity timestamp.
-4. Rank each market-date independently in three seed spaces and use the median
-   percentile rank.
+4. Rank each market-date independently in three seed spaces.
 5. Require zero binary seed votes and apply no reliability filter.
 6. Execute the deterministic top-k policy; no RL.
 
-This reconstructs the mechanism behind the earlier Phase 5 result instead of
-adding another policy layer. That earlier result was not conclusive: folds
-shared much of the same US universe, performance was seed/fold concentrated,
-drawdown was material, and the full promotion contract failed. The purpose of
-the new six-market run is to determine whether its rank mechanism transfers.
+The six-market run did not show robust transfer. Its three-seed ensemble had
+negative lift in all three periods and only Brazil was positive in the observed
+period. Memory commonly beat the direct adapter head, but did not consistently
+beat equal-weight. Audit then found that retrieval selected the raw `latent_*`
+columns from mixed raw-plus-adapter frames, so the run did not actually test
+adapter-space memory.
 
-## Next Evaluation
+## Final Memory Evaluation
 
-The active work is one predeclared comparison:
+The active work is one bounded, predeclared memory comparison:
 
-1. Refit the lightweight adapter for each existing regional encoder and seed.
-2. Evaluate development, 2024 selection, and already-observed 2025-2026 Q1
-   diagnostic periods separately.
-3. Compare memory rank against equal-weight buy-and-hold, momentum, direct
-   adapter output, repeated random rank, and each individual seed.
-4. Report every failed market, drawdown, ensemble lift, and profit concentration.
+1. Reuse every existing regional encoder and adapter artifact without training.
+2. Reconstruct the original C0 target and mean-rank semantics in raw and adapter
+   embedding spaces.
+3. Test richer rally-path outcomes with empirical predictive downside tails and
+   ticker-balanced evidence.
+4. Test whether agreement across 10-, 25-, and 50-neighbor memories improves a
+   causal growing memory.
+5. Evaluate development, 2024 selection, and the already-observed 2025-2026 Q1
+   diagnostic period separately, with every failed market visible.
 
-The executable protocol is `scripts/run_local_rank_ensemble.py`; see
-[Local Rank Ensemble](LOCAL_RANK_ENSEMBLE.md). The 2025-2026 Q1 period has
-already been inspected and is therefore diagnostic only. A successful result
-would justify a future untouched dataset, not retroactive promotion.
+The executable protocol is `scripts/run_final_memory_study.py`; see
+[Final Memory Study](FINAL_MEMORY_STUDY.md). The 2025-2026 Q1 period has already
+been inspected and is diagnostic only. The study cannot promote a strategy,
+regardless of its result.
 
 ## Promotion Standard
 

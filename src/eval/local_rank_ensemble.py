@@ -27,6 +27,8 @@ DIAGNOSTIC_COLUMNS = (
     "retrieval_expected_alpha",
     "retrieval_agreement_score",
     "retrieval_confidence",
+    "retrieval_scale_score_std",
+    "retrieval_scale_sign_agreement",
     "seed_vote_count",
     "seed_rank_std",
 )
@@ -56,6 +58,20 @@ def _diagnostics(consensus: pd.DataFrame) -> dict[str, Any]:
         "mean_seed_rank_std": float(consensus["seed_rank_std"].mean()),
         "mean_seed_vote_fraction": float(consensus["seed_vote_fraction"].mean()),
     }
+    for column in (
+        "retrieval_confidence",
+        "retrieval_agreement_score",
+        "retrieval_historical_diversity",
+        "retrieval_effective_sample_size",
+        "retrieval_cross_ticker_rate",
+        "retrieval_scale_score_std",
+        "retrieval_scale_sign_agreement",
+    ):
+        if column in consensus:
+            values = pd.to_numeric(consensus[column], errors="coerce").dropna()
+            result[f"mean_{column}"] = (
+                float(values.mean()) if len(values) else None
+            )
     target = next(
         (
             column
@@ -90,8 +106,6 @@ def evaluate_local_rank_market(
 
     if consensus_config.minimum_votes != 0:
         raise ValueError("The local-rank reconstruction requires minimum_votes=0.")
-    if consensus_config.rank_aggregation != "median":
-        raise ValueError("The local-rank reconstruction requires median rank aggregation.")
     if len(seed_signals) < 3:
         raise ValueError("The local-rank reconstruction requires at least three seeds.")
 
@@ -133,7 +147,7 @@ def evaluate_local_rank_market(
     ]
     payload = {
         "status": "completed",
-        "protocol": "market_local_continuous_median_rank",
+        "protocol": f"market_local_continuous_{consensus_config.rank_aggregation}_rank",
         "promotion_allowed": False,
         "policy": asdict(policy),
         "consensus": asdict(consensus_config),

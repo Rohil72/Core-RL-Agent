@@ -1,0 +1,147 @@
+schema_version: 1
+
+protocol:
+  status: final_exploratory_memory_study
+  source_result_immutable: true
+  transformer_training_allowed: false
+  adapter_training_allowed: false
+  offline_rl_allowed: false
+  promotion_claim_allowed: false
+
+experiment:
+  source_run: reports/local_rank_ensemble/local_rank_ensemble_v1
+  source_testbed_config: configs/final_research_testbed.yaml
+  output_root: reports/final_memory_study
+  markets: [US, India, China, Brazil, France, UK]
+  seeds: [7, 17, 37]
+
+periods:
+  development:
+    start: 2022-01-01
+    end: 2023-12-31
+    evidence_status: development
+  selection:
+    start: 2024-01-01
+    end: 2024-12-31
+    evidence_status: development_selection
+  observed_confirmation:
+    start: 2025-01-01
+    end: 2026-03-31
+    evidence_status: contaminated_diagnostic_only
+
+memory_defaults:
+  k: 25
+  causal_horizon_sessions: 126
+  minimum_neighbor_separation_sessions: 21
+  same_ticker_mode: exclude
+  same_ticker_neighbor_limit: null
+  exclude_query_sector: false
+  exclude_query_industry: false
+  aggregation_method: gaussian
+  trim_fraction: 0.10
+  tail_fraction: 0.25
+  min_neighbors: 15
+  require_outcome_availability: true
+  retrieval_batch_size: 128
+
+exact_c0_targets:
+  target_upside: future_max_return_63
+  target_alpha: future_blended_alpha_63
+  target_downside: future_min_return_63
+  target_path_quality: event_upside_before_drawdown_126
+  target_holding_period: event_peak_offset_63
+  score_mode: alpha_lcb
+
+rally_targets:
+  target_upside: decision_mfe
+  target_alpha: future_blended_alpha_63
+  target_downside: decision_mae
+  target_path_quality: decision_path_quality
+  target_holding_period: decision_holding_sessions
+  score_mode: alpha_predictive_tail
+
+policy:
+  top_k: 3
+  min_score: 0.0
+  min_expected_upside: 0.0
+  max_expected_downside: 0.12
+  min_confidence: 0.20
+  min_alpha_lcb: 0.0
+  max_downside_cvar: 0.12
+  min_neighbor_count: 15
+  require_ood_pass: true
+  min_hold_days: 5
+  max_hold_days: 63
+  exit_score_fraction: 0.50
+  exit_min_score: 0.0
+  stop_loss: 0.10
+  initial_capital: 100000
+  risk_guard_enabled: true
+  cooldown_sessions: 63
+  rolling_loss_window_sessions: 126
+  quarantine_sessions: 126
+  max_stop_losses: 2
+  cumulative_loss_limit: -0.15
+
+consensus:
+  minimum_votes: 0
+  exit_smoothing_span: 1
+  exit_score_quantile: 0.50
+  rank_aggregation: mean
+
+baselines:
+  momentum_window: 21
+  random_trials: 20
+  random_seed: 7
+
+variants:
+  - id: raw_c0_static
+    description: Exact C0 memory semantics in the raw 128-dimensional encoder space.
+    embedding_space: raw
+    memory_mode: static
+    targets: exact_c0
+    memory_overrides: {}
+    policy_overrides: {}
+
+  - id: adapter_c0_static
+    description: Exact C0 memory semantics in the trained 32-dimensional decision space.
+    embedding_space: adapter
+    memory_mode: static
+    targets: exact_c0
+    memory_overrides: {}
+    policy_overrides: {}
+
+  - id: adapter_rally_balanced_static
+    description: Rally-path outcomes with empirical predictive tails and ticker-balanced evidence.
+    embedding_space: adapter
+    memory_mode: static
+    targets: rally
+    memory_overrides:
+      max_neighbors_per_ticker: 3
+    policy_overrides:
+      min_alpha_lcb: null
+
+  - id: adapter_rally_multiscale_growing
+    description: Growing ticker-balanced memory requiring stable evidence across local and broad neighbourhoods.
+    embedding_space: adapter
+    memory_mode: growing
+    targets: rally
+    memory_overrides:
+      k: 50
+      min_neighbors: 25
+      max_neighbors_per_ticker: 4
+      neighbor_scales: [10, 25, 50]
+      multiscale_disagreement_weight: 0.25
+    policy_overrides:
+      min_alpha_lcb: null
+      min_neighbor_count: 25
+
+gates:
+  target_pooled_sharpe: 2.0
+  maximum_drawdown: 0.20
+  minimum_positive_markets: 5
+  maximum_profit_concentration: 0.35
+  minimum_ensemble_seed_lift: 0.0
+
+hardware:
+  max_gpu_hours: 0.0

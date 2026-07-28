@@ -157,6 +157,16 @@ def _score(
             - 0.25 * (alpha.std or 0.0)
             + 0.01 * (path.expected or 0.0)
         )
+    if score_weights.get("score_mode") == "alpha_predictive_tail":
+        if alpha.expected is None or alpha.p10 is None:
+            return None
+        return float(
+            0.50 * alpha.expected
+            + 0.50 * alpha.p10
+            - 0.35 * abs(downside.tail_risk or downside.expected)
+            - 0.15 * (alpha.std or 0.0)
+            + 0.01 * (path.expected or 0.0)
+        )
     return float(
         score_weights.get("expected_upside_weight", 1.0) * upside.expected
         + score_weights.get("path_quality_weight", 0.10) * (path.expected or 0.0)
