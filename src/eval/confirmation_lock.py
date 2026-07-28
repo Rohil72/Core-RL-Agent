@@ -42,6 +42,20 @@ def create_confirmation_lock(
         "executed_at": None,
         "status": "locked_not_executed",
     }
+    if destination.exists():
+        comparable_current = {
+            key: current.get(key)
+            for key in ("confirmation_year", "markets", "artifacts", "status")
+        }
+        comparable_requested = {
+            key: lock.get(key)
+            for key in ("confirmation_year", "markets", "artifacts", "status")
+        }
+        if comparable_current != comparable_requested:
+            raise FileExistsError(
+                "An unexecuted confirmation lock already exists with different immutable inputs."
+            )
+        return current
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_text(json.dumps(lock, indent=2), encoding="utf-8")
     return lock

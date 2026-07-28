@@ -73,6 +73,11 @@ The stage-by-stage execution and confirmation-lock procedure is in
 preserve the completed regional/global/offline-RL experiment for reproducibility,
 but they are no longer the canonical execution path.
 
+The sealed 2025-2026 Q1 baseline and robustness procedure is documented in
+[Final Memory Confirmation](docs/FINAL_MEMORY_CONFIRMATION.md). It hashes the
+candidate, source, data, and development evidence before running and never
+reopens architecture or threshold selection.
+
 ## Repository Map
 
 - `src/models/patch_transformer_model.py`: active encoder.
@@ -84,6 +89,7 @@ but they are no longer the canonical execution path.
 - `src/trainers/train_cycle_model.py`: encoder training and resumable state.
 - `src/orchestration/`: immutable durable experiment runner.
 - `scripts/run_phase6_frozen_memory_sweep.py`: canonical locked-memory evaluator.
+- `scripts/run_final_memory_confirmation.py`: sealed external evaluation and baselines.
 - `scripts/build_final_testbed.py`: historical Phase 6 RL testbed compiler.
 
 Generated data, checkpoints, models, reports, virtual environments, and
@@ -95,3 +101,4 @@ configuration, tests, and the small sample CSV fixture only.
 - [Architecture](ARCHITECTURE.md)
 - [Research Status](docs/RESEARCH_STATUS.md)
 - [Resumable Experiments](docs/RESUMABLE_EXPERIMENTS.md)
+- [Final Memory Confirmation](docs/FINAL_MEMORY_CONFIRMATION.md)

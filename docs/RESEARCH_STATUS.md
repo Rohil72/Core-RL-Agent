@@ -57,6 +57,13 @@ The next work is comparison rather than architecture tuning:
 4. Report failed markets, drawdown, turnover, calibration, and profit
    concentration alongside pooled Sharpe.
 
+The executable sealed protocol is now
+`configs/final_memory_confirmation.yaml`. It evaluates 2025 through 2026 Q1
+against equal-weight buy-and-hold, raw memory, momentum, the direct adapter
+head, and repeated random rankings. It reports China or any other dominant
+profit contributor explicitly rather than hiding concentration inside a pooled
+metric. See [Final Memory Confirmation](FINAL_MEMORY_CONFIRMATION.md).
+
 ## Promotion Standard
 
 Development requires positive median excess Sharpe versus the memory baseline,

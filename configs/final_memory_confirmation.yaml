@@ -1,0 +1,58 @@
+schema_version: 1
+
+protocol:
+  status: sealed_external_evaluation
+  candidate: global_global__coverage_025
+  development_candidate_passed: false
+  purpose: evaluate_the_frozen_research_candidate_without_further_tuning
+  architecture_changes_allowed: false
+  threshold_changes_allowed: false
+  rl_used: false
+
+experiment:
+  source_run: reports/final_testbed/phase6_a30_final_v1
+  source_policy_config: configs/final_memory_policy.yaml
+  source_testbed_config: configs/final_research_testbed.yaml
+  output_root: reports/final_memory_confirmation
+  markets: [US, India, China, Brazil, France, UK]
+  seeds: [7, 17, 37]
+  development_period: policy_development
+  confirmation_start: 2025-01-01
+  confirmation_end: 2026-03-31
+  outcome_maturation_end: 2026-06-30
+
+baseline_suite:
+  nominal_coverage: 0.25
+  momentum_window: 21
+  random_trials: 20
+  random_seed: 7
+  names:
+    - equal_weight_buy_hold
+    - raw_memory
+    - momentum_21
+    - direct_adapter_q50
+    - random_median
+
+confirmation_gates:
+  target_pooled_sharpe: 2.0
+  maximum_drawdown: 0.20
+  minimum_positive_markets: 5
+  minimum_equal_weight_wins: 4
+  minimum_positive_brier_skill_markets: 4
+  maximum_profit_concentration: 0.50
+  minimum_deflated_sharpe_probability: 0.80
+
+hardware:
+  require_cuda: true
+  cuda_visible_devices: "0"
+  minimum_vram_gb: 6
+  minimum_compute_capability: [7, 5]
+  vram_fraction: 0.95
+  allow_cpu_fallback: false
+
+storage:
+  minimum_free_gb: 10
+
+budgets:
+  confirmation:
+    max_gpu_hours: 12

@@ -100,3 +100,17 @@ def test_upper_consensus_exit_exceeds_median_for_disagreeing_seeds():
     median_a = median.loc[median["ticker"] == "A", "consensus_exit_score"].iloc[0]
     upper_a = upper.loc[upper["ticker"] == "A", "consensus_exit_score"].iloc[0]
     assert upper_a > median_a
+
+
+def test_consensus_uses_median_direct_adapter_score_across_seeds():
+    frames = {
+        7: _seed_frame(7, [0.20], [0.10]),
+        17: _seed_frame(17, [0.20], [0.10]),
+        37: _seed_frame(37, [0.20], [0.10]),
+    }
+    for frame, value in zip(frames.values(), (0.10, 0.80, 0.30)):
+        frame["pred_utility_q50"] = value
+
+    consensus = build_consensus_signals(frames, _policy())
+
+    assert np.allclose(consensus["pred_utility_q50"], 0.30)

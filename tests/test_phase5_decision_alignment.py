@@ -116,3 +116,16 @@ def test_confirmation_lock_is_one_shot(tmp_path):
     mark_confirmation_executed(lock_path, [result])
     with pytest.raises(FileExistsError):
         mark_confirmation_executed(lock_path, [result])
+
+
+def test_unexecuted_confirmation_lock_rejects_changed_inputs(tmp_path):
+    first = tmp_path / "first.txt"
+    second = tmp_path / "second.txt"
+    first.write_text("first", encoding="utf-8")
+    second.write_text("second", encoding="utf-8")
+    lock_path = tmp_path / "confirmation_lock.json"
+
+    create_confirmation_lock(lock_path, [first], ["US"])
+
+    with pytest.raises(FileExistsError, match="different immutable inputs"):
+        create_confirmation_lock(lock_path, [second], ["US"])

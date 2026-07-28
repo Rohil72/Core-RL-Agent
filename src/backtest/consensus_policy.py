@@ -54,6 +54,7 @@ MEDIAN_EVIDENCE_COLUMNS = (
     "retrieval_cross_ticker_rate",
     "retrieval_median_distance",
     "opportunity_quality",
+    "pred_utility_q50",
 )
 
 

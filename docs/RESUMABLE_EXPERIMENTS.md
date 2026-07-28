@@ -130,6 +130,16 @@ $state = "reports\final_memory_policy\$run\orchestration_state"
 The compiled canonical DAG contains one CPU evaluation job. Reissuing the final
 command is safe: completed outputs are validated and skipped.
 
+## Sealed external evaluation
+
+After freezing the candidate, use
+`configs/final_memory_confirmation.yaml` and
+`scripts/run_final_memory_confirmation.py` for the one-shot 2025-2026 Q1
+evaluation. It runs frozen inference, causal retrieval, five predeclared
+baseline families, calibration diagnostics, concentration reporting, and
+closes an immutable confirmation lock. Complete commands and the evidence
+boundary are in [Final Memory Confirmation](FINAL_MEMORY_CONFIRMATION.md).
+
 ## Historical international RL testbed
 
 The frozen research schema is `configs/final_research_testbed.yaml`. It defines
