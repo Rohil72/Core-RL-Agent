@@ -6,7 +6,10 @@ import pandas as pd
 import yaml
 
 import scripts.run_final_memory_study as study
-from scripts.export_phase5_transfer_latents import _sanitize_inference_features
+from scripts.export_phase5_transfer_latents import (
+    _embedding_columns,
+    _sanitize_inference_features,
+)
 from src.data.sequence_dataset import FeatureStandardizer
 from src.decision.dataset import bounded_path_quality
 from src.memory.market_memory import MarketMemoryConfig, score_market_memory
@@ -133,6 +136,28 @@ def test_transfer_sanitization_rejects_excessive_repairs():
         assert "exceeded its configured limit" in str(exc)
     else:
         raise AssertionError("Excessive feature repair was not rejected.")
+
+
+def test_transfer_embedding_selector_excludes_future_outcomes():
+    columns = pd.Index(
+        [
+            "latent_0",
+            "latent_127",
+            "decision_0",
+            "decision_31",
+            "decision_return_1",
+            "decision_return_63",
+            "future_return_63",
+            "decision_a2_holding_sessions",
+        ]
+    )
+
+    assert _embedding_columns(columns) == [
+        "latent_0",
+        "latent_127",
+        "decision_0",
+        "decision_31",
+    ]
 
 
 def test_ticker_concentration_cap_preserves_order():

@@ -38,6 +38,16 @@ def _assert_finite_module(module: torch.nn.Module, name: str) -> None:
         )
 
 
+def _embedding_columns(columns: list[str] | pd.Index) -> list[str]:
+    """Return only exact latent or decision embedding dimensions."""
+    selected = []
+    for column in columns:
+        prefix, separator, dimension = str(column).rpartition("_")
+        if separator and prefix in {"latent", "decision"} and dimension.isdigit():
+            selected.append(str(column))
+    return selected
+
+
 def _sanitize_inference_features(
     frame: pd.DataFrame,
     feature_cols: list[str],
@@ -286,12 +296,7 @@ def run(
         (row["missing_tail_sessions"] for row in coverage_rows),
         default=0,
     )
-    embedding_columns = [
-        column
-        for column in frame
-        if column.startswith(("latent_", "decision_"))
-        and column.rsplit("_", 1)[-1].isdigit()
-    ]
+    embedding_columns = _embedding_columns(frame.columns)
     finite_embeddings = bool(
         not embedding_columns
         or np.isfinite(frame[embedding_columns].to_numpy(dtype=float)).all()
