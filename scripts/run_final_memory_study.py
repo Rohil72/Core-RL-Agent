@@ -25,6 +25,7 @@ from src.backtest.market_memory_evaluator import (  # noqa: E402
 )
 from src.eval.local_rank_ensemble import evaluate_local_rank_market  # noqa: E402
 from src.eval.policy_baselines import BaselineSuiteConfig, write_json  # noqa: E402
+from src.decision.dataset import bounded_path_quality  # noqa: E402
 
 
 def _load(path: str | Path) -> dict[str, Any]:
@@ -52,6 +53,48 @@ def _source(config: dict[str, Any]) -> Path:
     return PROJECT_ROOT / config["experiment"]["source_run"]
 
 
+def _source_key(config: dict[str, Any], market: str, seed: int) -> str:
+    layout = config["experiment"].get("source_layout", "regional_market")
+    if layout == "regional_market":
+        return f"regional_{market}_seed_{seed}"
+    if layout == "global_shared":
+        return f"global_seed_{seed}"
+    raise ValueError(f"Unsupported source layout: {layout}")
+
+
+def _query_key(config: dict[str, Any], market: str, seed: int) -> str:
+    layout = config["experiment"].get("source_layout", "regional_market")
+    prefix = "global" if layout == "global_shared" else "regional"
+    return f"{prefix}_{market}_seed_{seed}"
+
+
+def _decision_path(
+    config: dict[str, Any],
+    output: Path,
+    market: str,
+    seed: int,
+    period: str,
+) -> Path:
+    if bool(config.get("inference_refresh", {}).get("enabled", False)):
+        if (
+            config.get("inference_refresh", {}).get("period_mode", "per_period")
+            == "combined"
+        ):
+            return (
+                output
+                / "decisions"
+                / _query_key(config, market, seed)
+                / "all_periods.parquet"
+            )
+        return output / "decisions" / _query_key(config, market, seed) / f"{period}.parquet"
+    return (
+        _source(config)
+        / "decisions"
+        / _query_key(config, market, seed)
+        / f"{period}.parquet"
+    )
+
+
 def _validate(config: dict[str, Any]) -> None:
     protocol = config["protocol"]
     forbidden = (
@@ -67,6 +110,14 @@ def _validate(config: dict[str, Any]) -> None:
     identifiers = [variant["id"] for variant in config["variants"]]
     if len(identifiers) != len(set(identifiers)):
         raise ValueError("Variant IDs must be unique.")
+    if protocol.get("causal_timestamp_unit", "ns") != "ns":
+        raise ValueError("The final memory study requires nanosecond causal timestamps.")
+    path_mode = protocol.get("path_quality_transform", "stored")
+    if path_mode not in {"stored", "bounded_excursion_share"}:
+        raise ValueError(f"Unsupported path-quality transform: {path_mode}")
+    if bool(config.get("inference_refresh", {}).get("enabled", False)):
+        if "source_encoder_run" not in config["experiment"]:
+            raise ValueError("Inference refresh requires experiment.source_encoder_run.")
 
 
 def _embedding_columns(frame: pd.DataFrame, prefix: str) -> list[str]:
@@ -82,6 +133,7 @@ def _embedding_columns(frame: pd.DataFrame, prefix: str) -> list[str]:
 def materialize_retrieval_view(
     frame: pd.DataFrame,
     embedding_space: str,
+    path_quality_transform: str = "stored",
 ) -> pd.DataFrame:
     """Make the retrieval geometry explicit and attach causal alpha metadata."""
 
@@ -125,6 +177,23 @@ def materialize_retrieval_view(
         out["alpha_target_source"] = "derived_local_cross_sectional_alpha"
     else:
         out["alpha_target_source"] = "stored_future_blended_alpha_63"
+    if path_quality_transform == "bounded_excursion_share":
+        required = {"decision_mfe", "decision_mae"}
+        if missing := required.difference(out.columns):
+            raise ValueError(
+                f"Cannot derive bounded path quality; missing {sorted(missing)}."
+            )
+        out["decision_path_quality_bounded"] = bounded_path_quality(
+            out["decision_mfe"],
+            out["decision_mae"],
+        )
+        out["path_quality_target_source"] = "bounded_excursion_share"
+    elif path_quality_transform == "stored":
+        out["path_quality_target_source"] = "stored"
+    else:
+        raise ValueError(
+            f"Unsupported path-quality transform: {path_quality_transform}"
+        )
     out["retrieval_embedding_space"] = embedding_space
     actual_dimension = len(_embedding_columns(out, "latent_"))
     if actual_dimension != expected_dimension:
@@ -139,10 +208,21 @@ def _growing_bank(
     train: pd.DataFrame,
     period_frames: list[pd.DataFrame],
     embedding_space: str,
+    path_quality_transform: str = "stored",
 ) -> pd.DataFrame:
-    frames = [materialize_retrieval_view(train, embedding_space)]
+    frames = [
+        materialize_retrieval_view(
+            train,
+            embedding_space,
+            path_quality_transform,
+        )
+    ]
     frames.extend(
-        materialize_retrieval_view(frame, embedding_space)
+        materialize_retrieval_view(
+            frame,
+            embedding_space,
+            path_quality_transform,
+        )
         for frame in period_frames
     )
     bank = pd.concat(frames, ignore_index=True, sort=False)
@@ -162,16 +242,42 @@ def preflight(config_path: str, run_id: str) -> dict[str, Any]:
     config = _load(config_path)
     _validate(config)
     source = _source(config)
+    output = _output(config, run_id)
+    refresh = bool(config.get("inference_refresh", {}).get("enabled", False))
+    testbed = _load(config["experiment"]["source_testbed_config"])
+    data_root = PROJECT_ROOT / testbed["experiment"]["data_root"]
+    encoder_source = PROJECT_ROOT / config["experiment"].get(
+        "source_encoder_run",
+        config["experiment"]["source_run"],
+    )
     missing: list[str] = []
     for market in config["experiment"]["markets"]:
         for seed in config["experiment"]["seeds"]:
-            key = f"regional_{market}_seed_{seed}"
-            required = [source / "adapters" / key / "train_decisions.parquet"]
-            required.extend(
-                source / "decisions" / key / f"{period}.parquet"
-                for period in config["periods"]
-            )
+            source_key = _source_key(config, market, int(seed))
+            required = [
+                source / "adapters" / source_key / "train_decisions.parquet",
+            ]
+            if refresh:
+                required.extend(
+                    [
+                        source / "adapters" / source_key / "decision_adapter.pt",
+                        encoder_source / "models" / source_key / "final_model.pt",
+                    ]
+                )
+            else:
+                required.extend(
+                    _decision_path(
+                        config,
+                        output,
+                        market,
+                        int(seed),
+                        period,
+                    )
+                    for period in config["periods"]
+                )
             missing.extend(_rel(path) for path in required if not path.exists())
+        if refresh and not list((data_root / market).glob("*.parquet")):
+            missing.append(_rel(data_root / market / "*.parquet"))
     if missing:
         raise FileNotFoundError(
             "Final memory study source artifacts are incomplete:\n"
@@ -185,6 +291,7 @@ def preflight(config_path: str, run_id: str) -> dict[str, Any]:
         "transformer_training_jobs": 0,
         "adapter_training_jobs": 0,
         "offline_rl_jobs": 0,
+        "inference_refresh": refresh,
     }
     write_json(_output(config, run_id) / "preflight.json", payload)
     return payload
@@ -202,18 +309,41 @@ def prepare_views(
     _validate(config)
     source = _source(config)
     output = _output(config, run_id)
-    key = f"regional_{market}_seed_{seed}"
-    train = pd.read_parquet(source / "adapters" / key / "train_decisions.parquet")
+    source_key = _source_key(config, market, seed)
+    key = _query_key(config, market, seed)
+    train = pd.read_parquet(
+        source / "adapters" / source_key / "train_decisions.parquet"
+    )
     period_names = list(config["periods"])
-    period_frames = {
-        period: pd.read_parquet(source / "decisions" / key / f"{period}.parquet")
-        for period in period_names
-    }
+    period_frames: dict[str, pd.DataFrame] = {}
+    cached_decisions: dict[Path, pd.DataFrame] = {}
+    for period, period_config in config["periods"].items():
+        path = _decision_path(config, output, market, seed, period)
+        if path not in cached_decisions:
+            cached_decisions[path] = pd.read_parquet(path)
+            cached_decisions[path]["timestamp"] = pd.to_datetime(
+                cached_decisions[path]["timestamp"],
+                utc=True,
+            )
+        start = pd.Timestamp(period_config["start"], tz="UTC")
+        end = pd.Timestamp(period_config["end"], tz="UTC")
+        frame = cached_decisions[path]
+        period_frames[period] = frame.loc[
+            (frame["timestamp"] >= start) & (frame["timestamp"] <= end)
+        ].copy()
     root = output / "views" / key
     root.mkdir(parents=True, exist_ok=True)
     dimensions: dict[str, int] = {}
+    path_quality_transform = config["protocol"].get(
+        "path_quality_transform",
+        "stored",
+    )
     for embedding_space in ("raw", "adapter"):
-        view = materialize_retrieval_view(train, embedding_space)
+        view = materialize_retrieval_view(
+            train,
+            embedding_space,
+            path_quality_transform,
+        )
         dimensions[embedding_space] = len(_embedding_columns(view, "latent_"))
         view.to_parquet(
             root / f"static_{embedding_space}.parquet",
@@ -226,13 +356,22 @@ def prepare_views(
         period_root.mkdir(parents=True, exist_ok=True)
         current = period_frames[period]
         for embedding_space in ("raw", "adapter"):
-            materialize_retrieval_view(current, embedding_space).to_parquet(
+            materialize_retrieval_view(
+                current,
+                embedding_space,
+                path_quality_transform,
+            ).to_parquet(
                 period_root / f"query_{embedding_space}.parquet",
                 index=False,
                 compression="zstd",
             )
         prior.append(current)
-        _growing_bank(train, prior, "adapter").to_parquet(
+        _growing_bank(
+            train,
+            prior,
+            "adapter",
+            path_quality_transform,
+        ).to_parquet(
             period_root / "growing_adapter.parquet",
             index=False,
             compression="zstd",
@@ -247,7 +386,20 @@ def prepare_views(
             if "future_blended_alpha_63" in train
             else "derived_local_cross_sectional_alpha"
         ),
+        "path_quality_transform": path_quality_transform,
+        "coverage": {},
     }
+    for period in period_names:
+        summary = json.loads(
+            _decision_path(
+                config,
+                output,
+                market,
+                seed,
+                period,
+            ).with_suffix(".json").read_text(encoding="utf-8")
+        )
+        payload["coverage"][period] = summary.get("coverage", {})
     write_json(root / "summary.json", payload)
     return payload
 
@@ -286,7 +438,7 @@ def run_retrieval(
     _validate(config)
     variant = _variant(config, variant_id)
     output = _output(config, run_id)
-    key = f"regional_{market}_seed_{seed}"
+    key = _query_key(config, market, seed)
     views = output / "views" / key
     embedding = variant["embedding_space"]
     if variant["memory_mode"] == "static":
@@ -360,7 +512,7 @@ def evaluate_variant(
             output
             / "retrieval"
             / variant_id
-            / f"regional_{market}_seed_{seed}"
+            / _query_key(config, market, int(seed))
             / period
             / "eval"
             / "signals.parquet"
@@ -427,6 +579,28 @@ def aggregate_variant(
         momentum_key = f"momentum_{config['baselines']['momentum_window']}"
         momentum = payload["baselines"][momentum_key]
         diagnostics = payload["diagnostics"]
+        seed_coverages = []
+        for seed in config["experiment"]["seeds"]:
+            summary_path = (
+                output
+                / "views"
+                / _query_key(config, market, int(seed))
+                / "summary.json"
+            )
+            summary = (
+                json.loads(summary_path.read_text(encoding="utf-8"))
+                if summary_path.exists()
+                else {}
+            )
+            coverage = summary.get("coverage", {}).get(period, {})
+            seed_coverages.append(
+                float(
+                    coverage.get(
+                        "minimum_ticker_fraction",
+                        coverage.get("total_fraction", 1.0),
+                    )
+                )
+            )
         rows.append(
             {
                 "market": market,
@@ -460,6 +634,7 @@ def aggregate_variant(
                 "mean_scale_sign_agreement": diagnostics.get(
                     "mean_retrieval_scale_sign_agreement"
                 ),
+                "minimum_query_coverage": min(seed_coverages, default=1.0),
             }
         )
         lifts.append(float(payload["ensemble_sharpe_lift_vs_mean_seed"]))
@@ -500,6 +675,26 @@ def aggregate_variant(
             np.mean(lifts) >= gates["minimum_ensemble_seed_lift"]
         ),
     }
+    if "maximum_market_drawdown" in gates:
+        gate_results["maximum_market_drawdown"] = bool(
+            table["max_drawdown"].abs().max()
+            <= float(gates["maximum_market_drawdown"])
+        )
+    if "minimum_market_query_coverage" in gates:
+        gate_results["minimum_market_query_coverage"] = bool(
+            table["minimum_query_coverage"].min()
+            >= float(gates["minimum_market_query_coverage"])
+        )
+    if "minimum_median_market_sharpe" in gates:
+        gate_results["minimum_median_market_sharpe"] = bool(
+            table["sharpe"].median()
+            >= float(gates["minimum_median_market_sharpe"])
+        )
+    if "minimum_baseline_wins" in gates:
+        gate_results["minimum_baseline_wins"] = bool(
+            (table["excess_sharpe_vs_equal_weight"] > 0).sum()
+            >= int(gates["minimum_baseline_wins"])
+        )
     payload = {
         "status": (
             "exploratory_pass" if all(gate_results.values()) else "exploratory_rejected"
@@ -519,6 +714,13 @@ def aggregate_variant(
         "positive_markets": int((table["total_return"] > 0).sum()),
         "profit_concentration": concentration,
         "mean_ensemble_seed_lift": float(np.mean(lifts)),
+        "minimum_market_query_coverage": float(
+            table["minimum_query_coverage"].min()
+        ),
+        "worst_market_drawdown": float(table["max_drawdown"].min()),
+        "baseline_wins": int(
+            (table["excess_sharpe_vs_equal_weight"] > 0).sum()
+        ),
         "gates": gate_results,
     }
     write_json(destination / "summary.json", payload)
@@ -560,6 +762,11 @@ def compare_period(config_path: str, run_id: str, period: str) -> dict[str, Any]
                 "positive_markets": row["positive_markets"],
                 "profit_concentration": row["profit_concentration"],
                 "mean_ensemble_seed_lift": row["mean_ensemble_seed_lift"],
+                "minimum_market_query_coverage": row[
+                    "minimum_market_query_coverage"
+                ],
+                "worst_market_drawdown": row["worst_market_drawdown"],
+                "baseline_wins": row["baseline_wins"],
                 "status": row["status"],
             }
             for row in rows
@@ -598,6 +805,8 @@ def _job(
     *,
     dependencies: list[str] | None = None,
     inputs: list[str | Path] | None = None,
+    gpu: bool = False,
+    hours: float = 0.0,
 ) -> str:
     jobs.append(
         {
@@ -610,21 +819,28 @@ def _job(
                 for value in (inputs or [])
             ],
             "expected_outputs": [_rel(path) for path in outputs],
-            "uses_gpu": False,
+            "uses_gpu": gpu,
             "gpu_count": 1,
-            "estimated_hours": 0.0,
+            "estimated_hours": float(hours),
         }
     )
     return job_id
 
 
 def build(config_path: str, run_id: str, python: str) -> dict[str, Any]:
-    """Compile the final CPU-only memory study DAG."""
+    """Compile the final frozen-model memory study DAG."""
 
     config = _load(config_path)
     _validate(config)
     output = _output(config, run_id)
     source = _source(config)
+    testbed = _load(config["experiment"]["source_testbed_config"])
+    data_root = Path(testbed["experiment"]["data_root"])
+    encoder_source = PROJECT_ROOT / config["experiment"].get(
+        "source_encoder_run",
+        config["experiment"]["source_run"],
+    )
+    refresh = bool(config.get("inference_refresh", {}).get("enabled", False))
     jobs: list[dict[str, Any]] = []
     preflight_job = _job(
         jobs,
@@ -643,6 +859,7 @@ def build(config_path: str, run_id: str, python: str) -> dict[str, Any]:
         inputs=[config_path, config["experiment"]["source_testbed_config"]],
     )
     prepare_jobs: dict[tuple[str, int], str] = {}
+    export_jobs: dict[tuple[str, int, str], str] = {}
     retrieval_jobs: dict[tuple[str, str, int, str], str] = {}
     evaluation_jobs: dict[tuple[str, str, str], str] = {}
     aggregate_jobs: dict[tuple[str, str], str] = {}
@@ -650,13 +867,105 @@ def build(config_path: str, run_id: str, python: str) -> dict[str, Any]:
     for market in config["experiment"]["markets"]:
         for seed_value in config["experiment"]["seeds"]:
             seed = int(seed_value)
-            key = f"regional_{market}_seed_{seed}"
+            source_key = _source_key(config, market, seed)
+            key = _query_key(config, market, seed)
             views = output / "views" / key
-            source_inputs = [source / "adapters" / key / "train_decisions.parquet"]
-            source_inputs.extend(
-                source / "decisions" / key / f"{period}.parquet"
-                for period in config["periods"]
-            )
+            source_inputs = [
+                source / "adapters" / source_key / "train_decisions.parquet"
+            ]
+            prepare_dependencies = [preflight_job]
+            if refresh:
+                target_glob = f"{data_root.as_posix()}/{market}/*.parquet"
+                checkpoint = (
+                    encoder_source / "models" / source_key / "final_model.pt"
+                )
+                adapter = (
+                    source
+                    / "adapters"
+                    / source_key
+                    / "decision_adapter.pt"
+                )
+                refresh_mode = config.get("inference_refresh", {}).get(
+                    "period_mode",
+                    "per_period",
+                )
+                if refresh_mode == "combined":
+                    period_exports = {
+                        "all_periods": {
+                            "start": min(
+                                value["start"]
+                                for value in config["periods"].values()
+                            ),
+                            "end": max(
+                                value["end"]
+                                for value in config["periods"].values()
+                            ),
+                        }
+                    }
+                elif refresh_mode == "per_period":
+                    period_exports = config["periods"]
+                else:
+                    raise ValueError(
+                        f"Unsupported inference refresh period mode: {refresh_mode}"
+                    )
+                for export_period, period_config in period_exports.items():
+                    decisions = _decision_path(
+                        config,
+                        output,
+                        market,
+                        seed,
+                        (
+                            next(iter(config["periods"]))
+                            if export_period == "all_periods"
+                            else export_period
+                        ),
+                    )
+                    export_id = _job(
+                        jobs,
+                        f"export_{key}_{export_period}",
+                        [
+                            python,
+                            "scripts/export_phase5_transfer_latents.py",
+                            "--encoder-checkpoint",
+                            _rel(checkpoint),
+                            "--adapter-checkpoint",
+                            _rel(adapter),
+                            "--target-glob",
+                            target_glob,
+                            "--start",
+                            str(period_config["start"]),
+                            "--end",
+                            str(period_config["end"]),
+                            "--output",
+                            _rel(decisions),
+                            "--config",
+                            config_path,
+                        ],
+                        [decisions, decisions.with_suffix(".json")],
+                        dependencies=[preflight_job],
+                        inputs=[checkpoint, adapter, target_glob, config_path],
+                        gpu=True,
+                        hours=float(
+                            config.get("hardware", {}).get(
+                                "export_gpu_hours",
+                                0.3,
+                            )
+                        ),
+                    )
+                    export_jobs[(market, seed, export_period)] = export_id
+                    prepare_dependencies.append(export_id)
+                    source_inputs.append(decisions)
+            else:
+                source_inputs.extend(
+                    _decision_path(
+                        config,
+                        output,
+                        market,
+                        seed,
+                        period,
+                    )
+                    for period in config["periods"]
+                )
             expected = [
                 views / "summary.json",
                 views / "static_raw.parquet",
@@ -688,7 +997,7 @@ def build(config_path: str, run_id: str, python: str) -> dict[str, Any]:
                     str(seed),
                 ],
                 expected,
-                dependencies=[preflight_job],
+                dependencies=prepare_dependencies,
                 inputs=source_inputs,
             )
 
@@ -697,7 +1006,7 @@ def build(config_path: str, run_id: str, python: str) -> dict[str, Any]:
         for market in config["experiment"]["markets"]:
             for seed_value in config["experiment"]["seeds"]:
                 seed = int(seed_value)
-                key = f"regional_{market}_seed_{seed}"
+                key = _query_key(config, market, seed)
                 for period in config["periods"]:
                     destination = (
                         output / "retrieval" / variant_id / key / period / "eval"
@@ -821,7 +1130,13 @@ def build(config_path: str, run_id: str, python: str) -> dict[str, Any]:
                 "requirements*.txt",
             ],
             "hardware": {"minimum_free_storage_gb": 20},
-            "budgets": {"full": {"max_gpu_hours": 0.0}},
+            "budgets": {
+                "full": {
+                    "max_gpu_hours": float(
+                        config.get("hardware", {}).get("max_gpu_hours", 0.0)
+                    )
+                }
+            },
         },
         "jobs": jobs,
     }
@@ -833,10 +1148,11 @@ def build(config_path: str, run_id: str, python: str) -> dict[str, Any]:
         "manifest": _rel(manifest_path),
         "job_count": len(jobs),
         "variant_count": len(config["variants"]),
-        "gpu_job_count": 0,
+        "gpu_job_count": sum(bool(job["uses_gpu"]) for job in jobs),
         "transformer_training_jobs": 0,
         "adapter_training_jobs": 0,
         "offline_rl_jobs": 0,
+        "inference_refresh_jobs": len(export_jobs),
         "promotion_allowed": False,
     }
     write_json(output / "build_summary.json", payload)

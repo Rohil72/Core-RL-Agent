@@ -31,6 +31,33 @@ class DecisionDatasetConfig:
             raise ValueError("utility_return_mode must be 'fixed_horizon' or 'a2_score_exit'.")
 
 
+def bounded_path_quality(
+    mfe: pd.Series | np.ndarray,
+    mae: pd.Series | np.ndarray,
+    *,
+    epsilon: float = 1e-6,
+) -> np.ndarray:
+    """Return favorable excursion as a bounded share of total excursion."""
+
+    upside = np.maximum(
+        np.nan_to_num(np.asarray(mfe, dtype=float), nan=0.0),
+        0.0,
+    )
+    downside = np.abs(
+        np.minimum(
+            np.nan_to_num(np.asarray(mae, dtype=float), nan=0.0),
+            0.0,
+        )
+    )
+    denominator = upside + downside
+    return np.divide(
+        upside,
+        denominator + float(epsilon),
+        out=np.zeros_like(upside, dtype=float),
+        where=denominator > 0.0,
+    )
+
+
 def _load_price_panel(paths: str | Path | Iterable[str | Path]) -> pd.DataFrame:
     raw_paths = [paths] if isinstance(paths, (str, Path)) else list(paths)
     candidates: list[Path] = []

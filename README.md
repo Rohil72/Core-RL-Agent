@@ -25,6 +25,11 @@ or overwrite the failed confirmation, and no policy is promoted.
 See [Research Status](docs/RESEARCH_STATUS.md) for the evidence boundary,
 rejected hypotheses, promotion standard, and known limitations.
 
+The chronological experiment ledger is in
+[Research Record](docs/research_record/README.md). It records confirmed
+results, rejected branches, diagnostic-only evidence, and unresolved data or
+scoring defects without overwriting the phase implementation documents.
+
 ```text
 daily technical and point-in-time fundamental features
   -> 252-session patch Transformer

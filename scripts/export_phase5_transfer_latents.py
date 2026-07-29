@@ -7,6 +7,7 @@ import json
 import sys
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import torch
 import yaml
@@ -86,6 +87,100 @@ def run(
     ) or {}
     dataset_config = DecisionDatasetConfig(**values.get("decision_dataset", {}))
     frame = build_decision_frame(pd.DataFrame(rows), paths, dataset_config)
+    coverage_config = values.get("inference_coverage", {})
+    window_size = int(payload["model_config"].get("window_size", 252))
+    requested_start = pd.Timestamp(start, tz="UTC")
+    requested_end = pd.Timestamp(end, tz="UTC")
+    expected_by_ticker: dict[str, pd.DatetimeIndex] = {}
+    actual_by_ticker: dict[str, pd.DatetimeIndex] = {}
+    for ticker, group in raw.groupby("ticker"):
+        ordered = group.sort_index()
+        eligible = ordered.index[window_size - 1 :]
+        expected_by_ticker[str(ticker)] = pd.DatetimeIndex(
+            eligible[(eligible >= requested_start) & (eligible <= requested_end)]
+        )
+    if not frame.empty:
+        frame["timestamp"] = pd.to_datetime(frame["timestamp"], utc=True)
+        actual_by_ticker = {
+            str(ticker): pd.DatetimeIndex(group["timestamp"].sort_values())
+            for ticker, group in frame.groupby("ticker")
+        }
+    coverage_rows = []
+    for ticker, expected in expected_by_ticker.items():
+        actual = actual_by_ticker.get(ticker, pd.DatetimeIndex([], tz="UTC"))
+        expected_set = set(expected.asi8)
+        actual_set = set(actual.asi8)
+        covered = len(expected_set.intersection(actual_set))
+        missing_tail = (
+            int((expected > actual.max()).sum())
+            if len(expected) and len(actual)
+            else int(len(expected))
+        )
+        coverage_rows.append(
+            {
+                "ticker": ticker,
+                "expected_rows": int(len(expected)),
+                "actual_rows": int(len(actual)),
+                "covered_rows": int(covered),
+                "coverage_fraction": (
+                    float(covered / len(expected)) if len(expected) else 1.0
+                ),
+                "missing_tail_sessions": missing_tail,
+                "prediction_end": (
+                    actual.max().isoformat() if len(actual) else None
+                ),
+                "expected_end": (
+                    expected.max().isoformat() if len(expected) else None
+                ),
+            }
+        )
+    expected_total = sum(row["expected_rows"] for row in coverage_rows)
+    covered_total = sum(row["covered_rows"] for row in coverage_rows)
+    total_coverage = (
+        float(covered_total / expected_total) if expected_total else 1.0
+    )
+    minimum_ticker_coverage = min(
+        (row["coverage_fraction"] for row in coverage_rows),
+        default=1.0,
+    )
+    maximum_missing_tail = max(
+        (row["missing_tail_sessions"] for row in coverage_rows),
+        default=0,
+    )
+    embedding_columns = [
+        column
+        for column in frame
+        if column.startswith(("latent_", "decision_"))
+        and column.rsplit("_", 1)[-1].isdigit()
+    ]
+    finite_embeddings = bool(
+        not embedding_columns
+        or np.isfinite(frame[embedding_columns].to_numpy(dtype=float)).all()
+    )
+    minimum_required = float(
+        coverage_config.get("minimum_ticker_coverage", 0.0)
+    )
+    maximum_tail_allowed = int(
+        coverage_config.get("maximum_missing_tail_sessions", 10**9)
+    )
+    require_finite = bool(
+        coverage_config.get("require_finite_embeddings", False)
+    )
+    incomplete = [
+        row["ticker"]
+        for row in coverage_rows
+        if row["coverage_fraction"] < minimum_required
+        or row["missing_tail_sessions"] > maximum_tail_allowed
+    ]
+    if incomplete:
+        raise RuntimeError(
+            "Inference coverage contract failed for "
+            + ", ".join(incomplete)
+            + f"; minimum coverage={minimum_required}, "
+            + f"maximum tail gap={maximum_tail_allowed}."
+        )
+    if require_finite and not finite_embeddings:
+        raise FloatingPointError("Export produced non-finite latent embeddings.")
     destination = Path(output); destination.parent.mkdir(parents=True, exist_ok=True)
     frame.to_parquet(destination, index=False)
     summary = {
@@ -93,6 +188,15 @@ def run(
         "source_normalization": str(encoder_checkpoint), "target_fit_performed": False,
         "period": [start, end],
         "decision_dataset": values.get("decision_dataset", {}),
+        "coverage": {
+            "expected_rows": int(expected_total),
+            "covered_rows": int(covered_total),
+            "total_fraction": total_coverage,
+            "minimum_ticker_fraction": minimum_ticker_coverage,
+            "maximum_missing_tail_sessions": maximum_missing_tail,
+            "finite_embeddings": finite_embeddings,
+            "tickers": coverage_rows,
+        },
     }
     destination.with_suffix(".json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     return summary

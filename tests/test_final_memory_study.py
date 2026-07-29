@@ -6,6 +6,7 @@ import pandas as pd
 import yaml
 
 import scripts.run_final_memory_study as study
+from src.decision.dataset import bounded_path_quality
 from src.memory.market_memory import MarketMemoryConfig, score_market_memory
 from src.memory.retrieval import cap_ticker_concentration
 
@@ -60,6 +61,27 @@ def test_retrieval_view_never_silently_uses_the_wrong_embedding():
     ).all()
     assert np.allclose(adapter["future_blended_alpha_63"], [0.07, 0.03, -0.03])
     assert adapter["outcome_available_timestamp"].notna().all()
+
+
+def test_bounded_path_quality_cannot_dominate_the_score():
+    result = bounded_path_quality(
+        np.asarray([0.12, 0.07, 0.01, np.nan]),
+        np.asarray([-0.03, -0.02, -0.08, np.nan]),
+    )
+
+    assert np.all((result >= 0.0) & (result <= 1.0))
+    assert np.allclose(result[:3], [0.8, 7 / 9, 1 / 9], atol=1e-4)
+    assert result[3] == 0.0
+
+    view = study.materialize_retrieval_view(
+        _decision_frame(),
+        "adapter",
+        "bounded_excursion_share",
+    )
+    assert view["decision_path_quality_bounded"].between(0.0, 1.0).all()
+    assert view["path_quality_target_source"].eq(
+        "bounded_excursion_share"
+    ).all()
 
 
 def test_ticker_concentration_cap_preserves_order():
@@ -153,6 +175,55 @@ def test_final_memory_manifest_is_cpu_only(monkeypatch, tmp_path):
     assert json.loads(
         (tmp_path / "reports" / "study" / "run" / "build_summary.json").read_text()
     )["promotion_allowed"] is False
+
+
+def test_final_repair_manifest_refreshes_global_inference_once_per_seed(
+    monkeypatch,
+    tmp_path,
+):
+    monkeypatch.setattr(study, "PROJECT_ROOT", tmp_path)
+    config = yaml.safe_load(Path("configs/final_memory_repair.yaml").read_text())
+    config["experiment"]["output_root"] = "reports/repair"
+    testbed = yaml.safe_load(
+        Path("configs/final_research_testbed.yaml").read_text()
+    )
+    testbed_path = tmp_path / "testbed.yaml"
+    testbed_path.write_text(
+        yaml.safe_dump(testbed, sort_keys=False),
+        encoding="utf-8",
+    )
+    config["experiment"]["source_testbed_config"] = str(testbed_path)
+    config_path = tmp_path / "repair.yaml"
+    config_path.write_text(
+        yaml.safe_dump(config, sort_keys=False),
+        encoding="utf-8",
+    )
+
+    result = study.build(str(config_path), "run", "python")
+    manifest = yaml.safe_load(
+        (
+            tmp_path
+            / "reports"
+            / "repair"
+            / "run"
+            / "experiment_manifest.yaml"
+        ).read_text()
+    )
+    export_jobs = [
+        job for job in manifest["jobs"] if job["id"].startswith("export_")
+    ]
+
+    assert result["job_count"] == 265
+    assert result["variant_count"] == 3
+    assert result["gpu_job_count"] == 18
+    assert result["inference_refresh_jobs"] == 18
+    assert len(export_jobs) == 18
+    assert all(job["uses_gpu"] for job in export_jobs)
+    assert all("global_" in job["id"] for job in export_jobs)
+    assert not any(
+        "train_cycle_model" in " ".join(job["command"])
+        for job in manifest["jobs"]
+    )
 
 
 def test_aggregate_reports_baseline_lift_and_memory_diagnostics(
