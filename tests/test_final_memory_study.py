@@ -6,6 +6,8 @@ import pandas as pd
 import yaml
 
 import scripts.run_final_memory_study as study
+from scripts.export_phase5_transfer_latents import _sanitize_inference_features
+from src.data.sequence_dataset import FeatureStandardizer
 from src.decision.dataset import bounded_path_quality
 from src.memory.market_memory import MarketMemoryConfig, score_market_memory
 from src.memory.retrieval import cap_ticker_concentration
@@ -82,6 +84,55 @@ def test_bounded_path_quality_cannot_dominate_the_score():
     assert view["path_quality_target_source"].eq(
         "bounded_excursion_share"
     ).all()
+
+
+def test_transfer_sanitization_is_causal_finite_and_audited():
+    frame = pd.DataFrame(
+        {
+            "feature_a": [1.0, np.nan, np.inf, 1000.0],
+            "feature_b": [2.0, 4.0, 6.0, 8.0],
+        }
+    )
+    standardizer = FeatureStandardizer(
+        mean={"feature_a": 1.0, "feature_b": 2.0},
+        std={"feature_a": 2.0, "feature_b": 2.0},
+    )
+
+    scaled, audit = _sanitize_inference_features(
+        frame,
+        ["feature_a", "feature_b"],
+        standardizer,
+        maximum_absolute_zscore=25.0,
+        maximum_repaired_fraction=0.30,
+    )
+
+    assert np.isfinite(scaled.to_numpy()).all()
+    assert scaled["feature_a"].tolist() == [0.0, 0.0, 0.0, 25.0]
+    assert scaled["feature_b"].tolist() == [0.0, 1.0, 2.0, 3.0]
+    assert audit["repaired_cells"] == 2
+    assert audit["clipped_cells"] == 1
+    assert audit["method"] == "source_training_mean"
+
+
+def test_transfer_sanitization_rejects_excessive_repairs():
+    frame = pd.DataFrame({"feature": [np.nan, np.inf, 1.0]})
+    standardizer = FeatureStandardizer(
+        mean={"feature": 0.0},
+        std={"feature": 1.0},
+    )
+
+    try:
+        _sanitize_inference_features(
+            frame,
+            ["feature"],
+            standardizer,
+            maximum_absolute_zscore=25.0,
+            maximum_repaired_fraction=0.50,
+        )
+    except RuntimeError as exc:
+        assert "exceeded its configured limit" in str(exc)
+    else:
+        raise AssertionError("Excessive feature repair was not rejected.")
 
 
 def test_ticker_concentration_cap_preserves_order():

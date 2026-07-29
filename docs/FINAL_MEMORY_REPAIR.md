@@ -24,6 +24,12 @@ been inspected and cannot become fresh confirmation evidence.
   2022-01-01 through 2026-03-31 interval.
 - Every ticker must achieve at least 99.5% inference coverage with no more than
   one missing tail session.
+- Non-finite input features are replaced only with the frozen source
+  standardizer's training mean, which becomes zero after scaling.
+- Standardized transfer inputs are clipped to a fixed absolute z-score of 25,
+  and all repairs and clips are recorded in the export sidecar.
+- The run fails if repaired cells exceed 2%, checkpoint tensors are non-finite,
+  or model outputs remain non-finite.
 - Retrieval requires mature outcomes with nanosecond timestamp comparison.
 
 Path quality is:

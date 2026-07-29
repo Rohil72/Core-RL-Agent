@@ -42,6 +42,11 @@ inference_coverage:
   maximum_missing_tail_sessions: 1
   require_finite_embeddings: true
 
+inference_sanitization:
+  method: source_training_mean
+  maximum_absolute_zscore: 25.0
+  maximum_repaired_fraction: 0.02
+
 decision_dataset:
   horizons: [5, 10, 21, 42, 63]
   primary_horizon: 63

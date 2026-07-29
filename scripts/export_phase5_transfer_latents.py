@@ -24,6 +24,101 @@ from src.decision.dataset import DecisionDatasetConfig, build_decision_frame  # 
 from src.trainers.train_cycle_model import load_checkpoint  # noqa: E402
 
 
+def _assert_finite_module(module: torch.nn.Module, name: str) -> None:
+    """Reject checkpoints containing non-finite parameters or buffers."""
+    invalid = [
+        key
+        for key, value in module.state_dict().items()
+        if torch.is_tensor(value) and not torch.isfinite(value).all()
+    ]
+    if invalid:
+        preview = ", ".join(invalid[:5])
+        raise FloatingPointError(
+            f"{name} checkpoint contains non-finite tensors: {preview}"
+        )
+
+
+def _sanitize_inference_features(
+    frame: pd.DataFrame,
+    feature_cols: list[str],
+    standardizer: FeatureStandardizer,
+    *,
+    maximum_absolute_zscore: float,
+    maximum_repaired_fraction: float,
+) -> tuple[pd.DataFrame, dict[str, object]]:
+    """Apply a causal source-statistics repair and bounded transfer scaling."""
+    if maximum_absolute_zscore <= 0:
+        raise ValueError("maximum_absolute_zscore must be positive.")
+    if not 0.0 <= maximum_repaired_fraction <= 1.0:
+        raise ValueError("maximum_repaired_fraction must be in [0, 1].")
+
+    repaired = frame.copy()
+    feature_audit: list[dict[str, object]] = []
+    repaired_cells = 0
+    clipped_cells = 0
+    total_cells = len(repaired) * len(feature_cols)
+
+    for column in feature_cols:
+        mean = float(standardizer.mean[column])
+        std = float(standardizer.std[column])
+        if not np.isfinite(mean) or not np.isfinite(std) or std <= 0:
+            raise FloatingPointError(
+                f"Source standardizer is invalid for {column}: mean={mean}, std={std}."
+            )
+
+        numeric = pd.to_numeric(repaired[column], errors="coerce").astype(float)
+        invalid = ~np.isfinite(numeric.to_numpy())
+        repair_count = int(invalid.sum())
+        if repair_count:
+            numeric.loc[invalid] = mean
+
+        scaled = (numeric - mean) / std
+        scaled_values = scaled.to_numpy(dtype=float)
+        if not np.isfinite(scaled_values).all():
+            raise FloatingPointError(
+                f"Feature {column} remained non-finite after source-mean repair."
+            )
+        clipped = np.abs(scaled_values) > maximum_absolute_zscore
+        clip_count = int(clipped.sum())
+        repaired[column] = np.clip(
+            scaled_values,
+            -maximum_absolute_zscore,
+            maximum_absolute_zscore,
+        )
+        repaired_cells += repair_count
+        clipped_cells += clip_count
+        if repair_count or clip_count:
+            feature_audit.append(
+                {
+                    "feature": column,
+                    "repaired_cells": repair_count,
+                    "clipped_cells": clip_count,
+                }
+            )
+
+    repaired_fraction = (
+        float(repaired_cells / total_cells) if total_cells else 0.0
+    )
+    if repaired_fraction > maximum_repaired_fraction:
+        raise RuntimeError(
+            "Inference feature repair exceeded its configured limit: "
+            f"{repaired_fraction:.6f} > {maximum_repaired_fraction:.6f}."
+        )
+
+    return repaired, {
+        "method": "source_training_mean",
+        "maximum_absolute_zscore": maximum_absolute_zscore,
+        "total_feature_cells": int(total_cells),
+        "repaired_cells": int(repaired_cells),
+        "repaired_fraction": repaired_fraction,
+        "clipped_cells": int(clipped_cells),
+        "clipped_fraction": (
+            float(clipped_cells / total_cells) if total_cells else 0.0
+        ),
+        "features": feature_audit,
+    }
+
+
 def _market_frame(paths: list[Path], feature_cols: list[str]) -> pd.DataFrame:
     frames = []
     for path in paths:
@@ -53,12 +148,28 @@ def run(
     if hasattr(encoder, "enable_memory_update"):
         encoder.enable_memory_update = False
     adapter = DecisionAdapter.from_checkpoint(torch.load(adapter_checkpoint, map_location=device)).to(device).eval()
+    _assert_finite_module(encoder, "Encoder")
+    _assert_finite_module(adapter, "Decision adapter")
     feature_cols = list(payload["feature_cols"])
     target_cols = list(payload["future_target_cols"])
     paths = sorted(PROJECT_ROOT.glob(target_glob))
     raw = _market_frame(paths, feature_cols)
     standardizer = FeatureStandardizer(**payload["standardizer"])
-    scaled = standardizer.transform(raw, feature_cols)
+    values = (
+        yaml.safe_load(Path(config).read_text(encoding="utf-8")) if config else {}
+    ) or {}
+    sanitization = values.get("inference_sanitization", {})
+    scaled, sanitization_audit = _sanitize_inference_features(
+        raw,
+        feature_cols,
+        standardizer,
+        maximum_absolute_zscore=float(
+            sanitization.get("maximum_absolute_zscore", 25.0)
+        ),
+        maximum_repaired_fraction=float(
+            sanitization.get("maximum_repaired_fraction", 0.02)
+        ),
+    )
     dataset = CycleSequenceDataset(
         scaled, feature_cols, target_cols,
         window_size=int(payload["model_config"].get("window_size", 252)),
@@ -69,8 +180,39 @@ def run(
     encoder.to(device).eval()
     with torch.no_grad():
         for batch in loader:
-            state = encoder(batch["sequence"].to(device))
+            sequence = batch["sequence"].to(device)
+            if not torch.isfinite(sequence).all():
+                raise FloatingPointError(
+                    "Sanitized inference batch contains non-finite values."
+                )
+            state = encoder(sequence)
             decision = adapter(state["latent"])
+            outputs = {
+                "latent": state["latent"],
+                "decision": decision["decision"],
+                "utility_quantiles": decision["utility_quantiles"],
+            }
+            invalid_outputs = [
+                name
+                for name, tensor in outputs.items()
+                if not torch.isfinite(tensor).all()
+            ]
+            if invalid_outputs:
+                affected = []
+                for index in range(len(batch["ticker"])):
+                    if any(
+                        not torch.isfinite(tensor[index]).all()
+                        for tensor in outputs.values()
+                    ):
+                        affected.append(
+                            f"{batch['ticker'][index]}@{batch['timestamp'][index]}"
+                        )
+                raise FloatingPointError(
+                    "Non-finite model outputs "
+                    + ", ".join(invalid_outputs)
+                    + "; affected samples: "
+                    + ", ".join(affected[:10])
+                )
             latent_values = state["latent"].cpu().numpy()
             decision_values = decision["decision"].cpu().numpy()
             quantiles = decision["utility_quantiles"].cpu().numpy()
@@ -82,9 +224,6 @@ def run(
                 row.update({f"pred_utility_q{int(q * 100):02d}": float(quantiles[index, i]) for i, q in enumerate(adapter.config.quantiles)})
                 row.update({name: float(targets[index, i]) for i, name in enumerate(target_cols)})
                 rows.append(row)
-    values = (
-        yaml.safe_load(Path(config).read_text(encoding="utf-8")) if config else {}
-    ) or {}
     dataset_config = DecisionDatasetConfig(**values.get("decision_dataset", {}))
     frame = build_decision_frame(pd.DataFrame(rows), paths, dataset_config)
     coverage_config = values.get("inference_coverage", {})
@@ -188,6 +327,7 @@ def run(
         "source_normalization": str(encoder_checkpoint), "target_fit_performed": False,
         "period": [start, end],
         "decision_dataset": values.get("decision_dataset", {}),
+        "inference_sanitization": sanitization_audit,
         "coverage": {
             "expected_rows": int(expected_total),
             "covered_rows": int(covered_total),
