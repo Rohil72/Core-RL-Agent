@@ -402,6 +402,9 @@ def dump_config(config: dict) -> str:
 
 def _query_columns_to_keep(query: pd.DataFrame) -> list[str]:
     keep = {
+        "market",
+        "sector",
+        "industry",
         "open",
         "close",
         "Open",

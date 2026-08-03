@@ -6,7 +6,13 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from src.memory.aggregator import AggregationConfig, DistributionEstimate, distance_weights, estimate_distribution
+from src.memory.aggregator import (
+    AggregationConfig,
+    DistributionEstimate,
+    combine_evidence_weights,
+    distance_weights,
+    estimate_distribution,
+)
 from src.memory.confidence import ConfidenceConfig, ConfidenceEstimate, estimate_confidence
 
 
@@ -81,9 +87,13 @@ def build_evidence_summary(
     aggregation: AggregationConfig,
     confidence: ConfidenceConfig,
     score_weights: dict[str, Any],
+    prior_weights: np.ndarray | None = None,
 ) -> EvidenceSummary:
     """Aggregate retrieved historical experiences into reasoning evidence."""
-    weights = distance_weights(distances, aggregation)
+    weights = combine_evidence_weights(
+        distance_weights(distances, aggregation),
+        prior_weights,
+    )
     upside = neighbors[upside_col].to_numpy(dtype=float)
     alpha = neighbors[alpha_col].to_numpy(dtype=float) if alpha_col else upside
     downside = neighbors[downside_col].to_numpy(dtype=float)

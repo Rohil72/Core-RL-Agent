@@ -21,6 +21,7 @@ class RetrievalConfig:
     exclude_query_industry: bool = False
     min_confidence: float | None = None
     require_outcome_availability: bool = False
+    maximum_memory_age_days: int | None = None
 
 
 @dataclass(frozen=True)
@@ -34,6 +35,7 @@ class RetrievalIndex:
     industries: np.ndarray | None
     confidence: np.ndarray | None
     sessions: np.ndarray | None
+    timestamps_ns: np.ndarray
 
 
 def build_retrieval_index(
@@ -66,6 +68,11 @@ def build_retrieval_index(
             else None
         ),
         sessions=memory["session_index"].to_numpy() if "session_index" in memory else None,
+        timestamps_ns=(
+            pd.to_datetime(memory["timestamp"], utc=True, errors="coerce")
+            .array.as_unit("ns")
+            .asi8.copy()
+        ),
     )
 
 
@@ -97,7 +104,17 @@ def retrieve_neighbors(
     if len(index.available_ns) != len(memory):
         raise ValueError("retrieval_index does not match the memory frame.")
     query_ts_val = pd.Timestamp(query_timestamp).value
-    legal = (index.available_ns <= query_ts_val) & index.finite_latents & np.isfinite(query_vector).all()
+    legal = (
+        (index.available_ns <= query_ts_val)
+        & (index.timestamps_ns != np.iinfo(np.int64).min)
+        & index.finite_latents
+        & np.isfinite(query_vector).all()
+    )
+    if config.maximum_memory_age_days is not None:
+        if config.maximum_memory_age_days <= 0:
+            raise ValueError("maximum_memory_age_days must be positive.")
+        maximum_age_ns = int(config.maximum_memory_age_days) * 86_400 * 1_000_000_000
+        legal &= index.timestamps_ns >= query_ts_val - maximum_age_ns
     tickers = index.tickers
     
     if config.same_ticker_mode == "exclude":

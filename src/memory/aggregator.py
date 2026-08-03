@@ -57,6 +57,23 @@ def distance_weights(distances: np.ndarray, config: AggregationConfig) -> np.nda
     return weights / total if total > 0 else weights
 
 
+def combine_evidence_weights(
+    distance_weight: np.ndarray,
+    prior_weight: np.ndarray | None = None,
+) -> np.ndarray:
+    """Combine geometric similarity with causal metadata priors."""
+
+    weights = np.asarray(distance_weight, dtype=float).copy()
+    if prior_weight is not None:
+        prior = np.asarray(prior_weight, dtype=float)
+        if prior.shape != weights.shape:
+            raise ValueError("prior_weight must match distance_weight shape.")
+        prior = np.where(np.isfinite(prior) & (prior >= 0.0), prior, 0.0)
+        weights *= prior
+    total = float(weights.sum())
+    return weights / total if total > 0.0 else weights
+
+
 def estimate_distribution(values: np.ndarray, weights: np.ndarray, config: AggregationConfig) -> DistributionEstimate:
     """Estimate a robust weighted distribution summary."""
     vals = np.asarray(values, dtype=float)

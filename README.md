@@ -4,9 +4,9 @@ Core RL Agent is a research codebase for causal, retrieval-grounded equity
 decisions. It is not a live-trading system and no policy is currently promoted.
 The active path is a patch Transformer market-state encoder, market-local
 historical memory, and a deterministic continuous-rank policy that converts
-three independent retrieval views into trades. The final bounded study compares
-raw and adapter retrieval, C0 and rally outcomes, ticker-balanced evidence, and
-multi-scale causal memory. Offline RL remains only as a rejected Phase 6
+three independent retrieval views into trades. The active closing study holds
+the encoder and policy fixed while testing static versus growing, recency-aware,
+and country-balanced raw memory. Offline RL remains only as a rejected Phase 6
 comparison path.
 
 The cycle detector remains only for earlier experiments. The final encoder uses
@@ -16,11 +16,10 @@ zero.
 ## Research Status
 
 The sealed global/global reliability candidate failed confirmation and remains
-immutable. The subsequent local-rank reconstruction also failed to transfer
-consistently and exposed an embedding-selection ambiguity. The active final
-memory study reuses its frozen artifacts to isolate raw versus adapter memory,
-then tests richer rally evidence and multi-scale agreement. It does not reopen
-or overwrite the failed confirmation, and no policy is promoted.
+immutable. The corrected closing memory repair did not restore broad transfer.
+The active final study now asks why: stale historical evidence, source-market
+imbalance, neighborhood semantics, or insufficient frozen-state signal. It does
+not reopen or overwrite the failed confirmation, and no policy is promoted.
 
 See [Research Status](docs/RESEARCH_STATUS.md) for the evidence boundary,
 rejected hypotheses, promotion standard, and known limitations.
@@ -34,9 +33,9 @@ scoring defects without overwriting the phase implementation documents.
 daily technical and point-in-time fundamental features
   -> 252-session patch Transformer
   -> 128-dimensional latent state
-  -> explicit raw or 32-dimensional adapter retrieval view
-  -> static or market-local growing causal memory
-  -> robust rally evidence and optional multi-scale agreement
+  -> explicit 128-dimensional raw retrieval view
+  -> static or causally growing global memory
+  -> optional temporal decay and source-market balancing
   -> continuous three-seed mean-rank policy
   -> market-level and pooled robustness gates
 ```
@@ -52,13 +51,13 @@ py -3.11 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
-Compile the final memory study after restoring the ignored
-`local_rank_ensemble_v1` artifacts:
+Compile the transfer-credibility study after restoring the preserved Phase 6
+and `final_memory_repair_v2` artifacts:
 
 ```powershell
 .\.venv\Scripts\python.exe scripts\run_final_memory_study.py `
-  --config configs\final_memory_study.yaml `
-  --run-id final_memory_study_v1 `
+  --config configs\final_transfer_credibility.yaml `
+  --run-id final_transfer_credibility_v1 `
   --stage build `
   --python .venv\Scripts\python.exe
 ```
@@ -68,14 +67,15 @@ The stage-by-stage execution and confirmation-lock procedure is in
 
 ## Active Testbed
 
-`configs/final_memory_study.yaml` fixes the final bounded comparison:
+`configs/final_transfer_credibility.yaml` fixes the active comparison:
 
-- Existing regional patch Transformer and adapter outputs; no retraining.
-- Explicit raw 128-dimensional and adapter 32-dimensional retrieval views.
-- Exact C0, rally-path, ticker-balanced, and multi-scale memory variants.
-- Static and growing causal memory that admits outcomes only after maturity.
+- Existing global patch Transformer outputs; no retraining.
+- Explicit raw 128-dimensional retrieval views and exact C0 outcomes.
+- Static, growing, two/four-year decay, and hard four-year memory variants.
+- Country-balanced evidence and exact outcome-maturity admission.
 - Three-seed continuous mean rank with zero required binary votes.
-- Deterministic top-k trading policy and declared standard baselines.
+- ElasticNet, gradient-boosted, and PCA-kNN frozen-state decoders.
+- Dependence-aware bootstrap, country jackknife, DSR, PBO, and mechanism audits.
 - Markets: US, India, China, Brazil, France, and UK.
 - No RL and no reliability filter.
 - Development, selection, and already-observed diagnostic periods are reported
@@ -86,7 +86,7 @@ preserve the completed regional/global/offline-RL experiment for reproducibility
 but they are no longer the active execution path.
 
 The active contract and commands are documented in
-[Final Memory Study](docs/FINAL_MEMORY_STUDY.md). The rejected reconstruction is
+[Transfer Credibility Study](docs/FINAL_TRANSFER_CREDIBILITY_STUDY.md). The rejected reconstruction is
 documented in [Local Rank Ensemble](docs/LOCAL_RANK_ENSEMBLE.md), and the failed
 sealed procedure remains documented in
 [Final Memory Confirmation](docs/FINAL_MEMORY_CONFIRMATION.md).
@@ -102,6 +102,8 @@ sealed procedure remains documented in
 - `src/trainers/train_cycle_model.py`: encoder training and resumable state.
 - `src/orchestration/`: immutable durable experiment runner.
 - `scripts/run_final_memory_study.py`: active memory-only DAG and aggregation.
+- `scripts/run_transfer_credibility_audit.py`: transfer statistics and mechanism audit.
+- `src/eval/tabular_decoders.py`: conventional frozen-state decoder baselines.
 - `scripts/run_local_rank_ensemble.py`: rejected reconstruction infrastructure.
 - `src/eval/policy_baselines.py`: shared deterministic baseline contract.
 - `scripts/run_final_memory_confirmation.py`: sealed external evaluation and baselines.
@@ -117,5 +119,6 @@ configuration, tests, and the small sample CSV fixture only.
 - [Research Status](docs/RESEARCH_STATUS.md)
 - [Resumable Experiments](docs/RESUMABLE_EXPERIMENTS.md)
 - [Final Memory Study](docs/FINAL_MEMORY_STUDY.md)
+- [Transfer Credibility Study](docs/FINAL_TRANSFER_CREDIBILITY_STUDY.md)
 - [Local Rank Ensemble](docs/LOCAL_RANK_ENSEMBLE.md)
 - [Final Memory Confirmation](docs/FINAL_MEMORY_CONFIRMATION.md)

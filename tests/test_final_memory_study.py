@@ -222,6 +222,7 @@ def test_multiscale_memory_emits_stability_and_ticker_balance():
     assert signals.loc[0, "retrieval_neighbor_count"] == 10
     assert 0.0 <= signals.loc[0, "retrieval_scale_sign_agreement"] <= 1.0
     assert neighbors.groupby("neighbor_ticker").size().max() <= 2
+    assert np.isclose(neighbors["neighbor_evidence_weight"].sum(), 1.0)
 
 
 def test_final_memory_manifest_is_cpu_only(monkeypatch, tmp_path):

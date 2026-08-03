@@ -53,6 +53,15 @@ def _source(config: dict[str, Any]) -> Path:
     return PROJECT_ROOT / config["experiment"]["source_run"]
 
 
+def _decision_source(config: dict[str, Any]) -> Path:
+    """Resolve reusable query decisions independently of model artifacts."""
+
+    return PROJECT_ROOT / config["experiment"].get(
+        "source_decision_run",
+        config["experiment"]["source_run"],
+    )
+
+
 def _source_key(config: dict[str, Any], market: str, seed: int) -> str:
     layout = config["experiment"].get("source_layout", "regional_market")
     if layout == "regional_market":
@@ -87,11 +96,16 @@ def _decision_path(
                 / "all_periods.parquet"
             )
         return output / "decisions" / _query_key(config, market, seed) / f"{period}.parquet"
+    source_name = (
+        "all_periods.parquet"
+        if config["experiment"].get("source_decision_period_mode") == "combined"
+        else f"{period}.parquet"
+    )
     return (
-        _source(config)
+        _decision_source(config)
         / "decisions"
         / _query_key(config, market, seed)
-        / f"{period}.parquet"
+        / source_name
     )
 
 
@@ -314,6 +328,15 @@ def prepare_views(
     train = pd.read_parquet(
         source / "adapters" / source_key / "train_decisions.parquet"
     )
+    balance_columns = {
+        str(variant["memory_overrides"]["balance_group_column"])
+        for variant in config["variants"]
+        if variant.get("memory_overrides", {}).get("balance_group_column")
+    }
+    if missing := balance_columns.difference(train.columns):
+        raise ValueError(
+            f"Training memory lacks configured balance columns: {sorted(missing)}"
+        )
     period_names = list(config["periods"])
     period_frames: dict[str, pd.DataFrame] = {}
     cached_decisions: dict[Path, pd.DataFrame] = {}
@@ -331,6 +354,7 @@ def prepare_views(
         period_frames[period] = frame.loc[
             (frame["timestamp"] >= start) & (frame["timestamp"] <= end)
         ].copy()
+        period_frames[period]["market"] = market
     root = output / "views" / key
     root.mkdir(parents=True, exist_ok=True)
     dimensions: dict[str, int] = {}
@@ -366,16 +390,17 @@ def prepare_views(
                 compression="zstd",
             )
         prior.append(current)
-        _growing_bank(
-            train,
-            prior,
-            "adapter",
-            path_quality_transform,
-        ).to_parquet(
-            period_root / "growing_adapter.parquet",
-            index=False,
-            compression="zstd",
-        )
+        for embedding_space in ("raw", "adapter"):
+            _growing_bank(
+                train,
+                prior,
+                embedding_space,
+                path_quality_transform,
+            ).to_parquet(
+                period_root / f"growing_{embedding_space}.parquet",
+                index=False,
+                compression="zstd",
+            )
     payload = {
         "status": "completed",
         "market": market,
@@ -467,7 +492,12 @@ def run_retrieval(
             "baselines": "",
             "memory_metric_target": "future_blended_alpha_63",
         },
-        "run": {"write_neighbors": False, "write_memory_reports": False},
+        "run": {
+            "write_neighbors": bool(
+                config.get("diagnostics", {}).get("write_neighbors", False)
+            ),
+            "write_memory_reports": False,
+        },
     }
     config_snapshot = (
         output
@@ -863,6 +893,8 @@ def build(config_path: str, run_id: str, python: str) -> dict[str, Any]:
     retrieval_jobs: dict[tuple[str, str, int, str], str] = {}
     evaluation_jobs: dict[tuple[str, str, str], str] = {}
     aggregate_jobs: dict[tuple[str, str], str] = {}
+    tabular_jobs: dict[tuple[str, str], str] = {}
+    compare_jobs: dict[str, str] = {}
 
     for market in config["experiment"]["markets"]:
         for seed_value in config["experiment"]["seeds"]:
@@ -977,6 +1009,7 @@ def build(config_path: str, run_id: str, python: str) -> dict[str, Any]:
                         views / period / "query_raw.parquet",
                         views / period / "query_adapter.parquet",
                         views / period / "growing_adapter.parquet",
+                        views / period / "growing_raw.parquet",
                     ]
                 )
             prepare_jobs[(market, seed)] = _job(
@@ -1011,6 +1044,16 @@ def build(config_path: str, run_id: str, python: str) -> dict[str, Any]:
                     destination = (
                         output / "retrieval" / variant_id / key / period / "eval"
                     )
+                    retrieval_outputs = [
+                        destination / "metrics.json",
+                        destination / "signals.parquet",
+                    ]
+                    if bool(
+                        config.get("diagnostics", {}).get(
+                            "write_neighbors", False
+                        )
+                    ):
+                        retrieval_outputs.append(destination / "neighbors.parquet")
                     retrieval_jobs[(variant_id, market, seed, period)] = _job(
                         jobs,
                         f"retrieve_{variant_id}_{key}_{period}",
@@ -1032,10 +1075,7 @@ def build(config_path: str, run_id: str, python: str) -> dict[str, Any]:
                             "--period",
                             period,
                         ],
-                        [
-                            destination / "metrics.json",
-                            destination / "signals.parquet",
-                        ],
+                        retrieval_outputs,
                         dependencies=[prepare_jobs[(market, seed)]],
                     )
             for period in config["periods"]:
@@ -1093,9 +1133,39 @@ def build(config_path: str, run_id: str, python: str) -> dict[str, Any]:
                     for market in config["experiment"]["markets"]
                 ],
             )
+
+    if bool(config.get("tabular_baselines", {}).get("enabled", False)):
+        reference_variant = config.get("tabular_baselines", {}).get(
+            "reference_variant",
+            config["variants"][0]["id"],
+        )
+        for market in config["experiment"]["markets"]:
+            for period in config["periods"]:
+                destination = output / "tabular_baselines" / period / market
+                tabular_jobs[(market, period)] = _job(
+                    jobs,
+                    f"tabular_decoders_{market}_{period}",
+                    [
+                        python,
+                        "scripts/evaluate_frozen_tabular_decoders.py",
+                        "--config",
+                        config_path,
+                        "--run-id",
+                        run_id,
+                        "--market",
+                        market,
+                        "--period",
+                        period,
+                    ],
+                    [destination / "summary.json"],
+                    dependencies=[
+                        retrieval_jobs[(reference_variant, market, int(seed), period)]
+                        for seed in config["experiment"]["seeds"]
+                    ],
+                )
     for period in config["periods"]:
         destination = output / "comparison" / period
-        _job(
+        compare_jobs[period] = _job(
             jobs,
             f"compare_{period}",
             [
@@ -1116,6 +1186,46 @@ def build(config_path: str, run_id: str, python: str) -> dict[str, Any]:
                 for variant in config["variants"]
             ],
         )
+
+    if bool(config.get("credibility", {}).get("enabled", False)):
+        for period in config["periods"]:
+            destination = output / "credibility" / period
+            dependencies = [compare_jobs[period]]
+            dependencies.extend(
+                evaluation_jobs[(variant["id"], market, period)]
+                for variant in config["variants"]
+                for market in config["experiment"]["markets"]
+            )
+            dependencies.extend(
+                tabular_jobs[(market, period)]
+                for market in config["experiment"]["markets"]
+                if (market, period) in tabular_jobs
+            )
+            _job(
+                jobs,
+                f"credibility_{period}",
+                [
+                    python,
+                    "scripts/run_transfer_credibility_audit.py",
+                    "--config",
+                    config_path,
+                    "--run-id",
+                    run_id,
+                    "--period",
+                    period,
+                ],
+                [
+                    destination / "summary.json",
+                    destination / "strategy_summary.csv",
+                    destination / "block_bootstrap.csv",
+                    destination / "country_jackknife.csv",
+                    destination / "neighbor_age_profile.csv",
+                    destination / "neighbor_market_profile.csv",
+                    destination / "reliability_deciles.csv",
+                    destination / "audit_report.md",
+                ],
+                dependencies=dependencies,
+            )
 
     manifest = {
         "run": {

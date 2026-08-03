@@ -56,22 +56,23 @@ beat equal-weight. Audit then found that retrieval selected the raw `latent_*`
 columns from mixed raw-plus-adapter frames, so the run did not actually test
 adapter-space memory.
 
-## Final Memory Evaluation
+## Final Transfer Diagnosis
 
-The active work is one bounded, predeclared memory comparison:
+The closing repair has completed and did not establish broad, stable transfer.
+The active work is one bounded causal diagnosis over the preserved artifacts:
 
-1. Reuse every existing regional encoder and adapter artifact without training.
-2. Reconstruct the original C0 target and mean-rank semantics in raw and adapter
-   embedding spaces.
-3. Test richer rally-path outcomes with empirical predictive downside tails and
-   ticker-balanced evidence.
-4. Test whether agreement across 10-, 25-, and 50-neighbor memories improves a
-   causal growing memory.
-5. Evaluate development, 2024 selection, and the already-observed 2025-2026 Q1
-   diagnostic period separately, with every failed market visible.
+1. Reuse corrected global raw embeddings without training any model.
+2. Compare static memory with causally growing memory.
+3. Add predeclared two-year decay, four-year decay, and a hard four-year window.
+4. Balance historical evidence across source markets.
+5. Compare memory with ElasticNet, histogram gradient boosting, and PCA-kNN on
+   the same frozen states and deterministic policy.
+6. Report block-bootstrap intervals, country jackknives, DSR/PBO, reliability
+   deciles, neighbor ages, and source-market concentration.
 
-The executable protocol is `scripts/run_final_memory_study.py`; see
-[Final Memory Study](FINAL_MEMORY_STUDY.md). The 2025-2026 Q1 period has already
+The executable protocol is `scripts/run_final_memory_study.py` with
+`configs/final_transfer_credibility.yaml`; see
+[Final Transfer Credibility Study](FINAL_TRANSFER_CREDIBILITY_STUDY.md). The 2025-2026 Q1 period has already
 been inspected and is diagnostic only. The study cannot promote a strategy,
 regardless of its result.
 

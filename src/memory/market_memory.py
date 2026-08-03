@@ -7,7 +7,11 @@ from typing import Iterable
 import numpy as np
 import pandas as pd
 
-from src.memory.aggregator import AggregationConfig
+from src.memory.aggregator import (
+    AggregationConfig,
+    combine_evidence_weights,
+    distance_weights,
+)
 from src.memory.confidence import ConfidenceConfig
 from src.memory.evidence import EvidenceSummary, build_evidence_summary
 from src.memory.experience import ExperienceMemory, ExperienceSchema, latent_columns, resolve_column
@@ -52,6 +56,9 @@ class MarketMemoryConfig:
     multiscale_disagreement_weight: float = 0.25
     require_outcome_availability: bool = False
     retrieval_batch_size: int = 128
+    maximum_memory_age_days: int | None = None
+    temporal_half_life_days: float | None = None
+    balance_group_column: str | None = None
 
 
 def load_latent_frame(path: str | Path) -> pd.DataFrame:
@@ -133,6 +140,7 @@ def score_market_memory(
         max_distance=cfg.max_distance,
         min_confidence=cfg.min_memory_confidence,
         require_outcome_availability=cfg.require_outcome_availability,
+        maximum_memory_age_days=cfg.maximum_memory_age_days,
     )
     aggregation_cfg = AggregationConfig(
         method=cfg.aggregation_method,
@@ -214,11 +222,33 @@ def score_market_memory(
             aggregation=aggregation_cfg,
             confidence=confidence_cfg,
             score_weights=score_weights,
+            query_timestamp=qrow["timestamp"],
+            temporal_half_life_days=cfg.temporal_half_life_days,
+            balance_group_column=cfg.balance_group_column,
         )
         row.update(evidence_payload)
         signal_rows.append(row)
 
-        for rank, (midx, dist) in enumerate(zip(neighbor_idx, neighbor_dist), start=1):
+        neighbor_priors = _evidence_prior_weights(
+            neighbors,
+            qrow["timestamp"],
+            cfg.temporal_half_life_days,
+            cfg.balance_group_column,
+        )
+        neighbor_evidence_weights = combine_evidence_weights(
+            distance_weights(neighbor_dist, aggregation_cfg),
+            neighbor_priors,
+        )
+
+        for rank, (midx, dist, prior, evidence_weight) in enumerate(
+            zip(
+                neighbor_idx,
+                neighbor_dist,
+                neighbor_priors,
+                neighbor_evidence_weights,
+            ),
+            start=1,
+        ):
             mrow = memory.iloc[int(midx)]
             relative_outcomes = {
                 column: _safe_float(float(mrow[column]))
@@ -234,9 +264,16 @@ def score_market_memory(
                     "neighbor_index": int(midx),
                     "neighbor_ticker": str(mrow["ticker"]),
                     "neighbor_timestamp": mrow["timestamp"],
+                    "neighbor_age_days": float(
+                        (pd.Timestamp(qrow["timestamp"]) - pd.Timestamp(mrow["timestamp"])).total_seconds()
+                        / 86_400.0
+                    ),
+                    "neighbor_market": _optional_str(mrow, "market"),
                     "neighbor_outcome_available_timestamp": mrow.get("outcome_available_timestamp"),
                     "experience_id": f"{mrow['ticker']}|{pd.Timestamp(mrow['timestamp']).isoformat()}",
                     "distance": float(dist),
+                    "neighbor_prior_weight": float(prior),
+                    "neighbor_evidence_weight": float(evidence_weight),
                     "neighbor_sector": _optional_str(mrow, "sector"),
                     "neighbor_industry": _optional_str(mrow, "industry"),
                     cfg.target_upside: _safe_float(float(mrow[experience_memory.upside_col])),
@@ -282,6 +319,9 @@ def _build_evidence_payload(
     aggregation: AggregationConfig,
     confidence: ConfidenceConfig,
     score_weights: dict,
+    query_timestamp: pd.Timestamp,
+    temporal_half_life_days: float | None,
+    balance_group_column: str | None,
 ) -> tuple[EvidenceSummary, dict]:
     """Build one evidence payload, optionally requiring stability across scales."""
 
@@ -301,6 +341,12 @@ def _build_evidence_payload(
             aggregation=aggregation,
             confidence=confidence,
             score_weights=score_weights,
+            prior_weights=_evidence_prior_weights(
+                neighbors.iloc[:scale],
+                query_timestamp,
+                temporal_half_life_days,
+                balance_group_column,
+            ),
         )
         for scale in usable_scales
     ]
@@ -365,6 +411,35 @@ def _build_evidence_payload(
     combined["retrieval_scale_score_std"] = score_std
     combined["retrieval_scale_sign_agreement"] = sign_agreement
     return summaries[-1], combined
+
+
+def _evidence_prior_weights(
+    neighbors: pd.DataFrame,
+    query_timestamp: pd.Timestamp,
+    temporal_half_life_days: float | None,
+    balance_group_column: str | None,
+) -> np.ndarray:
+    """Build causal recency and group-balance priors for retrieved evidence."""
+
+    weights = np.ones(len(neighbors), dtype=float)
+    if temporal_half_life_days is not None:
+        if temporal_half_life_days <= 0.0:
+            raise ValueError("temporal_half_life_days must be positive.")
+        timestamps = pd.to_datetime(neighbors["timestamp"], utc=True, errors="coerce")
+        ages = (
+            pd.Timestamp(query_timestamp) - timestamps
+        ).dt.total_seconds().to_numpy(dtype=float) / 86_400.0
+        ages = np.maximum(np.nan_to_num(ages, nan=np.inf), 0.0)
+        weights *= np.exp2(-ages / float(temporal_half_life_days))
+    if balance_group_column is not None:
+        if balance_group_column not in neighbors:
+            raise ValueError(
+                f"Memory lacks configured balance group column: {balance_group_column}"
+            )
+        groups = neighbors[balance_group_column].fillna("unknown").astype(str)
+        counts = groups.value_counts()
+        weights *= groups.map(lambda value: 1.0 / float(counts[value])).to_numpy(dtype=float)
+    return weights
 
 
 def _safe_float(value: float) -> float | None:
