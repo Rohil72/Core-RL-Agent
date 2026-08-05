@@ -19,7 +19,8 @@ from src.decision.trainer import DateGroupedBatchSampler
 from src.eval.confirmation_lock import create_confirmation_lock, mark_confirmation_executed
 from src.models.patch_transformer_model import HierarchicalPatchTransformerCycleModel
 from src.policy.offline_policy import OfflinePolicyDatasetConfig, build_offline_policy_dataset
-from scripts.run_phase5_decision_alignment import discover_adapter_sources
+import scripts.run_phase5_decision_alignment as alignment_runner
+from scripts.run_phase5_decision_alignment import AdapterSource, discover_adapter_sources
 
 
 def test_decision_dataset_builds_causal_multi_horizon_utility(tmp_path):
@@ -139,6 +140,51 @@ def test_phase6_source_discovery_uses_preserved_testbed_latents(tmp_path):
     assert sources[0].precomputed_globs == ("data/international/US/*.parquet",)
     assert sources[1].precomputed_globs == ("data/international/*/*.parquet",)
     assert discover_adapter_sources(config, max_runs=1, project_root=tmp_path)[0].name == "regional_US_seed_7"
+
+
+def test_adapter_backtest_uses_decision_outcome_schema(tmp_path, monkeypatch):
+    run_output = tmp_path / "adapter"
+    run_output.mkdir()
+    frame = pd.DataFrame(
+        {
+            "ticker": ["AAA"],
+            "timestamp": pd.to_datetime(["2021-01-01"], utc=True),
+            "latent_0": [0.1],
+            "decision_0": [0.2],
+            "decision_mfe": [0.1],
+            "decision_mae": [-0.03],
+            "decision_net_alpha": [0.05],
+            "decision_path_quality": [0.7],
+            "decision_holding_sessions": [21],
+        }
+    )
+    frame.to_parquet(run_output / "train_decisions.parquet", index=False)
+    frame.to_parquet(run_output / "val_decisions.parquet", index=False)
+    captured = {}
+
+    def fake_evaluation(config, root, run_id):
+        captured.update(config)
+        destination = tmp_path / "evaluation" / run_id
+        destination.mkdir(parents=True)
+        (destination / "metrics.json").write_text('{"sharpe": 0.0}', encoding="utf-8")
+        return destination
+
+    monkeypatch.setattr(alignment_runner, "run_market_memory_evaluation", fake_evaluation)
+    source = AdapterSource(
+        name="regional_US_seed_7",
+        group="regional_US",
+        seed=7,
+        train_path=tmp_path / "train.parquet",
+        val_path=tmp_path / "val.parquet",
+        precomputed_globs=("data/international/US/*.parquet",),
+        backtest_glob="data/international/US/*.parquet",
+    )
+    result = alignment_runner._adapter_backtest(
+        {"experiment": {"source_phase4e_run": "missing"}}, run_output, source
+    )
+    assert result["sharpe"] == 0.0
+    assert captured["memory"]["target_alpha"] == "decision_net_alpha"
+    assert captured["evaluation"]["memory_metric_target"] == "decision_net_alpha"
 
 
 def test_opportunity_loss_penalizes_missing_positive_cross_section():

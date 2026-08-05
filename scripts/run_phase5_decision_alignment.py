@@ -200,11 +200,17 @@ def _adapter_backtest(
         },
         "memory": {
             **phase4e["memory_defaults"],
-            "target_alpha": "future_blended_alpha_63",
+            "target_upside": "decision_mfe",
+            "target_alpha": "decision_net_alpha",
+            "target_downside": "decision_mae",
+            "target_path_quality": "decision_path_quality",
+            "target_holding_period": "decision_holding_sessions",
             "score_mode": "alpha_lcb",
+            "require_outcome_availability": False,
+            "same_ticker_mode": "exclude",
         },
         "policy": phase4e["policy"],
-        "evaluation": {"baselines": "", "memory_metric_target": "future_blended_alpha_63"},
+        "evaluation": {"baselines": "", "memory_metric_target": "decision_net_alpha"},
         "run": {"write_neighbors": False, "write_memory_reports": False},
     }
     result_dir = run_market_memory_evaluation(evaluation, PROJECT_ROOT, run_id="eval")
