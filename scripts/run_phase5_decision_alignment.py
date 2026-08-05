@@ -89,7 +89,7 @@ def _dataclass_kwargs(cls: type, values: dict[str, Any]) -> dict[str, Any]:
     names = {field.name for field in fields(cls)}
     result = {key: value for key, value in values.items() if key in names}
     for key, value in list(result.items()):
-        if key in {"horizons", "quantiles"}:
+        if key in {"horizons", "quantiles", "temporal_horizons"}:
             result[key] = tuple(value)
     return result
 
@@ -116,6 +116,8 @@ def run(
     runs = _select_runs(_complete_run_dirs(source), filter_cfg, max_runs)
     dataset_cfg = DecisionDatasetConfig(**_dataclass_kwargs(DecisionDatasetConfig, config["decision_dataset"]))
     adapter_cfg = DecisionAdapterConfig(**_dataclass_kwargs(DecisionAdapterConfig, config["adapter"]))
+    if dataset_cfg.temporal_horizons != adapter_cfg.temporal_horizons:
+        raise ValueError("decision_dataset and adapter temporal_horizons must match exactly.")
     loss_cfg = DecisionLossConfig(**_dataclass_kwargs(DecisionLossConfig, config["loss"]))
     summaries: list[dict[str, Any]] = []
     for run_dir in runs:
@@ -155,6 +157,8 @@ def run(
         {
             "fold": item["fold"], "seed": item["seed"],
             "best_validation_loss": item["best_validation_loss"], **item["diagnostics"],
+            **{f"temporal_{key}": value for key, value in item.get("temporal_diagnostics", {}).items()},
+            **{f"opportunity_{key}": value for key, value in item.get("opportunity_diagnostics", {}).items()},
             **{f"raw_{key}": value for key, value in item["raw_latent_diagnostics"].items()},
             **{f"backtest_{key}": item.get("backtest", {}).get(key) for key in ("total_return", "sharpe", "max_drawdown", "trade_count")},
         }

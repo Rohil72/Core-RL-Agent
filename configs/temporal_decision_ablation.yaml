@@ -1,0 +1,78 @@
+study:
+  base_config: configs/phase5_decision_alignment_v2.yaml
+  output_root: reports/temporal_decision_ablation
+  diagnostic_only: true
+
+common:
+  training:
+    selection_metric: retrieval_utility
+    epochs: 40
+    minimum_epochs: 10
+    patience: 5
+
+variants:
+  baseline:
+    description: Existing quantile, cross-sectional ranking, analogue, and VICReg objective.
+
+  temporal_only:
+    description: Competing-risk event timing, coherent adjacent-state interpretation, and ordered utility quantiles.
+    decision_dataset:
+      temporal_horizons: [5, 10, 21, 42, 63]
+      temporal_barrier_mode: trailing_volatility
+    adapter:
+      temporal_horizons: [5, 10, 21, 42, 63]
+      enforce_non_crossing_quantiles: true
+    loss:
+      temporal_event_weight: 0.25
+      temporal_ranking_weight: 0.05
+      temporal_coherence_weight: 0.05
+
+  action_only:
+    description: Opportunity-conditioned stock-versus-cash allocation without temporal event supervision.
+    adapter:
+      include_cash_logit: true
+    loss:
+      opportunity_weight: 0.10
+      coverage_weight: 0.25
+      opportunity_top_k: 3
+      opportunity_temperature: 0.02
+
+  temporal_action:
+    description: Joint temporal interpretation and missed-opportunity allocation objective.
+    decision_dataset:
+      temporal_horizons: [5, 10, 21, 42, 63]
+      temporal_barrier_mode: trailing_volatility
+    adapter:
+      temporal_horizons: [5, 10, 21, 42, 63]
+      enforce_non_crossing_quantiles: true
+      include_cash_logit: true
+    loss:
+      temporal_event_weight: 0.25
+      temporal_ranking_weight: 0.05
+      temporal_coherence_weight: 0.05
+      opportunity_weight: 0.10
+      coverage_weight: 0.25
+      opportunity_top_k: 3
+      opportunity_temperature: 0.02
+
+  temporal_action_robust:
+    description: Full objective with trimmed market-year-volatility risk variance.
+    decision_dataset:
+      temporal_horizons: [5, 10, 21, 42, 63]
+      temporal_barrier_mode: trailing_volatility
+    adapter:
+      temporal_horizons: [5, 10, 21, 42, 63]
+      enforce_non_crossing_quantiles: true
+      include_cash_logit: true
+    loss:
+      temporal_event_weight: 0.25
+      temporal_ranking_weight: 0.05
+      temporal_coherence_weight: 0.05
+      opportunity_weight: 0.10
+      coverage_weight: 0.25
+      opportunity_top_k: 3
+      opportunity_temperature: 0.02
+      environment_weight: 0.10
+      environment_trim_fraction: 0.01
+      environment_minimum_rows: 8
+

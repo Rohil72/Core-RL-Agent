@@ -25,10 +25,30 @@ class DecisionDatasetConfig:
     slippage_bps_per_side: float = 10.0
     benchmark_column: str = "future_blended_alpha_63"
     utility_return_mode: str = "fixed_horizon"
+    temporal_horizons: tuple[int, ...] = ()
+    temporal_barrier_mode: str = "fixed"
+    temporal_upside_threshold: float = 0.20
+    temporal_drawdown_threshold: float = 0.10
+    temporal_volatility_lookback: int = 21
+    temporal_barrier_reference_horizon: int = 21
+    temporal_upside_volatility_multiplier: float = 2.0
+    temporal_drawdown_volatility_multiplier: float = 1.0
+    temporal_minimum_upside_threshold: float = 0.05
+    temporal_minimum_drawdown_threshold: float = 0.03
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "horizons", tuple(self.horizons))
+        object.__setattr__(self, "temporal_horizons", tuple(self.temporal_horizons))
         if self.utility_return_mode not in {"fixed_horizon", "a2_score_exit"}:
             raise ValueError("utility_return_mode must be 'fixed_horizon' or 'a2_score_exit'.")
+        if self.temporal_barrier_mode not in {"fixed", "trailing_volatility"}:
+            raise ValueError("temporal_barrier_mode must be 'fixed' or 'trailing_volatility'.")
+        if tuple(sorted(self.temporal_horizons)) != self.temporal_horizons:
+            raise ValueError("temporal_horizons must be strictly ordered.")
+        if len(set(self.temporal_horizons)) != len(self.temporal_horizons):
+            raise ValueError("temporal_horizons must not contain duplicates.")
+        if any(horizon <= 0 for horizon in self.temporal_horizons):
+            raise ValueError("temporal_horizons must be positive.")
 
 
 def bounded_path_quality(
@@ -86,14 +106,67 @@ def _load_price_panel(paths: str | Path | Iterable[str | Path]) -> pd.DataFrame:
     return panel.sort_values(["ticker", "timestamp"]).drop_duplicates(["ticker", "timestamp"])
 
 
+def _temporal_barriers(
+    prices: pd.DataFrame,
+    position: int,
+    config: DecisionDatasetConfig,
+) -> tuple[float, float]:
+    """Return ex-ante upside and downside magnitudes for temporal event labels."""
+
+    if config.temporal_barrier_mode == "fixed":
+        return config.temporal_upside_threshold, config.temporal_drawdown_threshold
+    start = max(0, position - config.temporal_volatility_lookback)
+    history = prices.iloc[start : position + 1]["close"].to_numpy(dtype=float)
+    log_returns = np.diff(np.log(history)) if len(history) > 1 else np.empty(0)
+    daily_volatility = float(np.std(log_returns, ddof=1)) if len(log_returns) > 1 else 0.0
+    if not np.isfinite(daily_volatility):
+        daily_volatility = 0.0
+    scale = daily_volatility * np.sqrt(config.temporal_barrier_reference_horizon)
+    upside = max(
+        config.temporal_minimum_upside_threshold,
+        config.temporal_upside_volatility_multiplier * scale,
+    )
+    downside = max(
+        config.temporal_minimum_drawdown_threshold,
+        config.temporal_drawdown_volatility_multiplier * scale,
+    )
+    return float(upside), float(downside)
+
+
+def temporal_event_class(
+    path_returns: np.ndarray,
+    horizons: tuple[int, ...],
+    upside_threshold: float,
+    drawdown_threshold: float,
+) -> tuple[int, int, str]:
+    """Encode the first rally/drawdown event into a discrete competing-risk class."""
+
+    if not horizons:
+        return 0, 0, "disabled"
+    upside_hits = np.flatnonzero(path_returns >= upside_threshold)
+    downside_hits = np.flatnonzero(path_returns <= -drawdown_threshold)
+    upside_offset = int(upside_hits[0] + 1) if len(upside_hits) else None
+    downside_offset = int(downside_hits[0] + 1) if len(downside_hits) else None
+    if upside_offset is None and downside_offset is None:
+        return 0, 0, "none"
+    if upside_offset is not None and (downside_offset is None or upside_offset < downside_offset):
+        event_type, offset, type_offset = "upside", upside_offset, 1
+    else:
+        event_type, offset, type_offset = "drawdown", int(downside_offset), 1 + len(horizons)
+    bucket = int(np.searchsorted(np.asarray(horizons), offset, side="left"))
+    if bucket >= len(horizons):
+        return 0, 0, "none"
+    return type_offset + bucket, offset, event_type
+
+
 def _attach_path_outcomes(frame: pd.DataFrame, panel: pd.DataFrame, cfg: DecisionDatasetConfig) -> pd.DataFrame:
     price_groups = {ticker: group.reset_index(drop=True) for ticker, group in panel.groupby("ticker", sort=False)}
-    records: list[dict[str, float | int]] = []
+    records: list[dict[str, object]] = []
     for row in frame.itertuples(index=False):
         ticker = str(row.ticker)
         ts = pd.Timestamp(row.timestamp)
         prices = price_groups.get(ticker)
-        record: dict[str, float | int] = {}
+        record: dict[str, object] = {}
         if prices is None:
             records.append(record)
             continue
@@ -112,7 +185,8 @@ def _attach_path_outcomes(frame: pd.DataFrame, panel: pd.DataFrame, cfg: Decisio
                 float(prices.iloc[end]["close"] / entry - 1.0) if end < len(prices) else np.nan
             )
         end = min(pos + cfg.primary_horizon, len(prices) - 1)
-        maturity_pos = pos + cfg.max_hold_sessions
+        maximum_temporal_horizon = max(cfg.temporal_horizons, default=0)
+        maturity_pos = pos + max(cfg.max_hold_sessions, maximum_temporal_horizon)
         record["decision_outcome_available_timestamp"] = (
             prices.iloc[maturity_pos]["timestamp"] if maturity_pos < len(prices) else pd.NaT
         )
@@ -122,6 +196,26 @@ def _attach_path_outcomes(frame: pd.DataFrame, panel: pd.DataFrame, cfg: Decisio
         record["decision_path_quality"] = (
             float(np.max(path) / (abs(np.min(path)) + 1e-6)) if path.size else np.nan
         )
+        if cfg.temporal_horizons:
+            temporal_end = min(pos + maximum_temporal_horizon, len(prices) - 1)
+            temporal_path = (
+                prices.iloc[pos + 1 : temporal_end + 1]["close"].to_numpy(dtype=float) / entry - 1.0
+            )
+            upside_barrier, downside_barrier = _temporal_barriers(prices, pos, cfg)
+            if len(temporal_path) < maximum_temporal_horizon:
+                event_class, event_offset, event_type = np.nan, np.nan, "immature"
+            else:
+                event_class, event_offset, event_type = temporal_event_class(
+                    temporal_path,
+                    cfg.temporal_horizons,
+                    upside_barrier,
+                    downside_barrier,
+                )
+            record["decision_event_class"] = event_class
+            record["decision_event_offset"] = event_offset
+            record["decision_event_type"] = event_type
+            record["decision_event_upside_barrier"] = upside_barrier
+            record["decision_event_drawdown_barrier"] = downside_barrier
         records.append(record)
     return pd.concat([frame.reset_index(drop=True), pd.DataFrame(records)], axis=1)
 

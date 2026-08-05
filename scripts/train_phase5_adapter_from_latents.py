@@ -37,6 +37,8 @@ def run(
     ) or {}
     dataset_cfg = DecisionDatasetConfig(**values.get("decision_dataset", {}))
     adapter_cfg = DecisionAdapterConfig(**values.get("adapter", {}))
+    if dataset_cfg.temporal_horizons != adapter_cfg.temporal_horizons:
+        raise ValueError("decision_dataset and adapter temporal_horizons must match exactly.")
     training_values = dict(values.get("training", {}))
     training_values["seed"] = int(seed)
     training_cfg = DecisionTrainingConfig(**training_values)

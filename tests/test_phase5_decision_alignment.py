@@ -7,8 +7,14 @@ import torch
 
 from src.decision.adapter import DecisionAdapter, DecisionAdapterConfig
 from src.decision.alignment import pcgrad_backward
-from src.decision.dataset import DecisionDatasetConfig, build_decision_frame
-from src.decision.losses import DecisionLossConfig, decision_alignment_loss
+from src.decision.dataset import DecisionDatasetConfig, build_decision_frame, temporal_event_class
+from src.decision.losses import (
+    DecisionLossConfig,
+    decision_alignment_loss,
+    environment_risk_variance,
+    opportunity_allocation_losses,
+    temporal_event_probabilities,
+)
 from src.decision.trainer import DateGroupedBatchSampler
 from src.eval.confirmation_lock import create_confirmation_lock, mark_confirmation_executed
 from src.models.patch_transformer_model import HierarchicalPatchTransformerCycleModel
@@ -66,6 +72,127 @@ def test_all_decision_losses_have_nonzero_gradients():
     total.backward()
     assert model.projection[1].weight.grad is not None
     assert torch.isfinite(model.projection[1].weight.grad).all()
+
+
+def test_temporal_event_class_preserves_event_identity_and_time_bucket():
+    horizons = (5, 10, 21)
+    upside_path = np.array([0.01, 0.03, 0.06, 0.08, 0.11])
+    downside_path = np.array([-0.01, -0.04, -0.07, -0.11])
+    assert temporal_event_class(upside_path, horizons, 0.10, 0.10) == (1, 5, "upside")
+    assert temporal_event_class(downside_path, horizons, 0.10, 0.10) == (4, 4, "drawdown")
+    assert temporal_event_class(np.zeros(21), horizons, 0.10, 0.10) == (0, 0, "none")
+
+
+def test_temporal_head_has_ordered_quantiles_and_monotonic_event_risk():
+    model = DecisionAdapter(
+        DecisionAdapterConfig(
+            input_dim=8,
+            hidden_dim=6,
+            decision_dim=4,
+            dropout=0.0,
+            temporal_horizons=(5, 10, 21),
+            enforce_non_crossing_quantiles=True,
+            include_cash_logit=True,
+        )
+    )
+    output = model(torch.randn(12, 8))
+    quantiles = output["utility_quantiles"]
+    assert torch.all(quantiles[:, 0] <= quantiles[:, 1])
+    assert torch.all(quantiles[:, 1] <= quantiles[:, 2])
+    probabilities, cumulative = temporal_event_probabilities(output["event_logits"], 3)
+    assert torch.allclose(probabilities.sum(dim=1), torch.ones(12))
+    assert torch.all(torch.diff(cumulative, dim=1) >= -1e-7)
+
+
+def test_pre_temporal_adapter_checkpoint_remains_loadable():
+    original = DecisionAdapter(
+        DecisionAdapterConfig(input_dim=8, hidden_dim=6, decision_dim=4, dropout=0.0)
+    )
+    payload = original.checkpoint()
+    for key in ("temporal_horizons", "enforce_non_crossing_quantiles", "include_cash_logit"):
+        payload["config"].pop(key)
+    restored = DecisionAdapter.from_checkpoint(payload)
+    latent = torch.randn(3, 8)
+    assert torch.allclose(original(latent)["decision"], restored(latent)["decision"])
+
+
+def test_opportunity_loss_penalizes_missing_positive_cross_section():
+    scores = torch.tensor([-0.2, -0.1, -0.3], requires_grad=True)
+    utility = torch.tensor([0.15, -0.04, 0.08])
+    dates = torch.zeros(3, dtype=torch.long)
+    allocation, coverage, regret = opportunity_allocation_losses(
+        scores,
+        utility,
+        dates,
+        torch.tensor(0.5, requires_grad=True),
+        top_k=3,
+        temperature=0.1,
+        minimum_positive_utility=0.0,
+    )
+    assert float(allocation) > 0
+    assert float(coverage) > 0
+    assert float(regret) > 0
+    (allocation + coverage).backward()
+    assert scores.grad is not None and torch.isfinite(scores.grad).all()
+
+
+def test_environment_risk_variance_is_finite_with_trimmed_outlier():
+    losses = torch.tensor([1.0, 1.1, 1.2, 100.0, 2.0, 2.1, 2.2, 200.0])
+    environments = torch.tensor([0, 0, 0, 0, 1, 1, 1, 1])
+    untrimmed = environment_risk_variance(
+        losses, environments, trim_fraction=0.0, minimum_rows=2
+    )
+    trimmed = environment_risk_variance(
+        losses, environments, trim_fraction=0.25, minimum_rows=2
+    )
+    assert torch.isfinite(trimmed)
+    assert float(trimmed) < float(untrimmed)
+
+
+def test_full_temporal_decision_loss_backpropagates():
+    model = DecisionAdapter(
+        DecisionAdapterConfig(
+            input_dim=8,
+            hidden_dim=6,
+            decision_dim=4,
+            dropout=0.0,
+            temporal_horizons=(5, 10, 21),
+            enforce_non_crossing_quantiles=True,
+            include_cash_logit=True,
+        )
+    )
+    latent = torch.randn(18, 8)
+    utility = torch.linspace(-0.2, 0.3, 18)
+    outcomes = torch.randn(18, 7)
+    dates = torch.tensor([0] * 6 + [1] * 6 + [2] * 6)
+    tickers = torch.tensor([0, 1, 2, 3, 4, 5] * 3)
+    event_target = torch.tensor([0, 1, 2, 3, 4, 5] * 3)
+    environments = torch.tensor([0, 0, 0, 1, 1, 1] * 3)
+    config = DecisionLossConfig(
+        temporal_event_weight=0.25,
+        temporal_ranking_weight=0.05,
+        temporal_coherence_weight=0.05,
+        opportunity_weight=0.10,
+        coverage_weight=0.25,
+        environment_weight=0.10,
+        environment_minimum_rows=3,
+    )
+    total, parts = decision_alignment_loss(
+        model(latent),
+        utility,
+        outcomes,
+        dates,
+        tickers,
+        model.config.quantiles,
+        config,
+        temporal_target=event_target,
+        environment_ids=environments,
+    )
+    assert {"temporal_event", "opportunity", "coverage", "environment"}.issubset(parts)
+    assert torch.isfinite(total)
+    total.backward()
+    assert model.event_head.weight.grad is not None
+    assert torch.isfinite(model.event_head.weight.grad).all()
 
 
 def test_static_memory_is_repeatable_and_differentiable():

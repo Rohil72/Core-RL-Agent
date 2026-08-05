@@ -76,6 +76,16 @@ The executable protocol is `scripts/run_final_memory_study.py` with
 been inspected and is diagnostic only. The study cannot promote a strategy,
 regardless of its result.
 
+## Active Temporal Decision Diagnosis
+
+The remaining bounded development experiment keeps the transformer and source
+latents frozen and tests whether transfer failure arose in temporal semantics
+or action inference. It adds competing-risk event timing, monotonic horizon
+predictions, stock-versus-cash opportunity regret, opportunity-conditioned
+coverage, and trimmed environment-risk variance as independent ablations. See
+[Temporal Decision Loss Study](TEMPORAL_DECISION_LOSS_STUDY.md). This study is
+diagnostic only and cannot repair the absence of untouched confirmation data.
+
 ## Promotion Standard
 
 Development requires positive median excess Sharpe versus the memory baseline,
