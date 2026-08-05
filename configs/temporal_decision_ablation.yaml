@@ -4,6 +4,13 @@ study:
   diagnostic_only: true
 
 common:
+  experiment:
+    source_mode: phase6_testbed
+    source_testbed_run: reports/final_testbed/phase6_a30_final_v1
+    data_root: data/international
+    source_representations: [regional, global]
+    active_markets: [US, India, China, Brazil, France, UK]
+    active_seeds: [7, 17, 37]
   training:
     selection_metric: retrieval_utility
     epochs: 40
@@ -75,4 +82,3 @@ variants:
       environment_weight: 0.10
       environment_trim_fraction: 0.01
       environment_minimum_rows: 8
-

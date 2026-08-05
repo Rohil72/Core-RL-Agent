@@ -19,6 +19,7 @@ from src.decision.trainer import DateGroupedBatchSampler
 from src.eval.confirmation_lock import create_confirmation_lock, mark_confirmation_executed
 from src.models.patch_transformer_model import HierarchicalPatchTransformerCycleModel
 from src.policy.offline_policy import OfflinePolicyDatasetConfig, build_offline_policy_dataset
+from scripts.run_phase5_decision_alignment import discover_adapter_sources
 
 
 def test_decision_dataset_builds_causal_multi_horizon_utility(tmp_path):
@@ -114,6 +115,29 @@ def test_pre_temporal_adapter_checkpoint_remains_loadable():
     restored = DecisionAdapter.from_checkpoint(payload)
     latent = torch.randn(3, 8)
     assert torch.allclose(original(latent)["decision"], restored(latent)["decision"])
+
+
+def test_phase6_source_discovery_uses_preserved_testbed_latents(tmp_path):
+    latent_root = tmp_path / "reports" / "final_testbed" / "phase6_v1" / "latents"
+    for name in ("regional_US_seed_7", "global_seed_7"):
+        directory = latent_root / name
+        directory.mkdir(parents=True)
+        (directory / "train_latents.parquet").touch()
+        (directory / "val_latents.parquet").touch()
+    config = {
+        "experiment": {
+            "source_mode": "phase6_testbed",
+            "source_testbed_run": "reports/final_testbed/phase6_v1",
+            "data_root": "data/international",
+            "source_representations": ["regional", "global"],
+            "active_markets": ["US"],
+            "active_seeds": [7],
+        }
+    }
+    sources = discover_adapter_sources(config, project_root=tmp_path)
+    assert [source.name for source in sources] == ["regional_US_seed_7", "global_seed_7"]
+    assert sources[0].precomputed_globs == ("data/international/US/*.parquet",)
+    assert sources[1].precomputed_globs == ("data/international/*/*.parquet",)
 
 
 def test_opportunity_loss_penalizes_missing_positive_cross_section():

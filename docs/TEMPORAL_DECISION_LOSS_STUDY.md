@@ -70,6 +70,12 @@ study writes per-run temporal Brier score, event accuracy, event-time bucket
 MAE, monotonicity violations, opportunity regret, coverage error, retrieval
 quality, and trading metrics.
 
+The active configuration discovers the preserved Phase 6 encoder exports under
+`reports/final_testbed/phase6_a30_final_v1/latents`. Regional sources use only
+their matching `data/international/MARKET` price directory. Global sources use
+the all-market price pool. The older Phase 4C source contract remains available
+through `experiment.source_mode: phase4c`.
+
 ## Interpretation contract
 
 - Temporal improvement without trading improvement means the remaining weak
@@ -83,6 +89,16 @@ quality, and trading metrics.
   periods and universes have already been inspected.
 
 ## Execution
+
+Verify source artifacts before starting training:
+
+```bash
+.venv/bin/python scripts/run_temporal_decision_ablation.py \
+  --config configs/temporal_decision_ablation.yaml \
+  --run-id temporal_decision_pilot_v1 \
+  --max-runs 1 \
+  --preflight
+```
 
 One-run smoke test:
 
@@ -123,4 +139,3 @@ declared subset.
   Optimization](https://proceedings.mlr.press/v139/zhai21a.html), ICML 2021.
 - Zhao et al., [On Learning Invariant Representations for Domain
   Adaptation](https://proceedings.mlr.press/v97/zhao19a.html), ICML 2019.
-

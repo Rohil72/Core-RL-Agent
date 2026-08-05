@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
-from dataclasses import fields
+from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +27,130 @@ from src.backtest.market_memory_evaluator import run_market_memory_evaluation  #
 from src.memory.experience import latent_columns  # noqa: E402
 
 
+@dataclass(frozen=True)
+class AdapterSource:
+    """One frozen train/validation latent source and its matching price data."""
+
+    name: str
+    group: str
+    seed: int
+    train_path: Path
+    val_path: Path
+    precomputed_globs: tuple[str, ...]
+    backtest_glob: str
+    signal_path: Path | None = None
+
+
+def _phase6_sources(
+    experiment: dict[str, Any],
+    max_runs: int | None,
+    project_root: Path,
+) -> list[AdapterSource]:
+    source_root = project_root / experiment["source_testbed_run"]
+    latent_root = source_root / "latents"
+    representations = tuple(experiment.get("source_representations", ("regional", "global")))
+    active_markets = set(experiment.get("active_markets", ()))
+    active_seeds = {int(seed) for seed in experiment.get("active_seeds", ())}
+    data_root = str(experiment.get("data_root", "data/international")).rstrip("/\\")
+    sources: list[AdapterSource] = []
+    if not latent_root.exists():
+        raise RuntimeError(
+            f"Phase 6 latent root does not exist: {latent_root}. "
+            "Expected completed train_latents.parquet and val_latents.parquet artifacts."
+        )
+    directories = sorted((path for path in latent_root.iterdir() if path.is_dir()), key=lambda path: path.name)
+    for representation in representations:
+        for directory in directories:
+            regional = re.fullmatch(r"regional_(.+)_seed_(\d+)", directory.name)
+            global_match = re.fullmatch(r"global_seed_(\d+)", directory.name)
+            if representation == "regional" and regional:
+                market, seed = regional.group(1), int(regional.group(2))
+                group = f"regional_{market}"
+                globs = (f"{data_root}/{market}/*.parquet",)
+                backtest_glob = globs[0]
+            elif representation == "global" and global_match:
+                market, seed = "global", int(global_match.group(1))
+                group = "global"
+                globs = (f"{data_root}/*/*.parquet",)
+                backtest_glob = globs[0]
+            else:
+                continue
+            if active_markets and market != "global" and market not in active_markets:
+                continue
+            if active_seeds and seed not in active_seeds:
+                continue
+            train_path = directory / "train_latents.parquet"
+            val_path = directory / "val_latents.parquet"
+            if train_path.exists() and val_path.exists():
+                sources.append(
+                    AdapterSource(
+                        name=directory.name,
+                        group=group,
+                        seed=seed,
+                        train_path=train_path,
+                        val_path=val_path,
+                        precomputed_globs=globs,
+                        backtest_glob=backtest_glob,
+                    )
+                )
+    if not sources:
+        found = [path.name for path in directories]
+        raise RuntimeError(
+            f"No complete Phase 6 latent sources matched under {latent_root}. "
+            f"Found directories: {found or 'none'}; representations={representations}; "
+            f"active_markets={sorted(active_markets) or 'all'}; active_seeds={sorted(active_seeds) or 'all'}."
+        )
+    return sources[:max_runs] if max_runs is not None else sources
+
+
+def discover_adapter_sources(
+    config: dict[str, Any],
+    max_runs: int | None = None,
+    project_root: Path = PROJECT_ROOT,
+) -> list[AdapterSource]:
+    """Resolve frozen latent inputs for legacy Phase 4C or the Phase 6 testbed."""
+
+    experiment = config["experiment"]
+    source_mode = str(experiment.get("source_mode", "phase4c"))
+    if source_mode == "phase6_testbed":
+        return _phase6_sources(experiment, max_runs, project_root)
+    if source_mode != "phase4c":
+        raise ValueError(f"Unsupported adapter source_mode: {source_mode}")
+    source = project_root / experiment["source_phase4c_run"]
+    filter_cfg = {
+        "active_folds": experiment.get("active_folds", []),
+        "active_seeds": experiment.get("active_seeds", []),
+    }
+    runs = _select_runs(_complete_run_dirs(source), filter_cfg, max_runs)
+    resolved: list[AdapterSource] = []
+    for run_dir in runs:
+        fold, seed = _run_key(run_dir)
+        prepared = project_root / experiment["source_phase4e_run"] / "prepared" / fold / f"seed_{seed}"
+        train_path = prepared / "train.parquet"
+        val_path = prepared / "val.parquet"
+        if not train_path.exists() or not val_path.exists():
+            train_path = run_dir / "latents" / "train_latents.parquet"
+            val_path = run_dir / "latents" / "val_latents.parquet"
+        signal_path = (
+            project_root / experiment["source_phase4e_run"] / "evaluations" / "val"
+            / "A2_blended_alpha_identity" / fold / f"seed_{seed}" / "eval" / "signals.parquet"
+        )
+        glob_value = str(experiment["precomputed_glob"])
+        resolved.append(
+            AdapterSource(
+                name=f"{fold}_seed_{seed}",
+                group=fold,
+                seed=seed,
+                train_path=train_path,
+                val_path=val_path,
+                precomputed_globs=(glob_value,),
+                backtest_glob=glob_value,
+                signal_path=signal_path if signal_path.exists() else None,
+            )
+        )
+    return resolved
+
+
 def _retrieval_frame(path: Path, destination: Path) -> None:
     """Make the existing evaluator consume decision space without changing it."""
     frame = pd.read_parquet(path)
@@ -39,7 +164,11 @@ def _retrieval_frame(path: Path, destination: Path) -> None:
     frame.to_parquet(destination, index=False)
 
 
-def _adapter_backtest(config: dict[str, Any], run_output: Path) -> dict[str, Any]:
+def _adapter_backtest(
+    config: dict[str, Any],
+    run_output: Path,
+    source: AdapterSource,
+) -> dict[str, Any]:
     phase4e_path = PROJECT_ROOT / config["experiment"]["source_phase4e_run"] / "resolved_config.yaml"
     if phase4e_path.exists():
         phase4e = yaml.safe_load(phase4e_path.read_text(encoding="utf-8"))
@@ -53,7 +182,7 @@ def _adapter_backtest(config: dict[str, Any], run_output: Path) -> dict[str, Any
         "data": {
             "train_latents": str(retrieval_train),
             "test_latents": str(retrieval_val),
-            "precomputed_glob": str(PROJECT_ROOT / config["experiment"]["precomputed_glob"]),
+            "precomputed_glob": source.backtest_glob,
             "output_dir": str(run_output / "adapter_backtest"),
         },
         "memory": {
@@ -108,48 +237,37 @@ def run(
     if output.exists() and any(output.iterdir()) and not resume:
         raise FileExistsError(f"Refusing to reuse non-empty Phase 5 directory: {output}")
     output.mkdir(parents=True, exist_ok=True)
-    source = PROJECT_ROOT / experiment["source_phase4c_run"]
-    filter_cfg = {
-        "active_folds": experiment.get("active_folds", []),
-        "active_seeds": experiment.get("active_seeds", []),
-    }
-    runs = _select_runs(_complete_run_dirs(source), filter_cfg, max_runs)
+    sources = discover_adapter_sources(config, max_runs)
     dataset_cfg = DecisionDatasetConfig(**_dataclass_kwargs(DecisionDatasetConfig, config["decision_dataset"]))
     adapter_cfg = DecisionAdapterConfig(**_dataclass_kwargs(DecisionAdapterConfig, config["adapter"]))
     if dataset_cfg.temporal_horizons != adapter_cfg.temporal_horizons:
         raise ValueError("decision_dataset and adapter temporal_horizons must match exactly.")
     loss_cfg = DecisionLossConfig(**_dataclass_kwargs(DecisionLossConfig, config["loss"]))
     summaries: list[dict[str, Any]] = []
-    for run_dir in runs:
-        fold, seed = _run_key(run_dir)
+    for source in sources:
+        fold, seed = source.group, source.seed
         run_output = output / fold / f"seed_{seed}"
         summary_path = run_output / "summary.json"
         if resume and summary_path.exists():
             existing = json.loads(summary_path.read_text(encoding="utf-8"))
             if not skip_backtest and "backtest" not in existing:
-                existing["backtest"] = _adapter_backtest(config, run_output)
+                existing["backtest"] = _adapter_backtest(config, run_output, source)
                 summary_path.write_text(json.dumps(existing, indent=2, default=str), encoding="utf-8")
             summaries.append({"fold": fold, "seed": seed, **existing})
             continue
-        prepared = PROJECT_ROOT / experiment["source_phase4e_run"] / "prepared" / fold / f"seed_{seed}"
-        train_path = prepared / "train.parquet"
-        val_path = prepared / "val.parquet"
-        if not train_path.exists() or not val_path.exists():
-            train_path = run_dir / "latents" / "train_latents.parquet"
-            val_path = run_dir / "latents" / "val_latents.parquet"
-        signal_path = (
-            PROJECT_ROOT / experiment["source_phase4e_run"] / "evaluations" / "val"
-            / "A2_blended_alpha_identity" / fold / f"seed_{seed}" / "eval" / "signals.parquet"
+        signals = pd.read_parquet(source.signal_path) if source.signal_path else None
+        train_frame = build_decision_frame(
+            pd.read_parquet(source.train_path), source.precomputed_globs, dataset_cfg
         )
-        signals = pd.read_parquet(signal_path) if signal_path.exists() else None
-        train_frame = build_decision_frame(pd.read_parquet(train_path), experiment["precomputed_glob"], dataset_cfg)
-        val_frame = build_decision_frame(pd.read_parquet(val_path), experiment["precomputed_glob"], dataset_cfg, signals)
+        val_frame = build_decision_frame(
+            pd.read_parquet(source.val_path), source.precomputed_globs, dataset_cfg, signals
+        )
         train_cfg_values = dict(config["training"])
         train_cfg_values["seed"] = seed
         train_cfg = DecisionTrainingConfig(**_dataclass_kwargs(DecisionTrainingConfig, train_cfg_values))
         summary = train_decision_adapter(train_frame, val_frame, run_output, adapter_cfg, train_cfg, loss_cfg)
         if not skip_backtest:
-            backtest = _adapter_backtest(config, run_output)
+            backtest = _adapter_backtest(config, run_output, source)
             summary["backtest"] = backtest
             summary_path.write_text(json.dumps(summary, indent=2, default=str), encoding="utf-8")
         summaries.append({"fold": fold, "seed": seed, **summary})
@@ -200,7 +318,14 @@ def run(
         "trading_gate_passed": trading_gate,
     }
     (output / "adapter_promotion.json").write_text(json.dumps(promotion, indent=2), encoding="utf-8")
-    manifest = {"run_id": run_id, "source_run_count": len(runs), "output": str(output), "stages": ["decision_dataset", "adapter"]}
+    manifest = {
+        "run_id": run_id,
+        "source_run_count": len(sources),
+        "sources": [source.name for source in sources],
+        "source_mode": str(experiment.get("source_mode", "phase4c")),
+        "output": str(output),
+        "stages": ["decision_dataset", "adapter"],
+    }
     (output / "run_summary.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     return manifest
 
