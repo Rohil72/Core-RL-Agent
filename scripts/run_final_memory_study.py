@@ -436,6 +436,32 @@ def _variant(config: dict[str, Any], identifier: str) -> dict[str, Any]:
     return matches[0]
 
 
+def _comparison_control_id(config: dict[str, Any]) -> str:
+    """Resolve one declared or structurally unique raw C0 control variant."""
+
+    explicit = config.get("comparison", {}).get("control_variant")
+    if explicit is not None:
+        matches = [variant for variant in config["variants"] if variant["id"] == explicit]
+    else:
+        marked = [
+            variant for variant in config["variants"] if variant.get("is_control") is True
+        ]
+        matches = marked or [
+            variant
+            for variant in config["variants"]
+            if variant.get("embedding_space") == "raw"
+            and variant.get("memory_mode") == "static"
+            and variant.get("targets") == "exact_c0"
+        ]
+    if len(matches) != 1:
+        identifiers = [str(variant.get("id")) for variant in matches]
+        raise RuntimeError(
+            "Comparison requires exactly one declared or structurally unique "
+            f"raw/static/exact-C0 control; found {identifiers}."
+        )
+    return str(matches[0]["id"])
+
+
 def _memory_values(
     config: dict[str, Any],
     variant: dict[str, Any],
@@ -802,14 +828,18 @@ def compare_period(config_path: str, run_id: str, period: str) -> dict[str, Any]
             for row in rows
         ]
     )
-    raw = table.loc[table["variant"] == "raw_c0_static"]
-    if len(raw) != 1:
-        raise RuntimeError("Comparison requires exactly one raw_c0_static control.")
-    table["delta_sharpe_vs_raw_c0"] = (
-        table["pooled_sharpe"] - float(raw.iloc[0]["pooled_sharpe"])
+    control_id = _comparison_control_id(config)
+    control = table.loc[table["variant"] == control_id]
+    if len(control) != 1:
+        raise RuntimeError(
+            f"Comparison control {control_id!r} is absent from aggregate results."
+        )
+    table["is_comparison_control"] = table["variant"] == control_id
+    table["delta_sharpe_vs_control"] = (
+        table["pooled_sharpe"] - float(control.iloc[0]["pooled_sharpe"])
     )
-    table["delta_return_vs_raw_c0"] = (
-        table["pooled_return"] - float(raw.iloc[0]["pooled_return"])
+    table["delta_return_vs_control"] = (
+        table["pooled_return"] - float(control.iloc[0]["pooled_return"])
     )
     table = table.sort_values("pooled_sharpe", ascending=False)
     destination = output / "comparison" / period
@@ -819,6 +849,7 @@ def compare_period(config_path: str, run_id: str, period: str) -> dict[str, Any]
         "period": period,
         "evidence_status": config["periods"][period]["evidence_status"],
         "promotion_allowed": False,
+        "control_variant": control_id,
         "variant_count": len(table),
         "highest_sharpe_variant": str(table.iloc[0]["variant"]),
         "highest_sharpe": float(table.iloc[0]["pooled_sharpe"]),

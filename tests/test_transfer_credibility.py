@@ -153,3 +153,41 @@ def test_final_transfer_manifest_is_frozen_durable_and_complete(monkeypatch, tmp
     assert sum("evaluate_frozen_tabular_decoders.py" in command for command in commands) == 18
     prepare = next(job for job in manifest["jobs"] if job["id"] == "prepare_global_US_seed_7")
     assert any(path.endswith("growing_raw.parquet") for path in prepare["expected_outputs"])
+
+
+def test_comparison_control_is_resolved_by_contract_not_name():
+    transfer = yaml.safe_load(
+        Path("configs/final_transfer_credibility.yaml").read_text(encoding="utf-8")
+    )
+    repair = yaml.safe_load(
+        Path("configs/final_memory_repair.yaml").read_text(encoding="utf-8")
+    )
+
+    assert study._comparison_control_id(transfer) == "m0_raw_static"
+    assert study._comparison_control_id(repair) == "raw_c0_static"
+
+
+def test_comparison_control_rejects_ambiguous_controls():
+    config = {
+        "variants": [
+            {
+                "id": "first",
+                "embedding_space": "raw",
+                "memory_mode": "static",
+                "targets": "exact_c0",
+            },
+            {
+                "id": "second",
+                "embedding_space": "raw",
+                "memory_mode": "static",
+                "targets": "exact_c0",
+            },
+        ]
+    }
+
+    try:
+        study._comparison_control_id(config)
+    except RuntimeError as exc:
+        assert "exactly one" in str(exc)
+    else:
+        raise AssertionError("Ambiguous comparison controls must fail closed.")
