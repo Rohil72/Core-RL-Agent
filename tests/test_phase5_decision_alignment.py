@@ -138,6 +138,7 @@ def test_phase6_source_discovery_uses_preserved_testbed_latents(tmp_path):
     assert [source.name for source in sources] == ["regional_US_seed_7", "global_seed_7"]
     assert sources[0].precomputed_globs == ("data/international/US/*.parquet",)
     assert sources[1].precomputed_globs == ("data/international/*/*.parquet",)
+    assert discover_adapter_sources(config, max_runs=1, project_root=tmp_path)[0].name == "regional_US_seed_7"
 
 
 def test_opportunity_loss_penalizes_missing_positive_cross_section():

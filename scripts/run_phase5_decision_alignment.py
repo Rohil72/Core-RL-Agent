@@ -49,8 +49,10 @@ def _phase6_sources(
     source_root = project_root / experiment["source_testbed_run"]
     latent_root = source_root / "latents"
     representations = tuple(experiment.get("source_representations", ("regional", "global")))
-    active_markets = set(experiment.get("active_markets", ()))
-    active_seeds = {int(seed) for seed in experiment.get("active_seeds", ())}
+    market_priority = tuple(experiment.get("active_markets", ()))
+    seed_priority = tuple(int(seed) for seed in experiment.get("active_seeds", ()))
+    active_markets = set(market_priority)
+    active_seeds = set(seed_priority)
     data_root = str(experiment.get("data_root", "data/international")).rstrip("/\\")
     sources: list[AdapterSource] = []
     if not latent_root.exists():
@@ -100,6 +102,17 @@ def _phase6_sources(
             f"Found directories: {found or 'none'}; representations={representations}; "
             f"active_markets={sorted(active_markets) or 'all'}; active_seeds={sorted(active_seeds) or 'all'}."
         )
+    representation_order = {name: index for index, name in enumerate(representations)}
+    market_order = {name: index for index, name in enumerate(market_priority)}
+    seed_order = {seed: index for index, seed in enumerate(seed_priority)}
+    sources.sort(
+        key=lambda source: (
+            representation_order.get("global" if source.group == "global" else "regional", len(representations)),
+            market_order.get(source.group.removeprefix("regional_"), len(market_order)),
+            seed_order.get(source.seed, len(seed_order)),
+            source.name,
+        )
+    )
     return sources[:max_runs] if max_runs is not None else sources
 
 
