@@ -19,6 +19,7 @@ from src.decision.losses import (
     DecisionLossConfig,
     decision_alignment_loss,
     opportunity_allocation_losses,
+    temporal_class_weights,
     temporal_event_probabilities,
 )
 from src.memory.experience import latent_columns
@@ -164,6 +165,7 @@ def _epoch(
     loss_cfg: DecisionLossConfig,
     optimizer: torch.optim.Optimizer | None,
     gradient_clip: float,
+    event_class_weights: torch.Tensor | None = None,
 ) -> dict[str, float]:
     model.train(optimizer is not None)
     totals: dict[str, float] = {"total": 0.0}
@@ -183,6 +185,7 @@ def _epoch(
                 model.config.quantiles,
                 loss_cfg,
                 temporal_target=temporal_target if model.config.temporal_horizons else None,
+                temporal_weights=event_class_weights,
                 environment_ids=environments,
             )
             if optimizer is not None:
@@ -199,7 +202,13 @@ def _epoch(
     return {key: value / max(rows, 1) for key, value in totals.items()}
 
 
-def transform_decision_frame(model: DecisionAdapter, frame: pd.DataFrame, device: torch.device, batch_size: int = 2048) -> pd.DataFrame:
+def transform_decision_frame(
+    model: DecisionAdapter,
+    frame: pd.DataFrame,
+    device: torch.device,
+    batch_size: int = 2048,
+    loss_config: DecisionLossConfig | None = None,
+) -> pd.DataFrame:
     """Append decision embeddings and utility quantiles to a frozen latent table."""
     model.eval()
     latent = torch.as_tensor(frame[latent_columns(frame)].to_numpy(dtype=np.float32))
@@ -225,6 +234,26 @@ def transform_decision_frame(model: DecisionAdapter, frame: pd.DataFrame, device
         out[f"decision_{i}"] = decision_matrix[:, i]
     for i, quantile in enumerate(model.config.quantiles):
         out[f"pred_utility_q{int(quantile * 100):02d}"] = quantile_matrix[:, i]
+    if model.cash_logit is not None:
+        loss_cfg = loss_config or DecisionLossConfig()
+        median_column = f"pred_utility_q{int(model.config.quantiles[1] * 100):02d}"
+        cash_logit = float(model.cash_logit.detach().cpu())
+        cash_probability = np.full(len(out), np.nan, dtype=float)
+        stock_allocation = np.full(len(out), np.nan, dtype=float)
+        for indices in out.groupby("timestamp", sort=False).indices.values():
+            positions = np.asarray(indices, dtype=int)
+            scores = out.iloc[positions][median_column].to_numpy(dtype=float)
+            logits = np.concatenate([[cash_logit], scores]) / loss_cfg.opportunity_temperature
+            logits -= np.max(logits)
+            probabilities = np.exp(logits)
+            probabilities /= probabilities.sum()
+            cash_probability[positions] = probabilities[0]
+            stock_allocation[positions] = probabilities[1:]
+        out["pred_cash_logit"] = cash_logit
+        out["pred_cash_probability"] = cash_probability
+        out["pred_target_exposure"] = 1.0 - cash_probability
+        out["pred_stock_allocation"] = stock_allocation
+        out["pred_action_margin"] = out[median_column] - cash_logit
     if event_probabilities:
         probability_matrix = np.concatenate(event_probabilities)
         cumulative_matrix = np.concatenate(cumulative_event_risks)
@@ -300,7 +329,21 @@ def temporal_diagnostics(frame: pd.DataFrame, horizons: tuple[int, ...]) -> dict
     diagnostics: dict[str, float] = {
         "event_class_accuracy": float(np.mean(actual == predicted)),
         "event_none_rate": float(np.mean(actual == 0)),
+        "predicted_event_none_rate": float(np.mean(predicted == 0)),
     }
+    recalls: list[float] = []
+    f1_scores: list[float] = []
+    for event_class in np.unique(actual):
+        actual_positive = actual == event_class
+        predicted_positive = predicted == event_class
+        true_positive = float(np.sum(actual_positive & predicted_positive))
+        recall = true_positive / max(float(actual_positive.sum()), 1.0)
+        precision = true_positive / max(float(predicted_positive.sum()), 1.0)
+        recalls.append(recall)
+        f1_scores.append(2.0 * precision * recall / (precision + recall) if precision + recall else 0.0)
+    diagnostics["event_balanced_accuracy"] = float(np.mean(recalls))
+    diagnostics["event_macro_f1"] = float(np.mean(f1_scores))
+    diagnostics["predicted_event_class_count"] = float(len(np.unique(predicted)))
     brier: list[float] = []
     upside_predictions: list[np.ndarray] = []
     downside_predictions: list[np.ndarray] = []
@@ -387,6 +430,16 @@ def train_decision_adapter(
         maximum_class = 2 * len(model.config.temporal_horizons)
         if int(train_data.tensors[5].max()) > maximum_class or int(val_data.tensors[5].max()) > maximum_class:
             raise ValueError("Temporal event targets are incompatible with the adapter horizon count.")
+        event_class_weights = temporal_class_weights(
+            train_data.tensors[5],
+            maximum_class + 1,
+            loss_cfg.temporal_class_weighting,
+            loss_cfg.temporal_class_weight_max,
+        )
+        if event_class_weights is not None:
+            event_class_weights = event_class_weights.to(device)
+    else:
+        event_class_weights = None
     train_loader = DataLoader(
         train_data,
         batch_sampler=DateGroupedBatchSampler(
@@ -415,8 +468,12 @@ def train_decision_adapter(
     best_selection_score = float("-inf")
     stale = 0
     for epoch in range(train_cfg.epochs):
-        train_metrics = _epoch(model, train_loader, device, loss_cfg, optimizer, train_cfg.gradient_clip)
-        val_metrics = _epoch(model, val_loader, device, loss_cfg, None, train_cfg.gradient_clip)
+        train_metrics = _epoch(
+            model, train_loader, device, loss_cfg, optimizer, train_cfg.gradient_clip, event_class_weights
+        )
+        val_metrics = _epoch(
+            model, val_loader, device, loss_cfg, None, train_cfg.gradient_clip, event_class_weights
+        )
         scheduler.step(val_metrics["total"])
         record: dict[str, Any] = {
             "epoch": epoch + 1,
@@ -429,8 +486,8 @@ def train_decision_adapter(
             and ((epoch + 1 - train_cfg.minimum_epochs) % train_cfg.selection_interval == 0 or epoch + 1 == train_cfg.epochs)
         )
         if train_cfg.selection_metric == "retrieval_utility" and evaluate_retrieval:
-            epoch_train = transform_decision_frame(model, train_frame, device)
-            epoch_val = transform_decision_frame(model, validation_frame, device)
+            epoch_train = transform_decision_frame(model, train_frame, device, loss_config=loss_cfg)
+            epoch_val = transform_decision_frame(model, validation_frame, device, loss_config=loss_cfg)
             epoch_diagnostics = retrieval_diagnostics(epoch_train, epoch_val, train_cfg.neighbors)
             correlation = float(epoch_diagnostics["neighbor_utility_spearman"])
             if not np.isfinite(correlation):
@@ -457,8 +514,8 @@ def train_decision_adapter(
     model.load_state_dict(best_state)
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)
-    train_transformed = transform_decision_frame(model, train_frame, device)
-    val_transformed = transform_decision_frame(model, validation_frame, device)
+    train_transformed = transform_decision_frame(model, train_frame, device, loss_config=loss_cfg)
+    val_transformed = transform_decision_frame(model, validation_frame, device, loss_config=loss_cfg)
     train_transformed.to_parquet(output / "train_decisions.parquet", index=False)
     val_transformed.to_parquet(output / "val_decisions.parquet", index=False)
     diagnostics = retrieval_diagnostics(train_transformed, val_transformed, train_cfg.neighbors)
@@ -475,6 +532,9 @@ def train_decision_adapter(
         "adapter_config": asdict(model.config),
         "training_config": asdict(train_cfg),
         "loss_config": asdict(loss_cfg),
+        "temporal_class_weights": (
+            event_class_weights.detach().cpu().tolist() if event_class_weights is not None else None
+        ),
         "best_validation_loss": best_loss,
         "best_retrieval_selection_score": (
             best_selection_score if np.isfinite(best_selection_score) else None

@@ -420,7 +420,17 @@ def _query_columns_to_keep(query: pd.DataFrame) -> list[str]:
         "pred_future_max_return_63",
         "pred_future_min_return_63",
     }
-    prefixes = ("decision_", "pred_utility_")
+    prefixes = (
+        "decision_",
+        "pred_utility_",
+        "pred_event_",
+        "pred_upside_",
+        "pred_drawdown_",
+        "pred_cash_",
+        "pred_target_",
+        "pred_stock_",
+        "pred_action_",
+    )
     return [c for c in query.columns if c in keep or c.startswith(prefixes)]
 
 

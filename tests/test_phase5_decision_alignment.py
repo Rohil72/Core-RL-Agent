@@ -13,14 +13,20 @@ from src.decision.losses import (
     decision_alignment_loss,
     environment_risk_variance,
     opportunity_allocation_losses,
+    temporal_class_weights,
     temporal_event_probabilities,
 )
-from src.decision.trainer import DateGroupedBatchSampler
+from src.decision.trainer import DateGroupedBatchSampler, transform_decision_frame
 from src.eval.confirmation_lock import create_confirmation_lock, mark_confirmation_executed
 from src.models.patch_transformer_model import HierarchicalPatchTransformerCycleModel
 from src.policy.offline_policy import OfflinePolicyDatasetConfig, build_offline_policy_dataset
 import scripts.run_phase5_decision_alignment as alignment_runner
-from scripts.run_phase5_decision_alignment import AdapterSource, discover_adapter_sources
+from scripts.run_phase5_decision_alignment import (
+    AdapterSource,
+    discover_adapter_sources,
+    evaluate_aligned_decision_policies,
+)
+from src.backtest.market_memory_backtester import PolicyConfig
 
 
 def test_decision_dataset_builds_causal_multi_horizon_utility(tmp_path):
@@ -104,6 +110,71 @@ def test_temporal_head_has_ordered_quantiles_and_monotonic_event_risk():
     probabilities, cumulative = temporal_event_probabilities(output["event_logits"], 3)
     assert torch.allclose(probabilities.sum(dim=1), torch.ones(12))
     assert torch.all(torch.diff(cumulative, dim=1) >= -1e-7)
+
+
+def test_temporal_class_weights_are_train_derived_and_capped():
+    targets = torch.tensor([0] * 16 + [1] * 4 + [2])
+    weights = temporal_class_weights(targets, 3, "inverse_sqrt", maximum_weight=2.0)
+
+    assert weights is not None
+    assert weights[0] < weights[1] < weights[2]
+    assert float(weights.max()) <= 2.0
+
+
+def test_action_export_preserves_cross_sectional_cash_identity():
+    model = DecisionAdapter(
+        DecisionAdapterConfig(input_dim=2, hidden_dim=4, decision_dim=3, dropout=0.0, include_cash_logit=True)
+    )
+    frame = pd.DataFrame(
+        {
+            "timestamp": pd.to_datetime(["2024-01-01"] * 3 + ["2024-01-02"] * 2, utc=True),
+            "ticker": ["A", "B", "C", "A", "B"],
+            "latent_0": [0.1, 0.2, 0.3, 0.4, 0.5],
+            "latent_1": [0.5, 0.4, 0.3, 0.2, 0.1],
+        }
+    )
+    transformed = transform_decision_frame(
+        model,
+        frame,
+        torch.device("cpu"),
+        loss_config=DecisionLossConfig(opportunity_temperature=0.10),
+    )
+
+    for _, cross_section in transformed.groupby("timestamp"):
+        total = cross_section["pred_stock_allocation"].sum() + cross_section["pred_cash_probability"].iloc[0]
+        assert np.isclose(total, 1.0)
+        assert cross_section["pred_target_exposure"].nunique() == 1
+
+
+def test_aligned_policy_evaluation_is_explicit_and_optional():
+    rows = []
+    for day in range(4):
+        for ticker, score, allocation in (("A", 0.20, 0.60), ("B", 0.10, 0.20)):
+            rows.append(
+                {
+                    "timestamp": pd.Timestamp("2024-01-01", tz="UTC") + pd.Timedelta(days=day),
+                    "ticker": ticker,
+                    "open": 100.0 + day,
+                    "close": 100.0 + day,
+                    "opportunity_score": score,
+                    "retrieval_expected_upside": 0.10,
+                    "retrieval_expected_downside": -0.02,
+                    "retrieval_confidence": 1.0,
+                    "pred_stock_allocation": allocation,
+                    "pred_target_exposure": 0.80,
+                    "pred_action_margin": 0.05 if ticker == "A" else -0.01,
+                    "pred_upside_by_63": 0.60,
+                    "pred_drawdown_by_63": 0.20,
+                }
+            )
+    results = evaluate_aligned_decision_policies(
+        pd.DataFrame(rows),
+        PolicyConfig(top_k=1, min_hold_days=1, max_hold_days=2, slippage_bps=0),
+    )
+
+    assert set(results) == {"learned_action", "memory_gated"}
+    assert results["learned_action"]["trade_count"] > 0
+    assert evaluate_aligned_decision_policies(pd.DataFrame({"ticker": ["A"]}), PolicyConfig()) == {}
 
 
 def test_pre_temporal_adapter_checkpoint_remains_loadable():

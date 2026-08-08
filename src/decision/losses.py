@@ -21,6 +21,8 @@ class DecisionLossConfig:
     temporal_coherence_weight: float = 0.0
     temporal_rank_temperature: float = 0.10
     coherence_state_temperature: float = 0.20
+    temporal_class_weighting: str = "none"
+    temporal_class_weight_max: float = 4.0
     opportunity_weight: float = 0.0
     coverage_weight: float = 0.0
     opportunity_temperature: float = 0.02
@@ -37,6 +39,10 @@ class DecisionLossConfig:
             raise ValueError("opportunity_top_k must be positive.")
         if self.opportunity_temperature <= 0 or self.temporal_rank_temperature <= 0:
             raise ValueError("Loss temperatures must be positive.")
+        if self.temporal_class_weighting not in {"none", "inverse_sqrt"}:
+            raise ValueError("temporal_class_weighting must be 'none' or 'inverse_sqrt'.")
+        if self.temporal_class_weight_max < 1.0:
+            raise ValueError("temporal_class_weight_max must be at least 1.0.")
 
 
 def quantile_loss(prediction: torch.Tensor, target: torch.Tensor, quantiles: tuple[float, ...]) -> torch.Tensor:
@@ -69,6 +75,27 @@ def temporal_event_probabilities(
     upside = probabilities[:, 1 : 1 + horizon_count].cumsum(dim=1)
     downside = probabilities[:, 1 + horizon_count :].cumsum(dim=1)
     return probabilities, torch.stack([upside, downside], dim=-1)
+
+
+def temporal_class_weights(
+    targets: torch.Tensor,
+    class_count: int,
+    mode: str = "none",
+    maximum_weight: float = 4.0,
+) -> torch.Tensor | None:
+    """Derive capped event-class weights from the training split only."""
+
+    if mode == "none":
+        return None
+    if mode != "inverse_sqrt":
+        raise ValueError(f"Unsupported temporal class weighting mode: {mode}")
+    counts = torch.bincount(targets.long().cpu(), minlength=class_count).float()
+    if counts.sum() <= 0:
+        raise ValueError("Cannot derive temporal class weights from an empty target.")
+    smoothed = counts.clamp_min(1.0)
+    weights = torch.sqrt(smoothed.sum() / smoothed)
+    weights /= weights.mean()
+    return weights.clamp(max=float(maximum_weight))
 
 
 def temporal_concordance_loss(
@@ -251,6 +278,7 @@ def decision_alignment_loss(
     quantiles: tuple[float, ...],
     config: DecisionLossConfig,
     temporal_target: torch.Tensor | None = None,
+    temporal_weights: torch.Tensor | None = None,
     environment_ids: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
     """Compute the complete, non-placeholder Phase 5B objective."""
@@ -277,7 +305,12 @@ def decision_alignment_loss(
         if temporal_target is None or "event_logits" not in outputs:
             raise ValueError("Temporal losses require temporal_target and event_logits.")
         horizon_count = (outputs["event_logits"].size(1) - 1) // 2
-        event_per_row = F.cross_entropy(outputs["event_logits"], temporal_target.long(), reduction="none")
+        event_per_row = F.cross_entropy(
+            outputs["event_logits"],
+            temporal_target.long(),
+            weight=temporal_weights,
+            reduction="none",
+        )
         event_loss = event_per_row.mean()
         _, cumulative_risk = temporal_event_probabilities(outputs["event_logits"], horizon_count)
         temporal_rank = temporal_concordance_loss(

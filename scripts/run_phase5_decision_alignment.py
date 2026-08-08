@@ -24,6 +24,12 @@ from src.decision.dataset import DecisionDatasetConfig, build_decision_frame  # 
 from src.decision.losses import DecisionLossConfig  # noqa: E402
 from src.decision.trainer import DecisionTrainingConfig, train_decision_adapter  # noqa: E402
 from src.backtest.market_memory_evaluator import run_market_memory_evaluation  # noqa: E402
+from src.backtest.market_memory_backtester import (  # noqa: E402
+    PolicyConfig,
+    compute_backtest_metrics,
+    run_long_only_backtest,
+    tradability_reason,
+)
 from src.memory.experience import latent_columns  # noqa: E402
 
 
@@ -214,7 +220,92 @@ def _adapter_backtest(
         "run": {"write_neighbors": False, "write_memory_reports": False},
     }
     result_dir = run_market_memory_evaluation(evaluation, PROJECT_ROOT, run_id="eval")
-    return json.loads((result_dir / "metrics.json").read_text(encoding="utf-8"))
+    metrics = json.loads((result_dir / "metrics.json").read_text(encoding="utf-8"))
+    signals_path = result_dir / "signals.parquet"
+    if signals_path.exists():
+        metrics["strategies"] = evaluate_aligned_decision_policies(
+            pd.read_parquet(signals_path),
+            PolicyConfig(**phase4e["policy"]),
+            result_dir / "aligned_policies",
+        )
+    return metrics
+
+
+def evaluate_aligned_decision_policies(
+    signals: pd.DataFrame,
+    policy: PolicyConfig,
+    output_dir: Path | None = None,
+) -> dict[str, dict[str, Any]]:
+    """Evaluate learned action semantics beside the unchanged memory policy."""
+
+    required = {"pred_stock_allocation", "pred_action_margin"}
+    if not required.issubset(signals.columns):
+        return {}
+    frame = signals.copy()
+    frame["learned_action_score"] = pd.to_numeric(frame["pred_stock_allocation"], errors="coerce")
+    frame["learned_entry_fraction"] = (policy.top_k * frame["learned_action_score"]).clip(0.0, 1.0)
+    temporal_horizons = sorted(
+        int(column.removeprefix("pred_upside_by_"))
+        for column in frame
+        if column.startswith("pred_upside_by_") and column.removeprefix("pred_upside_by_").isdigit()
+    )
+    temporal_horizon = temporal_horizons[-1] if temporal_horizons else None
+
+    def action_gate(row: pd.Series, _cfg: PolicyConfig, _score_col: str) -> bool:
+        margin = pd.to_numeric(pd.Series([row.get("pred_action_margin")]), errors="coerce").iloc[0]
+        allocation = pd.to_numeric(pd.Series([row.get("learned_action_score")]), errors="coerce").iloc[0]
+        return bool(pd.notna(margin) and pd.notna(allocation) and margin > 0.0 and allocation > 0.0)
+
+    def memory_gate(row: pd.Series, cfg: PolicyConfig, score_col: str) -> bool:
+        if tradability_reason(row, cfg, score_col) is not None or not action_gate(row, cfg, score_col):
+            return False
+        if temporal_horizon is None:
+            return True
+        upside = row.get(f"pred_upside_by_{temporal_horizon}")
+        downside = row.get(f"pred_drawdown_by_{temporal_horizon}")
+        return bool(pd.notna(upside) and pd.notna(downside) and float(upside) > float(downside))
+
+    learned_frame = frame.copy()
+    learned_frame["retrieval_expected_downside"] = 0.0
+    strategies = {
+        "learned_action": (learned_frame, "learned_action_score", action_gate),
+        "memory_gated": (frame, "opportunity_score", memory_gate),
+    }
+    results: dict[str, dict[str, Any]] = {}
+    for name, (strategy_frame, score_column, gate) in strategies.items():
+        decisions: list[dict[str, Any]] = []
+        trades, equity = run_long_only_backtest(
+            strategy_frame,
+            policy,
+            score_col=score_column,
+            row_filter=gate,
+            decision_log=decisions,
+            entry_allocation_col="learned_entry_fraction",
+        )
+        strategy_metrics = compute_backtest_metrics(trades, equity, policy.initial_capital)
+        strategy_metrics.update(
+            {
+                "mean_learned_target_exposure": float(frame["pred_target_exposure"].mean())
+                if "pred_target_exposure" in frame
+                else None,
+                "action_gate_rate": float(frame.apply(action_gate, axis=1, args=(policy, score_column)).mean()),
+                "policy_gate_rate": float(
+                    strategy_frame.apply(gate, axis=1, args=(policy, score_column)).mean()
+                ),
+                "temporal_gate_horizon": temporal_horizon,
+            }
+        )
+        results[name] = strategy_metrics
+        if output_dir is not None:
+            destination = output_dir / name
+            destination.mkdir(parents=True, exist_ok=True)
+            trades.to_csv(destination / "trades.csv", index=False)
+            equity.to_csv(destination / "equity_curve.csv", index=False)
+            pd.DataFrame(decisions).to_csv(destination / "decisions.csv", index=False)
+            (destination / "metrics.json").write_text(
+                json.dumps(strategy_metrics, indent=2), encoding="utf-8"
+            )
+    return results
 
 
 def _pooled_adapter_sharpe(output: Path) -> float | None:
@@ -298,6 +389,11 @@ def run(
             **{f"opportunity_{key}": value for key, value in item.get("opportunity_diagnostics", {}).items()},
             **{f"raw_{key}": value for key, value in item["raw_latent_diagnostics"].items()},
             **{f"backtest_{key}": item.get("backtest", {}).get(key) for key in ("total_return", "sharpe", "max_drawdown", "trade_count")},
+            **{
+                f"{strategy}_{key}": item.get("backtest", {}).get("strategies", {}).get(strategy, {}).get(key)
+                for strategy in ("learned_action", "memory_gated")
+                for key in ("total_return", "sharpe", "max_drawdown", "trade_count", "exposure")
+            },
         }
         for item in summaries
     ]
