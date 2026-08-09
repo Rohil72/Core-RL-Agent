@@ -1,0 +1,45 @@
+study:
+  name: action_memory_robustness
+  base_config: configs/phase5_decision_alignment_v2.yaml
+  output_root: reports/action_memory_robustness
+  expected_source_count: 18
+  diagnostic_only: true
+
+common:
+  experiment:
+    source_mode: phase6_testbed
+    source_testbed_run: reports/final_testbed/phase6_a30_final_v1
+    data_root: data/international
+    source_representations: [regional]
+    active_markets: [US, India, China, Brazil, France, UK]
+    active_seeds: [7, 17, 37]
+  training:
+    selection_metric: retrieval_utility
+    epochs: 12
+    minimum_epochs: 10
+    patience: 5
+
+variants:
+  baseline:
+    description: Frozen-state memory control with the established decision-space objective.
+
+  action_only:
+    description: Stock-versus-cash allocation supervision shapes decision space; normal memory remains the primary policy.
+    adapter:
+      include_cash_logit: true
+    loss:
+      opportunity_weight: 0.10
+      coverage_weight: 0.25
+      opportunity_top_k: 3
+      opportunity_temperature: 0.02
+
+comparison:
+  baseline: baseline
+  candidate: action_only
+  gates:
+    minimum_market_wins: 4
+    minimum_paired_run_win_fraction: 0.55
+    minimum_mean_sharpe_delta: 0.0
+    minimum_worst_sharpe_delta: 0.0
+    minimum_drawdown_win_fraction: 0.50
+    minimum_worst_drawdown_improvement: 0.0

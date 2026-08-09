@@ -1,4 +1,4 @@
-"""Run the frozen-latent temporal and decision-loss factorial ablation."""
+"""Run a configurable frozen-latent decision-loss ablation."""
 
 from __future__ import annotations
 
@@ -47,6 +47,14 @@ def _aggregate(root: Path, variants: list[str]) -> pd.DataFrame:
         if "backtest_max_drawdown" in frame:
             drawdown = pd.to_numeric(frame["backtest_max_drawdown"], errors="coerce")
             row["worst_backtest_drawdown"] = float(drawdown.min()) if drawdown.notna().any() else None
+        for column in ("backtest_sharpe", "learned_action_sharpe", "memory_gated_sharpe"):
+            if column not in frame:
+                continue
+            values = pd.to_numeric(frame[column], errors="coerce").dropna()
+            if not values.empty:
+                row[f"median_{column}"] = float(values.median())
+                row[f"std_{column}"] = float(values.std(ddof=1)) if len(values) > 1 else 0.0
+                row[f"worst_{column}"] = float(values.min())
         rows.append(row)
     summary = pd.DataFrame(rows)
     if not summary.empty and (summary["variant"] == "baseline").any():
@@ -61,6 +69,96 @@ def _aggregate(root: Path, variants: list[str]) -> pd.DataFrame:
             if metric in summary and pd.notna(baseline.get(metric)):
                 summary[f"delta_{metric}"] = summary[metric] - float(baseline[metric])
     return summary
+
+
+def _paired_robustness(
+    root: Path,
+    comparison: dict[str, Any],
+) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, Any]] | None:
+    """Compare a candidate against its matching baseline market and seed runs."""
+
+    baseline_name = str(comparison["baseline"])
+    candidate_name = str(comparison["candidate"])
+    baseline_path = root / baseline_name / "adapter_summary.csv"
+    candidate_path = root / candidate_name / "adapter_summary.csv"
+    if not baseline_path.exists() or not candidate_path.exists():
+        return None
+    keys = ["fold", "seed"]
+    metrics = ["backtest_sharpe", "backtest_total_return", "backtest_max_drawdown"]
+    baseline = pd.read_csv(baseline_path)[keys + metrics]
+    candidate = pd.read_csv(candidate_path)[keys + metrics]
+    paired = baseline.merge(candidate, on=keys, suffixes=("_baseline", "_candidate"), validate="one_to_one")
+    if len(paired) != len(baseline) or len(paired) != len(candidate):
+        raise RuntimeError("Robustness comparison requires complete one-to-one baseline/candidate pairs.")
+    paired["market"] = paired["fold"].astype(str).str.removeprefix("regional_")
+    paired["sharpe_delta"] = paired["backtest_sharpe_candidate"] - paired["backtest_sharpe_baseline"]
+    paired["return_delta"] = paired["backtest_total_return_candidate"] - paired["backtest_total_return_baseline"]
+    paired["drawdown_improvement"] = (
+        paired["backtest_max_drawdown_candidate"] - paired["backtest_max_drawdown_baseline"]
+    )
+    paired["sharpe_win"] = paired["sharpe_delta"] > 0.0
+    paired["drawdown_win"] = paired["drawdown_improvement"] >= 0.0
+    market = (
+        paired.groupby("market", as_index=False)
+        .agg(
+            run_count=("seed", "count"),
+            baseline_mean_sharpe=("backtest_sharpe_baseline", "mean"),
+            candidate_mean_sharpe=("backtest_sharpe_candidate", "mean"),
+            mean_sharpe_delta=("sharpe_delta", "mean"),
+            paired_seed_wins=("sharpe_win", "sum"),
+            baseline_worst_drawdown=("backtest_max_drawdown_baseline", "min"),
+            candidate_worst_drawdown=("backtest_max_drawdown_candidate", "min"),
+        )
+    )
+    market["market_win"] = market["mean_sharpe_delta"] > 0.0
+    gates = comparison.get("gates", {})
+    baseline_sharpe = paired["backtest_sharpe_baseline"].astype(float)
+    candidate_sharpe = paired["backtest_sharpe_candidate"].astype(float)
+    paired_win_fraction = float(paired["sharpe_win"].mean())
+    drawdown_win_fraction = float(paired["drawdown_win"].mean())
+    baseline_worst_drawdown = float(paired["backtest_max_drawdown_baseline"].min())
+    candidate_worst_drawdown = float(paired["backtest_max_drawdown_candidate"].min())
+    verdict = {
+        "status": "robustness_supported",
+        "baseline": baseline_name,
+        "candidate": candidate_name,
+        "paired_run_count": int(len(paired)),
+        "paired_run_wins": int(paired["sharpe_win"].sum()),
+        "paired_run_win_fraction": paired_win_fraction,
+        "drawdown_win_fraction": drawdown_win_fraction,
+        "market_count": int(len(market)),
+        "market_wins": int(market["market_win"].sum()),
+        "baseline_mean_sharpe": float(baseline_sharpe.mean()),
+        "candidate_mean_sharpe": float(candidate_sharpe.mean()),
+        "mean_sharpe_delta": float(paired["sharpe_delta"].mean()),
+        "baseline_worst_sharpe": float(baseline_sharpe.min()),
+        "candidate_worst_sharpe": float(candidate_sharpe.min()),
+        "worst_sharpe_delta": float(candidate_sharpe.min() - baseline_sharpe.min()),
+        "baseline_sharpe_std": float(baseline_sharpe.std(ddof=1)),
+        "candidate_sharpe_std": float(candidate_sharpe.std(ddof=1)),
+        "baseline_worst_drawdown": baseline_worst_drawdown,
+        "candidate_worst_drawdown": candidate_worst_drawdown,
+        "worst_drawdown_improvement": candidate_worst_drawdown - baseline_worst_drawdown,
+        "diagnostic_only": True,
+        "promotion_allowed": False,
+    }
+    checks = {
+        "market_wins": verdict["market_wins"] >= int(gates.get("minimum_market_wins", 0)),
+        "paired_run_win_fraction": paired_win_fraction
+        >= float(gates.get("minimum_paired_run_win_fraction", 0.0)),
+        "mean_sharpe_delta": verdict["mean_sharpe_delta"]
+        >= float(gates.get("minimum_mean_sharpe_delta", 0.0)),
+        "worst_sharpe_delta": verdict["worst_sharpe_delta"]
+        >= float(gates.get("minimum_worst_sharpe_delta", 0.0)),
+        "drawdown_win_fraction": drawdown_win_fraction
+        >= float(gates.get("minimum_drawdown_win_fraction", 0.0)),
+        "worst_drawdown_improvement": verdict["worst_drawdown_improvement"]
+        >= float(gates.get("minimum_worst_drawdown_improvement", 0.0)),
+    }
+    verdict["checks"] = checks
+    if not all(checks.values()):
+        verdict["status"] = "robustness_not_supported"
+    return paired, market, verdict
 
 
 def run(
@@ -89,6 +187,11 @@ def run(
     preview_override = {key: value for key, value in variants[names[0]].items() if key != "description"}
     preview = _deep_merge(_deep_merge(base, study.get("common", {})), preview_override)
     sources = discover_adapter_sources(preview, max_runs)
+    expected_source_count = study["study"].get("expected_source_count")
+    if max_runs is None and expected_source_count is not None and len(sources) != int(expected_source_count):
+        raise RuntimeError(
+            f"Expected {expected_source_count} complete sources, but resolved {len(sources)}."
+        )
     preflight = {
         "source_mode": preview["experiment"].get("source_mode", "phase4c"),
         "source_count": len(sources),
@@ -126,7 +229,7 @@ def run(
         resolved.setdefault("study_metadata", {})
         resolved["study_metadata"].update(
             {
-                "study": "temporal_decision_ablation",
+                "study": str(study["study"].get("name", "temporal_decision_ablation")),
                 "variant": name,
                 "description": variants[name].get("description", ""),
                 "diagnostic_only": bool(study["study"].get("diagnostic_only", True)),
@@ -146,6 +249,14 @@ def run(
         partial.to_csv(root / "variant_summary.csv", index=False)
     summary = _aggregate(root, names)
     summary.to_csv(root / "variant_summary.csv", index=False)
+    robustness = _paired_robustness(root, study.get("comparison", {})) if study.get("comparison") else None
+    if robustness is not None:
+        paired, market, verdict = robustness
+        paired.to_csv(root / "paired_results.csv", index=False)
+        market.to_csv(root / "market_robustness.csv", index=False)
+        (root / "robustness_verdict.json").write_text(json.dumps(verdict, indent=2), encoding="utf-8")
+    else:
+        verdict = None
     result = {
         "run_id": run_id,
         "output": str(root),
@@ -154,6 +265,7 @@ def run(
         "max_source_runs_per_variant": max_runs,
         "resolved_source_count": len(sources),
         "resolved_sources": [source.name for source in sources],
+        "robustness_status": verdict["status"] if verdict else None,
         "epochs_override": epochs_override,
         "diagnostic_only": True,
         "promotion_allowed": False,
