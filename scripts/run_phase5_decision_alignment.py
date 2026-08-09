@@ -19,6 +19,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
 
 from run_phase4d_retrieval_semantics import _complete_run_dirs, _run_key, _select_runs  # noqa: E402
+from export_phase5_transfer_latents import run as export_transfer_latents  # noqa: E402
 from src.decision.adapter import DecisionAdapterConfig  # noqa: E402
 from src.decision.dataset import DecisionDatasetConfig, build_decision_frame  # noqa: E402
 from src.decision.losses import DecisionLossConfig  # noqa: E402
@@ -45,6 +46,7 @@ class AdapterSource:
     precomputed_globs: tuple[str, ...]
     backtest_glob: str
     signal_path: Path | None = None
+    encoder_checkpoint: Path | None = None
 
 
 def _phase6_sources(
@@ -99,6 +101,7 @@ def _phase6_sources(
                         val_path=val_path,
                         precomputed_globs=globs,
                         backtest_glob=backtest_glob,
+                        encoder_checkpoint=source_root / "models" / directory.name / "final_model.pt",
                     )
                 )
     if not sources:
@@ -187,22 +190,27 @@ def _adapter_backtest(
     config: dict[str, Any],
     run_output: Path,
     source: AdapterSource,
+    *,
+    query_decisions: Path | None = None,
+    destination: Path | None = None,
 ) -> dict[str, Any]:
     phase4e_path = PROJECT_ROOT / config["experiment"]["source_phase4e_run"] / "resolved_config.yaml"
     if phase4e_path.exists():
         phase4e = yaml.safe_load(phase4e_path.read_text(encoding="utf-8"))
     else:
         phase4e = yaml.safe_load((PROJECT_ROOT / "configs/phase4e_cross_market_sharpe.yaml").read_text(encoding="utf-8"))
-    retrieval_train = run_output / "retrieval" / "train.parquet"
-    retrieval_val = run_output / "retrieval" / "val.parquet"
+    evaluation_root = destination or (run_output / "adapter_backtest")
+    retrieval_root = run_output / "retrieval" if destination is None else evaluation_root / "retrieval"
+    retrieval_train = retrieval_root / "train.parquet"
+    retrieval_val = retrieval_root / ("val.parquet" if destination is None else "query.parquet")
     _retrieval_frame(run_output / "train_decisions.parquet", retrieval_train)
-    _retrieval_frame(run_output / "val_decisions.parquet", retrieval_val)
+    _retrieval_frame(query_decisions or (run_output / "val_decisions.parquet"), retrieval_val)
     evaluation = {
         "data": {
             "train_latents": str(retrieval_train),
             "test_latents": str(retrieval_val),
             "precomputed_glob": source.backtest_glob,
-            "output_dir": str(run_output / "adapter_backtest"),
+            "output_dir": str(evaluation_root),
         },
         "memory": {
             **phase4e["memory_defaults"],
@@ -229,6 +237,52 @@ def _adapter_backtest(
             result_dir / "aligned_policies",
         )
     return metrics
+
+
+def _temporal_backtests(
+    config: dict[str, Any],
+    config_path: Path,
+    run_output: Path,
+    source: AdapterSource,
+) -> dict[str, dict[str, Any]]:
+    """Evaluate a frozen adapter over configured out-of-training date windows."""
+
+    temporal = config.get("temporal_evaluation", {})
+    if not bool(temporal.get("enabled", False)):
+        return {}
+    if source.encoder_checkpoint is None or not source.encoder_checkpoint.exists():
+        raise FileNotFoundError(
+            f"Temporal evaluation requires the frozen encoder checkpoint for {source.name}."
+        )
+    periods = temporal.get("periods", {})
+    if not periods:
+        raise ValueError("temporal_evaluation.enabled requires at least one period.")
+
+    adapter_checkpoint = run_output / "decision_adapter.pt"
+    if not adapter_checkpoint.exists():
+        raise FileNotFoundError(f"Missing frozen decision adapter: {adapter_checkpoint}")
+    results: dict[str, dict[str, Any]] = {}
+    for name, period in periods.items():
+        decisions = run_output / "temporal_decisions" / f"{name}.parquet"
+        if not decisions.exists() or not decisions.with_suffix(".json").exists():
+            decisions.parent.mkdir(parents=True, exist_ok=True)
+            export_transfer_latents(
+                encoder_checkpoint=str(source.encoder_checkpoint),
+                adapter_checkpoint=str(adapter_checkpoint),
+                target_glob=source.backtest_glob,
+                start=str(period["start"]),
+                end=str(period["end"]),
+                output=str(decisions),
+                config=str(config_path),
+            )
+        results[str(name)] = _adapter_backtest(
+            config,
+            run_output,
+            source,
+            query_decisions=decisions,
+            destination=run_output / "temporal_backtests" / str(name),
+        )
+    return results
 
 
 def evaluate_aligned_decision_policies(
@@ -358,11 +412,26 @@ def run(
         fold, seed = source.group, source.seed
         run_output = output / fold / f"seed_{seed}"
         summary_path = run_output / "summary.json"
+        if (
+            config.get("temporal_evaluation", {}).get("require_existing_adapter")
+            and not summary_path.exists()
+        ):
+            raise FileNotFoundError(
+                "Frozen temporal evaluation refuses to train a missing adapter: "
+                f"{run_output / 'decision_adapter.pt'}"
+            )
         if resume and summary_path.exists():
             existing = json.loads(summary_path.read_text(encoding="utf-8"))
             if not skip_backtest and "backtest" not in existing:
                 existing["backtest"] = _adapter_backtest(config, run_output, source)
-                summary_path.write_text(json.dumps(existing, indent=2, default=str), encoding="utf-8")
+            if not skip_backtest and config.get("temporal_evaluation", {}).get("enabled"):
+                expected_periods = set(config["temporal_evaluation"].get("periods", {}))
+                completed_periods = set(existing.get("temporal_backtests", {}))
+                if expected_periods != completed_periods:
+                    existing["temporal_backtests"] = _temporal_backtests(
+                        config, config_file, run_output, source
+                    )
+            summary_path.write_text(json.dumps(existing, indent=2, default=str), encoding="utf-8")
             summaries.append({"fold": fold, "seed": seed, **existing})
             continue
         signals = pd.read_parquet(source.signal_path) if source.signal_path else None
@@ -379,6 +448,9 @@ def run(
         if not skip_backtest:
             backtest = _adapter_backtest(config, run_output, source)
             summary["backtest"] = backtest
+            summary["temporal_backtests"] = _temporal_backtests(
+                config, config_file, run_output, source
+            )
             summary_path.write_text(json.dumps(summary, indent=2, default=str), encoding="utf-8")
         summaries.append({"fold": fold, "seed": seed, **summary})
     flat = [
@@ -389,6 +461,11 @@ def run(
             **{f"opportunity_{key}": value for key, value in item.get("opportunity_diagnostics", {}).items()},
             **{f"raw_{key}": value for key, value in item["raw_latent_diagnostics"].items()},
             **{f"backtest_{key}": item.get("backtest", {}).get(key) for key in ("total_return", "sharpe", "max_drawdown", "trade_count")},
+            **{
+                f"temporal_{period}_{key}": metrics.get(key)
+                for period, metrics in item.get("temporal_backtests", {}).items()
+                for key in ("total_return", "sharpe", "max_drawdown", "trade_count")
+            },
             **{
                 f"{strategy}_{key}": item.get("backtest", {}).get("strategies", {}).get(strategy, {}).get(key)
                 for strategy in ("learned_action", "memory_gated")

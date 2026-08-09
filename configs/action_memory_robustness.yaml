@@ -18,6 +18,21 @@ common:
     epochs: 12
     minimum_epochs: 10
     patience: 5
+  temporal_evaluation:
+    enabled: true
+    require_existing_adapter: true
+    periods:
+      q1_to_q1:
+        start: 2025-01-01
+        end: 2026-03-31
+  inference_coverage:
+    minimum_ticker_coverage: 0.995
+    maximum_missing_tail_sessions: 1
+    require_finite_embeddings: true
+  inference_sanitization:
+    method: source_training_mean
+    maximum_absolute_zscore: 25.0
+    maximum_repaired_fraction: 0.02
 
 variants:
   baseline:
@@ -36,6 +51,7 @@ variants:
 comparison:
   baseline: baseline
   candidate: action_only
+  metric_namespace: temporal_q1_to_q1
   gates:
     minimum_market_wins: 4
     minimum_paired_run_win_fraction: 0.55

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -256,6 +258,60 @@ def test_adapter_backtest_uses_decision_outcome_schema(tmp_path, monkeypatch):
     assert result["sharpe"] == 0.0
     assert captured["memory"]["target_alpha"] == "decision_net_alpha"
     assert captured["evaluation"]["memory_metric_target"] == "decision_net_alpha"
+
+
+def test_temporal_backtest_exports_frozen_q1_to_q1_window_once(tmp_path, monkeypatch):
+    run_output = tmp_path / "adapter"
+    run_output.mkdir()
+    adapter = run_output / "decision_adapter.pt"
+    encoder = tmp_path / "final_model.pt"
+    adapter.touch()
+    encoder.touch()
+    source = AdapterSource(
+        name="regional_US_seed_7",
+        group="regional_US",
+        seed=7,
+        train_path=tmp_path / "train.parquet",
+        val_path=tmp_path / "val.parquet",
+        precomputed_globs=("data/international/US/*.parquet",),
+        backtest_glob="data/international/US/*.parquet",
+        encoder_checkpoint=encoder,
+    )
+    exports = []
+
+    def fake_export(**kwargs):
+        exports.append(kwargs)
+        destination = Path(kwargs["output"])
+        destination.touch()
+        destination.with_suffix(".json").write_text("{}", encoding="utf-8")
+        return {}
+
+    def fake_backtest(_config, _run_output, _source, **kwargs):
+        assert kwargs["query_decisions"].name == "q1_to_q1.parquet"
+        return {"sharpe": 0.5, "total_return": 0.1, "max_drawdown": -0.1}
+
+    monkeypatch.setattr(alignment_runner, "export_transfer_latents", fake_export)
+    monkeypatch.setattr(alignment_runner, "_adapter_backtest", fake_backtest)
+    config = {
+        "temporal_evaluation": {
+            "enabled": True,
+            "periods": {
+                "q1_to_q1": {"start": "2025-01-01", "end": "2026-03-31"}
+            },
+        }
+    }
+
+    first = alignment_runner._temporal_backtests(
+        config, tmp_path / "resolved.yaml", run_output, source
+    )
+    second = alignment_runner._temporal_backtests(
+        config, tmp_path / "resolved.yaml", run_output, source
+    )
+
+    assert first == second
+    assert len(exports) == 1
+    assert exports[0]["start"] == "2025-01-01"
+    assert exports[0]["end"] == "2026-03-31"
 
 
 def test_opportunity_loss_penalizes_missing_positive_cross_section():

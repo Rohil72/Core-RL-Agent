@@ -84,9 +84,23 @@ def _paired_robustness(
     if not baseline_path.exists() or not candidate_path.exists():
         return None
     keys = ["fold", "seed"]
-    metrics = ["backtest_sharpe", "backtest_total_return", "backtest_max_drawdown"]
-    baseline = pd.read_csv(baseline_path)[keys + metrics]
-    candidate = pd.read_csv(candidate_path)[keys + metrics]
+    metric_namespace = str(comparison.get("metric_namespace", "backtest"))
+    source_metrics = {
+        f"{metric_namespace}_sharpe": "backtest_sharpe",
+        f"{metric_namespace}_total_return": "backtest_total_return",
+        f"{metric_namespace}_max_drawdown": "backtest_max_drawdown",
+    }
+    baseline_frame = pd.read_csv(baseline_path)
+    candidate_frame = pd.read_csv(candidate_path)
+    missing = set(source_metrics).difference(baseline_frame.columns).union(
+        set(source_metrics).difference(candidate_frame.columns)
+    )
+    if missing:
+        raise ValueError(
+            f"Robustness comparison lacks {metric_namespace} metrics: {sorted(missing)}"
+        )
+    baseline = baseline_frame[keys + list(source_metrics)].rename(columns=source_metrics)
+    candidate = candidate_frame[keys + list(source_metrics)].rename(columns=source_metrics)
     paired = baseline.merge(candidate, on=keys, suffixes=("_baseline", "_candidate"), validate="one_to_one")
     if len(paired) != len(baseline) or len(paired) != len(candidate):
         raise RuntimeError("Robustness comparison requires complete one-to-one baseline/candidate pairs.")
@@ -122,6 +136,7 @@ def _paired_robustness(
         "status": "robustness_supported",
         "baseline": baseline_name,
         "candidate": candidate_name,
+        "metric_namespace": metric_namespace,
         "paired_run_count": int(len(paired)),
         "paired_run_wins": int(paired["sharpe_win"].sum()),
         "paired_run_win_fraction": paired_win_fraction,

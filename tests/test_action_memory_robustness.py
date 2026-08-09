@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pandas as pd
+import pytest
 import yaml
 
 from scripts.run_temporal_decision_ablation import _paired_robustness
@@ -21,6 +22,12 @@ def test_action_memory_study_is_regional_and_bounded():
     assert config["common"]["experiment"]["source_representations"] == ["regional"]
     assert len(config["common"]["experiment"]["active_markets"]) == 6
     assert config["comparison"]["gates"]["minimum_market_wins"] == 4
+    assert config["common"]["temporal_evaluation"]["periods"]["q1_to_q1"] == {
+        "start": pd.Timestamp("2025-01-01").date(),
+        "end": pd.Timestamp("2026-03-31").date(),
+    }
+    assert config["common"]["temporal_evaluation"]["require_existing_adapter"] is True
+    assert config["comparison"]["metric_namespace"] == "temporal_q1_to_q1"
 
 
 def test_paired_robustness_requires_market_seed_floor_and_drawdown_support(tmp_path):
@@ -71,3 +78,35 @@ def test_paired_robustness_requires_market_seed_floor_and_drawdown_support(tmp_p
     assert verdict["market_wins"] == 6
     assert verdict["worst_sharpe_delta"] > 0
     assert verdict["worst_drawdown_improvement"] > 0
+
+
+def test_paired_robustness_can_select_temporal_metrics(tmp_path):
+    rows = [
+        {
+            "fold": "regional_US",
+            "seed": 7,
+            "temporal_q1_to_q1_sharpe": sharpe,
+            "temporal_q1_to_q1_total_return": 0.10,
+            "temporal_q1_to_q1_max_drawdown": -0.10,
+        }
+        for sharpe in (0.4,)
+    ]
+    for name, lift in (("baseline", 0.0), ("action_only", 0.2)):
+        destination = tmp_path / name
+        destination.mkdir()
+        frame = pd.DataFrame(rows)
+        frame["temporal_q1_to_q1_sharpe"] += lift
+        frame.to_csv(destination / "adapter_summary.csv", index=False)
+
+    paired, _, verdict = _paired_robustness(
+        tmp_path,
+        {
+            "baseline": "baseline",
+            "candidate": "action_only",
+            "metric_namespace": "temporal_q1_to_q1",
+            "gates": {},
+        },
+    )
+
+    assert paired.loc[0, "sharpe_delta"] == pytest.approx(0.2)
+    assert verdict["metric_namespace"] == "temporal_q1_to_q1"
