@@ -229,6 +229,7 @@ def test_adapter_backtest_uses_decision_outcome_schema(tmp_path, monkeypatch):
             "decision_net_alpha": [0.05],
             "decision_path_quality": [0.7],
             "decision_holding_sessions": [21],
+            "decision_outcome_available_timestamp": pd.to_datetime(["2021-04-01"], utc=True),
         }
     )
     frame.to_parquet(run_output / "train_decisions.parquet", index=False)
@@ -237,6 +238,8 @@ def test_adapter_backtest_uses_decision_outcome_schema(tmp_path, monkeypatch):
 
     def fake_evaluation(config, root, run_id):
         captured.update(config)
+        retrieval_memory = pd.read_parquet(config["data"]["train_latents"])
+        captured["outcome_available_timestamp"] = retrieval_memory["outcome_available_timestamp"].iloc[0]
         destination = tmp_path / "evaluation" / run_id
         destination.mkdir(parents=True)
         (destination / "metrics.json").write_text('{"sharpe": 0.0}', encoding="utf-8")
@@ -258,6 +261,7 @@ def test_adapter_backtest_uses_decision_outcome_schema(tmp_path, monkeypatch):
     assert result["sharpe"] == 0.0
     assert captured["memory"]["target_alpha"] == "decision_net_alpha"
     assert captured["evaluation"]["memory_metric_target"] == "decision_net_alpha"
+    assert captured["outcome_available_timestamp"] == pd.Timestamp("2021-04-01", tz="UTC")
 
 
 def test_temporal_backtest_exports_frozen_q1_to_q1_window_once(tmp_path, monkeypatch):

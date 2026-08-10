@@ -182,6 +182,10 @@ def _retrieval_frame(path: Path, destination: Path) -> None:
         key=lambda c: int(c.removeprefix("decision_")),
     )
     frame = frame.rename(columns={column: f"latent_{index}" for index, column in enumerate(decision_cols)})
+    if "outcome_available_timestamp" not in frame:
+        source_column = "decision_outcome_available_timestamp"
+        if source_column in frame:
+            frame["outcome_available_timestamp"] = pd.to_datetime(frame[source_column], utc=True)
     destination.parent.mkdir(parents=True, exist_ok=True)
     frame.to_parquet(destination, index=False)
 
