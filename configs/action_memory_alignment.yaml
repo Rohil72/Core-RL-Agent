@@ -1,0 +1,110 @@
+study:
+  name: action_memory_alignment
+  base_config: configs/phase5_decision_alignment_v2.yaml
+  output_root: reports/action_memory_alignment
+  expected_source_count: 18
+
+common:
+  experiment:
+    source_mode: phase6_testbed
+    source_testbed_run: reports/action_memory_robustness/action_memory_robustness_v1
+    fallback_testbed_run: reports/final_testbed/phase6_a30_final_v1
+    data_root: data/international
+    source_representations: [regional]
+    active_markets: [US, India, China, Brazil, France, UK]
+    active_seeds: [7, 17, 37]
+  calibration:
+    enabled: true
+    start_date: 2022-01-01
+    end_date: 2024-12-31
+    adverse_quantile: 0.90
+    min_samples: 30
+  temporal_evaluation:
+    enabled: true
+    require_existing_adapter: false
+    periods:
+      calendar_portfolio:
+        start: 2025-01-01
+        end: 2026-03-31
+        entry_cutoff: 2025-12-31
+        accounting_cutoff: 2026-03-31
+        protocol: calendar_portfolio
+      q1_to_q1_entry_cohort:
+        start: 2025-01-01
+        end: 2026-03-31
+        entry_cutoff: 2026-03-31
+        accounting_cutoff: null
+        protocol: q1_to_q1_entry_cohort
+
+variants:
+  C0:
+    description: Baseline control - relative alpha LCB > 0, uncalibrated downside, current holding.
+    policy:
+      min_alpha_lcb: 0.0
+      min_absolute_return_lcb: null
+      use_calibrated_downside: false
+      breadth_exposure_enabled: false
+      holding_mode: current
+
+  C1:
+    description: Dual evidence - relative alpha LCB > 0 and absolute return LCB > 0, uncalibrated downside, current holding.
+    policy:
+      min_alpha_lcb: 0.0
+      min_absolute_return_lcb: 0.0
+      use_calibrated_downside: false
+      breadth_exposure_enabled: false
+      holding_mode: current
+
+  C2:
+    description: Minimum hold 21 - relative alpha LCB > 0, uncalibrated downside, min hold 21.
+    policy:
+      min_alpha_lcb: 0.0
+      min_absolute_return_lcb: null
+      use_calibrated_downside: false
+      breadth_exposure_enabled: false
+      holding_mode: minimum_hold_21
+
+  C3:
+    description: Dual evidence min hold 21 - relative alpha LCB > 0 and absolute return LCB > 0, uncalibrated downside, min hold 21.
+    policy:
+      min_alpha_lcb: 0.0
+      min_absolute_return_lcb: 0.0
+      use_calibrated_downside: false
+      breadth_exposure_enabled: false
+      holding_mode: minimum_hold_21
+
+  C4:
+    description: Full alignment candidate - dual evidence LCB > 0, calibrated downside, breadth exposure, min hold 21.
+    policy:
+      min_alpha_lcb: 0.0
+      min_absolute_return_lcb: 0.0
+      use_calibrated_downside: true
+      breadth_exposure_enabled: true
+      holding_mode: minimum_hold_21
+      breadth_exposure_map:
+        0: 0.00
+        1: 0.33
+        2: 0.67
+        3: 1.00
+
+  D1:
+    description: Fixed 63 diagnostic - dual evidence LCB > 0, calibrated downside, fixed 63 session hold (non-promotable entry quality diagnostic).
+    policy:
+      min_alpha_lcb: 0.0
+      min_absolute_return_lcb: 0.0
+      use_calibrated_downside: true
+      breadth_exposure_enabled: true
+      holding_mode: fixed_63_diagnostic
+      diagnostic_only: true
+      promotion_allowed: false
+
+comparison:
+  baseline: C0
+  candidates: [C1, C2, C3, C4, D1]
+  metric_namespace: calendar_portfolio
+  gates:
+    minimum_market_wins: 4
+    minimum_paired_run_wins: 10
+    minimum_paired_run_win_fraction: 0.55
+    minimum_mean_sharpe_delta: 0.0
+    maximum_profit_concentration: 0.35

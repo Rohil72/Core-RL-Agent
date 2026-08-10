@@ -13,6 +13,7 @@ class ExperienceSchema:
 
     target_upside: str = "future_max_return_63"
     target_alpha: str | None = None
+    target_absolute_return: str | None = "decision_return_63"
     target_downside: str = "future_min_return_63"
     target_path_quality: str = "event_upside_before_drawdown_126"
     target_holding_period: str | None = "event_peak_offset_63"
@@ -29,6 +30,7 @@ class MarketExperience:
     upside: float
     downside: float
     alpha: float | None = None
+    absolute_return: float | None = None
     path_quality: float | None = None
     holding_period: float | None = None
     sector: str | None = None
@@ -49,6 +51,7 @@ class ExperienceMemory:
     downside_col: str
     path_quality_col: str | None
     holding_period_col: str | None
+    absolute_return_col: str | None = None
 
     @classmethod
     def from_frame(cls, frame: pd.DataFrame, schema: ExperienceSchema | None = None) -> "ExperienceMemory":
@@ -60,6 +63,9 @@ class ExperienceMemory:
         cols = latent_columns(out)
         upside_col = resolve_column(out, schema.target_upside)
         alpha_col = resolve_column(out, schema.target_alpha) if schema.target_alpha else None
+        absolute_return_col = (
+            resolve_column(out, schema.target_absolute_return) if schema.target_absolute_return else None
+        )
         downside_col = resolve_column(out, schema.target_downside)
         path_col = resolve_column(out, schema.target_path_quality)
         hold_col = resolve_column(out, schema.target_holding_period) if schema.target_holding_period else None
@@ -69,7 +75,7 @@ class ExperienceMemory:
             raise ValueError(f"Memory table must contain configured alpha target {schema.target_alpha!r}.")
         out = out.sort_values("timestamp").reset_index(drop=True)
         matrix = out[cols].to_numpy(dtype=float)
-        return cls(out, matrix, cols, schema, upside_col, alpha_col, downside_col, path_col, hold_col)
+        return cls(out, matrix, cols, schema, upside_col, alpha_col, downside_col, path_col, hold_col, absolute_return_col)
 
     def row_to_experience(self, row_index: int) -> MarketExperience:
         """Convert a row index into a typed historical experience."""

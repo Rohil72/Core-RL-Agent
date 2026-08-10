@@ -33,6 +33,7 @@ class MarketMemoryConfig:
     max_neighbors_per_ticker: int | None = None
     target_upside: str = "future_max_return_63"
     target_alpha: str | None = None
+    target_absolute_return: str | None = "decision_return_63"
     target_downside: str = "future_min_return_63"
     target_path_quality: str = "event_upside_before_drawdown_126"
     target_holding_period: str | None = "event_peak_offset_63"
@@ -107,6 +108,7 @@ def score_market_memory(
     schema = ExperienceSchema(
         target_upside=cfg.target_upside,
         target_alpha=cfg.target_alpha,
+        target_absolute_return=cfg.target_absolute_return,
         target_downside=cfg.target_downside,
         target_path_quality=cfg.target_path_quality,
         target_holding_period=cfg.target_holding_period,
@@ -219,6 +221,7 @@ def score_market_memory(
             downside_col=experience_memory.downside_col,
             path_quality_col=experience_memory.path_quality_col,
             holding_period_col=experience_memory.holding_period_col,
+            absolute_return_col=experience_memory.absolute_return_col,
             aggregation=aggregation_cfg,
             confidence=confidence_cfg,
             score_weights=score_weights,
@@ -316,6 +319,7 @@ def _build_evidence_payload(
     downside_col: str,
     path_quality_col: str | None,
     holding_period_col: str | None,
+    absolute_return_col: str | None = None,
     aggregation: AggregationConfig,
     confidence: ConfidenceConfig,
     score_weights: dict,
@@ -338,6 +342,7 @@ def _build_evidence_payload(
             downside_col=downside_col,
             path_quality_col=path_quality_col,
             holding_period_col=holding_period_col,
+            absolute_return_col=absolute_return_col,
             aggregation=aggregation,
             confidence=confidence,
             score_weights=score_weights,
@@ -393,7 +398,17 @@ def _build_evidence_payload(
         value for value in (summary.alpha.ci_high for summary in summaries) if value is not None
     ]
     combined["retrieval_alpha_ci_low"] = min(alpha_lows) if alpha_lows else None
+    combined["retrieval_alpha_lcb"] = combined["retrieval_alpha_ci_low"]
     combined["retrieval_alpha_ci_high"] = max(alpha_highs) if alpha_highs else None
+    abs_lows = [
+        value for value in (summary.absolute_return.ci_low for summary in summaries if summary.absolute_return) if value is not None
+    ]
+    abs_highs = [
+        value for value in (summary.absolute_return.ci_high for summary in summaries if summary.absolute_return) if value is not None
+    ]
+    combined["retrieval_absolute_return_ci_low"] = min(abs_lows) if abs_lows else None
+    combined["retrieval_absolute_return_lcb"] = combined["retrieval_absolute_return_ci_low"]
+    combined["retrieval_absolute_return_ci_high"] = max(abs_highs) if abs_highs else None
     combined["retrieval_confidence"] = float(
         np.median([summary.confidence.confidence for summary in summaries])
         * sign_agreement
@@ -458,8 +473,17 @@ def _empty_signal_payload(reason: str | None = None) -> dict:
         "retrieval_alpha_p90": None,
         "retrieval_alpha_ci_low": None,
         "retrieval_alpha_ci_high": None,
+        "retrieval_alpha_lcb": None,
         "retrieval_alpha_std": None,
+        "retrieval_expected_absolute_return": None,
+        "retrieval_absolute_return_lcb": None,
+        "retrieval_absolute_return_p10": None,
+        "retrieval_absolute_return_p90": None,
+        "retrieval_absolute_return_ci_low": None,
+        "retrieval_absolute_return_ci_high": None,
+        "retrieval_absolute_return_std": None,
         "retrieval_expected_downside": None,
+        "retrieval_calibrated_downside": None,
         "retrieval_upside_p10": None,
         "retrieval_upside_p90": None,
         "retrieval_upside_ci_low": None,

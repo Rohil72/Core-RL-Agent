@@ -26,6 +26,14 @@ class PolicyConfig:
     slippage_bps: float = 10
     initial_capital: float = 100000.0
     min_alpha_lcb: float | None = None
+    min_absolute_return_lcb: float | None = None
+    use_calibrated_downside: bool = False
+    holding_mode: str = "current"
+    breadth_exposure_enabled: bool = False
+    breadth_exposure_map: dict[int, float] | None = None
+    entry_cutoff_date: str | pd.Timestamp | None = None
+    accounting_cutoff_date: str | pd.Timestamp | None = None
+    accounting_protocol: str = "calendar_portfolio"
     max_downside_cvar: float | None = None
     min_neighbor_count: int | None = None
     require_ood_pass: bool = False
@@ -59,7 +67,8 @@ def tradability_reason(row: pd.Series, cfg: PolicyConfig, score_col: str) -> str
     """Return the first deterministic evidence gate that rejects a signal."""
     score = row.get(score_col)
     upside = row.get("retrieval_expected_upside", row.get(score_col))
-    downside = row.get("retrieval_expected_downside", 0.0)
+    downside_key = "retrieval_calibrated_downside" if cfg.use_calibrated_downside else "retrieval_expected_downside"
+    downside = row.get(downside_key, row.get("retrieval_expected_downside", 0.0))
     confidence = row.get("retrieval_confidence", 1.0)
     
     try:
@@ -90,11 +99,18 @@ def tradability_reason(row: pd.Series, cfg: PolicyConfig, score_col: str) -> str
         return "low_confidence"
 
     if cfg.min_alpha_lcb is not None:
-        alpha_lcb = row.get("retrieval_alpha_ci_low")
+        alpha_lcb = row.get("retrieval_alpha_lcb", row.get("retrieval_alpha_ci_low"))
         if alpha_lcb is None or pd.isna(alpha_lcb) or not np.isfinite(float(alpha_lcb)):
             return "missing_alpha_lcb"
         if float(alpha_lcb) < cfg.min_alpha_lcb:
             return "low_alpha_lcb"
+
+    if cfg.min_absolute_return_lcb is not None:
+        abs_lcb = row.get("retrieval_absolute_return_lcb", row.get("retrieval_absolute_return_ci_low"))
+        if abs_lcb is None or pd.isna(abs_lcb) or not np.isfinite(float(abs_lcb)):
+            return "missing_absolute_return_lcb"
+        if float(abs_lcb) < cfg.min_absolute_return_lcb:
+            return "low_absolute_return_lcb"
 
     if cfg.max_downside_cvar is not None:
         cvar = row.get("retrieval_downside_cvar")
@@ -196,16 +212,25 @@ def run_long_only_backtest(
             raw_return = exec_price / pos["entry_price"] - 1.0
             sig = signal_rows.loc[ticker] if ticker in signal_rows.index else None
             score = float(sig.get(exit_score_col, np.nan)) if sig is not None else np.nan
-            downside = float(sig.get("retrieval_expected_downside", np.nan)) if sig is not None else np.nan
+            downside_key = "retrieval_calibrated_downside" if cfg.use_calibrated_downside else "retrieval_expected_downside"
+            downside = float(sig.get(downside_key, sig.get("retrieval_expected_downside", np.nan))) if sig is not None else np.nan
+
+            score_decay_blocked = (
+                (cfg.holding_mode == "minimum_hold_21" and hold_days < 21)
+                or (cfg.holding_mode == "fixed_63_diagnostic")
+            )
+
             if raw_return <= -cfg.stop_loss:
                 exits.append((ticker, "stop_loss"))
             elif hold_days >= cfg.max_hold_days:
                 exits.append((ticker, "max_hold"))
-            elif hold_days >= cfg.min_hold_days:
-                if np.isfinite(score) and score < max(cfg.exit_min_score, pos["entry_exit_score"] * cfg.exit_score_fraction):
-                    exits.append((ticker, "score_decay"))
-                elif np.isfinite(downside) and abs(downside) > cfg.max_expected_downside:
-                    exits.append((ticker, "risk_rise"))
+            else:
+                if not score_decay_blocked and hold_days >= cfg.min_hold_days:
+                    if np.isfinite(score) and score < max(cfg.exit_min_score, pos["entry_exit_score"] * cfg.exit_score_fraction):
+                        exits.append((ticker, "score_decay"))
+                if hold_days >= cfg.min_hold_days:
+                    if np.isfinite(downside) and abs(downside) > cfg.max_expected_downside:
+                        exits.append((ticker, "risk_rise"))
 
         for ticker, reason in exits:
             if ticker not in positions or ticker not in current.index:
@@ -266,8 +291,18 @@ def run_long_only_backtest(
             if decision_log is not None:
                 for ticker, reason in evidence_reasons.items():
                     if reason is not None:
+                        sig_r = candidates.loc[ticker] if ticker in candidates.index else None
                         decision_log.append(
-                            {"timestamp": current_date, "ticker": ticker, "decision": "reject", "reason": reason}
+                            {
+                                "timestamp": current_date,
+                                "ticker": ticker,
+                                "decision": "reject",
+                                "reason": reason,
+                                "relative_alpha_lcb": sig_r.get("retrieval_alpha_lcb", sig_r.get("retrieval_alpha_ci_low")) if sig_r is not None else None,
+                                "absolute_return_lcb": sig_r.get("retrieval_absolute_return_lcb", sig_r.get("retrieval_absolute_return_ci_low")) if sig_r is not None else None,
+                                "calibrated_downside": sig_r.get("retrieval_calibrated_downside") if cfg.use_calibrated_downside and sig_r is not None else (sig_r.get("retrieval_expected_downside") if sig_r is not None else None),
+                                "confidence": sig_r.get("retrieval_confidence") if sig_r is not None else None,
+                            }
                         )
             candidates = candidates[evidence_reasons.isna()]
         else:
@@ -283,69 +318,89 @@ def run_long_only_backtest(
                             {"timestamp": current_date, "ticker": ticker, "decision": "reject", "reason": reason}
                         )
             candidates = candidates[blocked_reasons.isna()]
+
+        if cfg.breadth_exposure_enabled:
+            b_map = cfg.breadth_exposure_map or {0: 0.0, 1: 0.33, 2: 0.67, 3: 1.00}
+            eligible_count = len(candidates)
+            target_exp = float(b_map.get(eligible_count, b_map.get(3, 1.00) if eligible_count >= 3 else 0.0))
+        else:
+            target_exp = exposure_decision.target_exposure
+
+        cutoff_passed = True
+        if cfg.entry_cutoff_date is not None:
+            cutoff_ts = pd.to_datetime(cfg.entry_cutoff_date, utc=True)
+            if current_date > cutoff_ts:
+                cutoff_passed = False
+
         candidates = candidates.sort_values(score_col, ascending=False)
         if entry_allocation_col is None:
             candidates = candidates.head(cfg.top_k)
-        for ticker, sig in candidates.iterrows():
-            if available_slots <= 0:
-                break
-            if ticker in positions or ticker not in current.index:
-                continue
-            price = float(current.loc[ticker, exec_price_col])
-            if not np.isfinite(price) or price <= 0:
-                continue
-            allocation_fraction = _entry_allocation_fraction(sig, entry_allocation_col)
-            if allocation_fraction <= 0.0:
+
+        if cutoff_passed:
+            for ticker, sig in candidates.iterrows():
+                if available_slots <= 0:
+                    break
+                if ticker in positions or ticker not in current.index:
+                    continue
+                price = float(current.loc[ticker, exec_price_col])
+                if not np.isfinite(price) or price <= 0:
+                    continue
+                allocation_fraction = _entry_allocation_fraction(sig, entry_allocation_col)
+                if allocation_fraction <= 0.0:
+                    if decision_log is not None:
+                        decision_log.append(
+                            {
+                                "timestamp": current_date,
+                                "ticker": ticker,
+                                "decision": "reject",
+                                "reason": "allocator_abstain",
+                                "entry_allocation_fraction": allocation_fraction,
+                            }
+                        )
+                    continue
+                equity = cash + _positions_value(positions, current, exec_price_col)
+                if exposure_controller is None:
+                    allocation = min(cash, equity * target_exp / cfg.top_k * allocation_fraction)
+                else:
+                    current_gross = _positions_value(positions, current, exec_price_col)
+                    target_gross = equity * target_exp
+                    target_position = target_gross / cfg.top_k * allocation_fraction
+                    allocation = min(cash, target_position, max(0.0, target_gross - current_gross))
+                if allocation <= 0:
+                    continue
+                fill = _slipped(price, cfg.slippage_bps, "buy")
+                shares = allocation / fill
+                cash -= allocation
+                positions[ticker] = {
+                    "trade_id": next_trade_id,
+                    "entry_i": i,
+                    "entry_date": current_date,
+                    "entry_price": price,
+                    "entry_fill_price": fill,
+                    "shares": shares,
+                    "cost_basis": allocation,
+                    "entry_score": float(sig[score_col]),
+                    "entry_exit_score": float(sig.get(exit_score_col, sig[score_col])),
+                    "entry_target_exposure": target_exp,
+                    "entry_allocation_fraction": allocation_fraction,
+                }
+                next_trade_id += 1
+                available_slots -= 1
                 if decision_log is not None:
                     decision_log.append(
                         {
                             "timestamp": current_date,
                             "ticker": ticker,
-                            "decision": "reject",
-                            "reason": "allocator_abstain",
+                            "decision": "enter",
+                            "reason": "accepted",
+                            "target_exposure": target_exp,
                             "entry_allocation_fraction": allocation_fraction,
+                            "relative_alpha_lcb": sig.get("retrieval_alpha_lcb", sig.get("retrieval_alpha_ci_low")),
+                            "absolute_return_lcb": sig.get("retrieval_absolute_return_lcb", sig.get("retrieval_absolute_return_ci_low")),
+                            "calibrated_downside": sig.get("retrieval_calibrated_downside") if cfg.use_calibrated_downside else sig.get("retrieval_expected_downside"),
+                            "confidence": sig.get("retrieval_confidence"),
                         }
                     )
-                continue
-            equity = cash + _positions_value(positions, current, exec_price_col)
-            if exposure_controller is None:
-                allocation = min(cash, equity / cfg.top_k * allocation_fraction)
-            else:
-                current_gross = _positions_value(positions, current, exec_price_col)
-                target_gross = equity * exposure_decision.target_exposure
-                target_position = target_gross / cfg.top_k * allocation_fraction
-                allocation = min(cash, target_position, max(0.0, target_gross - current_gross))
-            if allocation <= 0:
-                continue
-            fill = _slipped(price, cfg.slippage_bps, "buy")
-            shares = allocation / fill
-            cash -= allocation
-            positions[ticker] = {
-                "trade_id": next_trade_id,
-                "entry_i": i,
-                "entry_date": current_date,
-                "entry_price": price,
-                "entry_fill_price": fill,
-                "shares": shares,
-                "cost_basis": allocation,
-                "entry_score": float(sig[score_col]),
-                "entry_exit_score": float(sig.get(exit_score_col, sig[score_col])),
-                "entry_target_exposure": exposure_decision.target_exposure,
-                "entry_allocation_fraction": allocation_fraction,
-            }
-            next_trade_id += 1
-            available_slots -= 1
-            if decision_log is not None:
-                decision_log.append(
-                    {
-                        "timestamp": current_date,
-                        "ticker": ticker,
-                        "decision": "enter",
-                        "reason": "accepted",
-                        "target_exposure": exposure_decision.target_exposure,
-                        "entry_allocation_fraction": allocation_fraction,
-                    }
-                )
         if exposure_controller is not None:
             cash, capital_added = _increase_to_target_exposure(
                 positions,
@@ -368,7 +423,7 @@ def run_long_only_backtest(
                 "cash": cash,
                 "positions": len(positions),
                 "exposure": mark_value / mark_equity if mark_equity else 0.0,
-                "target_exposure": exposure_decision.target_exposure,
+                "target_exposure": target_exp if cfg.breadth_exposure_enabled else exposure_decision.target_exposure,
             }
         )
 

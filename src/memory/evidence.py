@@ -33,6 +33,7 @@ class EvidenceSummary:
     cross_ticker_rate: float | None
     median_distance: float | None
     ood_pass: bool
+    absolute_return: DistributionEstimate | None = None
 
     def to_signal_payload(self) -> dict:
         """Flatten evidence into policy-compatible signal columns."""
@@ -43,7 +44,15 @@ class EvidenceSummary:
             "retrieval_alpha_p90": self.alpha.p90,
             "retrieval_alpha_ci_low": self.alpha.ci_low,
             "retrieval_alpha_ci_high": self.alpha.ci_high,
+            "retrieval_alpha_lcb": self.alpha.ci_low,
             "retrieval_alpha_std": self.alpha.std,
+            "retrieval_expected_absolute_return": self.absolute_return.expected if self.absolute_return else None,
+            "retrieval_absolute_return_lcb": self.absolute_return.ci_low if self.absolute_return else None,
+            "retrieval_absolute_return_p10": self.absolute_return.p10 if self.absolute_return else None,
+            "retrieval_absolute_return_p90": self.absolute_return.p90 if self.absolute_return else None,
+            "retrieval_absolute_return_ci_low": self.absolute_return.ci_low if self.absolute_return else None,
+            "retrieval_absolute_return_ci_high": self.absolute_return.ci_high if self.absolute_return else None,
+            "retrieval_absolute_return_std": self.absolute_return.std if self.absolute_return else None,
             "retrieval_expected_downside": self.downside.expected,
             "retrieval_upside_p10": self.upside.p10,
             "retrieval_upside_p90": self.upside.p90,
@@ -84,6 +93,7 @@ def build_evidence_summary(
     downside_col: str,
     path_quality_col: str | None,
     holding_period_col: str | None,
+    absolute_return_col: str | None = None,
     aggregation: AggregationConfig,
     confidence: ConfidenceConfig,
     score_weights: dict[str, Any],
@@ -107,12 +117,18 @@ def build_evidence_summary(
         if holding_period_col and holding_period_col in neighbors
         else np.full(len(neighbors), np.nan)
     )
+    abs_ret = (
+        neighbors[absolute_return_col].to_numpy(dtype=float)
+        if absolute_return_col and absolute_return_col in neighbors
+        else None
+    )
 
     up_dist = estimate_distribution(upside, weights, aggregation)
     alpha_dist = estimate_distribution(alpha, weights, aggregation)
     down_dist = estimate_distribution(downside, weights, aggregation)
     hold_dist = estimate_distribution(holding_period, weights, aggregation)
     path_dist = estimate_distribution(path_quality, weights, aggregation)
+    abs_dist = estimate_distribution(abs_ret, weights, aggregation) if abs_ret is not None else None
     conf = estimate_confidence(
         outcomes=alpha,
         distances=distances,
@@ -137,6 +153,7 @@ def build_evidence_summary(
         cross_ticker_rate=1.0 - same if same is not None else None,
         median_distance=float(np.nanmedian(distances)) if len(distances) else None,
         ood_pass=True,
+        absolute_return=abs_dist,
     )
 
 
