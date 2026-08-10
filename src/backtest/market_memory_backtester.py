@@ -130,6 +130,47 @@ def tradability_reason(row: pd.Series, cfg: PolicyConfig, score_col: str) -> str
     return None
 
 
+def _decision_outcome_payload(row: pd.Series | None) -> dict[str, object]:
+    """Return the exact future-outcome fields attached to one signal row."""
+
+    if row is None:
+        return {
+            "realized_alpha_63": None,
+            "realized_return_63": None,
+            "realized_mae_63": None,
+            "realized_mfe_63": None,
+            "outcome_available_timestamp": None,
+            "outcome_mature": False,
+        }
+    available = row.get("decision_outcome_available_timestamp")
+    maturity_value = row.get("decision_is_mature")
+    outcome_mature = bool(maturity_value) if pd.notna(maturity_value) else pd.notna(available)
+    return {
+        "realized_alpha_63": row.get("decision_net_alpha"),
+        "realized_return_63": row.get("decision_return_63"),
+        "realized_mae_63": row.get("decision_mae"),
+        "realized_mfe_63": row.get("decision_mfe"),
+        "outcome_available_timestamp": available,
+        "outcome_mature": outcome_mature,
+    }
+
+
+def _position_outcome_payload(position: dict) -> dict[str, object]:
+    """Return immutable entry-time outcome labels retained on an open position."""
+
+    return {
+        key: position.get(key)
+        for key in (
+            "realized_alpha_63",
+            "realized_return_63",
+            "realized_mae_63",
+            "realized_mfe_63",
+            "outcome_available_timestamp",
+            "outcome_mature",
+        )
+    }
+
+
 # Backward-compatible private alias for older experiment scripts.
 _tradability_reason = tradability_reason
 
@@ -210,6 +251,7 @@ def run_long_only_backtest(
                 continue
             hold_days = i - pos["entry_i"]
             raw_return = exec_price / pos["entry_price"] - 1.0
+            pos["realized_mae"] = min(float(pos.get("realized_mae", 0.0)), raw_return)
             sig = signal_rows.loc[ticker] if ticker in signal_rows.index else None
             score = float(sig.get(exit_score_col, np.nan)) if sig is not None else np.nan
             downside_key = "retrieval_calibrated_downside" if cfg.use_calibrated_downside else "retrieval_expected_downside"
@@ -258,6 +300,8 @@ def run_long_only_backtest(
                     "net_return": ret,
                     "pnl": proceeds - pos["cost_basis"],
                     "is_rebalance": False,
+                    "realized_mae": pos.get("realized_mae"),
+                    **_position_outcome_payload(pos),
                 }
             )
             if cfg.risk_guard_enabled:
@@ -308,6 +352,7 @@ def run_long_only_backtest(
                                 "maturity": False,
                                 "realized_return": None,
                                 "realized_mae": None,
+                                **_decision_outcome_payload(sig_r),
                             }
                         )
             candidates = candidates[evidence_reasons.isna()]
@@ -320,6 +365,7 @@ def run_long_only_backtest(
             if decision_log is not None:
                 for ticker, reason in blocked_reasons.items():
                     if reason is not None:
+                        sig_r = candidates.loc[ticker] if ticker in candidates.index else None
                         decision_log.append(
                             {
                                 "timestamp": current_date,
@@ -332,6 +378,7 @@ def run_long_only_backtest(
                                 "maturity": False,
                                 "realized_return": None,
                                 "realized_mae": None,
+                                **_decision_outcome_payload(sig_r),
                             }
                         )
             candidates = candidates[blocked_reasons.isna()]
@@ -404,6 +451,7 @@ def run_long_only_backtest(
                                 "maturity": False,
                                 "realized_return": None,
                                 "realized_mae": None,
+                                **_decision_outcome_payload(sig),
                             }
                         )
                     continue
@@ -432,6 +480,8 @@ def run_long_only_backtest(
                     "entry_exit_score": float(sig.get(exit_score_col, sig[score_col])),
                     "entry_target_exposure": target_exp,
                     "entry_allocation_fraction": allocation_fraction,
+                    "realized_mae": 0.0,
+                    **_decision_outcome_payload(sig),
                 }
                 next_trade_id += 1
                 available_slots -= 1
@@ -454,6 +504,7 @@ def run_long_only_backtest(
                             "maturity": False,
                             "realized_return": None,
                             "realized_mae": None,
+                            **_decision_outcome_payload(sig),
                         }
                     )
         if exposure_controller is not None:
@@ -511,6 +562,8 @@ def run_long_only_backtest(
                             "net_return": ret,
                             "pnl": proceeds - pos["cost_basis"],
                             "is_rebalance": False,
+                            "realized_mae": pos.get("realized_mae"),
+                            **_position_outcome_payload(pos),
                         }
                     )
                     positions.pop(ticker)
@@ -555,6 +608,8 @@ def run_long_only_backtest(
                     "net_return": exit_px / pos["entry_fill_price"] - 1.0,
                     "pnl": proceeds - pos["cost_basis"],
                     "is_rebalance": False,
+                    "realized_mae": pos.get("realized_mae"),
+                    **_position_outcome_payload(pos),
                 }
             )
             positions.pop(ticker)
@@ -584,6 +639,7 @@ def run_long_only_backtest(
                         "holding_duration": tr["holding_days"],
                         "maturity": bool(tr["holding_days"] >= 63),
                         "realized_return": tr["net_return"],
+                        "realized_mae": tr.get("realized_mae"),
                     }
                 )
 
@@ -677,6 +733,8 @@ def _trim_to_target_exposure(
                 "is_rebalance": True,
                 "target_exposure": decision.target_exposure,
                 "controller_reason": decision.reason,
+                "realized_mae": pos.get("realized_mae"),
+                **_position_outcome_payload(pos),
             }
         )
         pos["shares"] *= retained_fraction

@@ -1,14 +1,15 @@
 study:
   name: action_memory_alignment
   base_config: configs/phase4e_cross_market_sharpe.yaml
+  adapter_config: configs/phase5_decision_alignment_v2.yaml
   output_root: reports/action_memory_alignment
   expected_source_count: 18
 
 common:
   experiment:
     source_mode: phase6_testbed
-    source_testbed_run: reports/action_memory_robustness/action_memory_robustness_v1
-    fallback_testbed_run: reports/final_testbed/phase6_a30_final_v1
+    source_testbed_run: reports/final_testbed/phase6_a30_final_v1
+    adapter_run: reports/action_memory_robustness/action_memory_robustness_v1/baseline
     data_root: data/international
     source_representations: [regional]
     active_markets: [US, India, China, Brazil, France, UK]
@@ -26,15 +27,25 @@ common:
       calendar_portfolio:
         start: 2025-01-01
         end: 2026-03-31
+        query_end: 2026-03-31
         entry_cutoff: 2025-12-31
         accounting_cutoff: 2026-03-31
         protocol: calendar_portfolio
       q1_to_q1_entry_cohort:
         start: 2025-01-01
         end: 2026-03-31
+        query_end: 2026-06-30
         entry_cutoff: 2026-03-31
-        accounting_cutoff: null
+        accounting_cutoff: 2026-06-30
         protocol: q1_to_q1_entry_cohort
+  inference_coverage:
+    minimum_ticker_coverage: 0.995
+    maximum_missing_tail_sessions: 1
+    require_finite_embeddings: true
+  inference_sanitization:
+    method: source_training_mean
+    maximum_absolute_zscore: 25.0
+    maximum_repaired_fraction: 0.02
 
 variants:
   C0:

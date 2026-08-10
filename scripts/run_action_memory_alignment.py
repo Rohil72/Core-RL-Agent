@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import argparse
+import glob
 import hashlib
 import json
 import subprocess
 import sys
 from copy import deepcopy
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -22,7 +24,20 @@ sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
 
 from src.memory.calibration import fit_downside_calibration, DownsideCalibrationModel
 from src.backtest.market_memory_backtester import PolicyConfig, run_long_only_backtest, compute_backtest_metrics
-from run_phase5_decision_alignment import discover_adapter_sources, AdapterSource
+from src.backtest.market_memory_evaluator import run_market_memory_evaluation
+from export_phase5_transfer_latents import run as export_transfer_latents
+from run_phase5_decision_alignment import discover_adapter_sources, AdapterSource, _retrieval_frame
+
+
+@dataclass(frozen=True)
+class AlignmentSource:
+    """One complete frozen encoder, adapter, memory, and market-data source."""
+
+    source: AdapterSource
+    adapter_checkpoint: Path
+    train_decisions: Path
+    market: str
+    price_files: tuple[Path, ...]
 
 
 def _file_hash(path: Path) -> str:
@@ -33,6 +48,256 @@ def _file_hash(path: Path) -> str:
         while chunk := f.read(8192):
             hasher.update(chunk)
     return hasher.hexdigest()
+
+
+def _payload_hash(value: Any) -> str:
+    encoded = json.dumps(value, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _path_for_manifest(path: Path) -> str:
+    try:
+        return str(path.resolve().relative_to(PROJECT_ROOT.resolve()))
+    except ValueError:
+        return str(path.resolve())
+
+
+def _manifest_path(value: str) -> Path:
+    path = Path(value)
+    return path if path.is_absolute() else PROJECT_ROOT / path
+
+
+def _prepared_entry_is_valid(entry: dict[str, Any] | None) -> bool:
+    """Validate prepared signal artifacts before allowing resume reuse."""
+
+    if not entry:
+        return False
+    for prefix in ("development_signals", "temporal_signals"):
+        path_value = entry.get(prefix)
+        expected_hash = entry.get(f"{prefix}_sha256")
+        if not path_value or not expected_hash:
+            return False
+        path = _manifest_path(str(path_value))
+        if not path.is_file() or _file_hash(path) != expected_hash:
+            return False
+    return True
+
+
+def _resolve_alignment_sources(config: dict[str, Any]) -> list[AlignmentSource]:
+    """Resolve and validate every frozen artifact required by the real study."""
+
+    experiment = config["experiment"]
+    sources = discover_adapter_sources(config, project_root=PROJECT_ROOT)
+    adapter_root = PROJECT_ROOT / experiment["adapter_run"]
+    resolved: list[AlignmentSource] = []
+    for source in sources:
+        market = source.group.removeprefix("regional_")
+        adapter_dir = adapter_root / source.group / f"seed_{source.seed}"
+        adapter_checkpoint = adapter_dir / "decision_adapter.pt"
+        train_decisions = adapter_dir / "train_decisions.parquet"
+        required = {
+            "encoder checkpoint": source.encoder_checkpoint,
+            "adapter checkpoint": adapter_checkpoint,
+            "adapter training decisions": train_decisions,
+            "training latents": source.train_path,
+            "validation latents": source.val_path,
+        }
+        missing = [label for label, path in required.items() if path is None or not Path(path).is_file()]
+        if missing:
+            raise FileNotFoundError(f"Incomplete frozen source {source.name}: missing {', '.join(missing)}.")
+        price_files = tuple(Path(path) for path in sorted(glob.glob(str(PROJECT_ROOT / source.backtest_glob))))
+        if not price_files:
+            raise FileNotFoundError(f"No market files matched {source.backtest_glob!r} for {source.name}.")
+        resolved.append(
+            AlignmentSource(
+                source=source,
+                adapter_checkpoint=adapter_checkpoint,
+                train_decisions=train_decisions,
+                market=market,
+                price_files=price_files,
+            )
+        )
+    return resolved
+
+
+def _source_hashes(sources: list[AlignmentSource]) -> dict[str, Any]:
+    """Hash all immutable model, memory, latent, and price inputs."""
+
+    return {
+        item.source.name: {
+            "encoder": _file_hash(Path(item.source.encoder_checkpoint)),
+            "adapter": _file_hash(item.adapter_checkpoint),
+            "train_decisions": _file_hash(item.train_decisions),
+            "train_latents": _file_hash(item.source.train_path),
+            "val_latents": _file_hash(item.source.val_path),
+            "price_files": {
+                _path_for_manifest(path): _file_hash(path)
+                for path in item.price_files
+            },
+        }
+        for item in sources
+    }
+
+
+def _memory_evaluation_config(
+    base_config: dict[str, Any],
+    source: AlignmentSource,
+    train_decisions: Path,
+    query_decisions: Path,
+    output_dir: Path,
+) -> dict[str, Any]:
+    """Build the established decision-space retrieval configuration."""
+
+    memory = deepcopy(base_config["memory_defaults"])
+    memory.update(
+        {
+            "target_upside": "decision_mfe",
+            "target_alpha": "decision_net_alpha",
+            "target_absolute_return": "decision_return_63",
+            "target_downside": "decision_mae",
+            "target_path_quality": "decision_path_quality",
+            "target_holding_period": "decision_holding_sessions",
+            "score_mode": "alpha_lcb",
+            "require_outcome_availability": True,
+            "same_ticker_mode": "exclude",
+        }
+    )
+    return {
+        "data": {
+            "train_latents": str(train_decisions),
+            "test_latents": str(query_decisions),
+            "precomputed_glob": source.source.backtest_glob,
+            "output_dir": str(output_dir),
+        },
+        "memory": memory,
+        "policy": deepcopy(base_config["policy"]),
+        "evaluation": {"baselines": "", "memory_metric_target": "decision_net_alpha"},
+        "run": {"write_neighbors": True, "write_memory_reports": False},
+    }
+
+
+def _prepare_signal_period(
+    source: AlignmentSource,
+    base_config: dict[str, Any],
+    export_config: Path,
+    output_root: Path,
+    period: str,
+    start: str,
+    end: str,
+    *,
+    resume: bool,
+) -> Path:
+    """Export frozen decisions and score their historical memory evidence."""
+
+    source_root = output_root / "prepared_sources" / source.source.name
+    decisions = source_root / "decisions" / f"{period}.parquet"
+    retrieval_root = source_root / "retrieval" / period
+    memory = retrieval_root / "train.parquet"
+    query = retrieval_root / "query.parquet"
+    evaluation_root = source_root / "memory" / period
+    signals = evaluation_root / "eval" / "signals.parquet"
+    neighbors = evaluation_root / "eval" / "neighbors.parquet"
+    if resume and all(path.is_file() and path.stat().st_size > 0 for path in (decisions, memory, query, signals, neighbors)):
+        return signals
+
+    decisions.parent.mkdir(parents=True, exist_ok=True)
+    export_transfer_latents(
+        encoder_checkpoint=str(source.source.encoder_checkpoint),
+        adapter_checkpoint=str(source.adapter_checkpoint),
+        target_glob=source.source.backtest_glob,
+        start=start,
+        end=end,
+        output=str(decisions),
+        config=str(export_config),
+    )
+    _retrieval_frame(source.train_decisions, memory)
+    _retrieval_frame(decisions, query)
+    evaluation = _memory_evaluation_config(base_config, source, memory, query, evaluation_root)
+    generated = source_root / "generated_configs" / f"memory_{period}.yaml"
+    generated.parent.mkdir(parents=True, exist_ok=True)
+    generated.write_text(yaml.safe_dump(evaluation, sort_keys=False), encoding="utf-8")
+    result = run_market_memory_evaluation(evaluation, PROJECT_ROOT, run_id="eval")
+    result_signals = result / "signals.parquet"
+    if result_signals != signals or not signals.is_file():
+        raise RuntimeError(f"Memory scoring did not produce the expected signals for {source.source.name}/{period}.")
+    return signals
+
+
+def _prepare_real_signals(
+    sources: list[AlignmentSource],
+    base_config: dict[str, Any],
+    adapter_config: dict[str, Any],
+    config: dict[str, Any],
+    output_root: Path,
+    *,
+    resume: bool,
+) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, Any]]:
+    """Build development and temporal signals from frozen real-market artifacts."""
+
+    export_values = _deep_merge(adapter_config, config.get("common", {}))
+    export_config = output_root / "generated_configs" / "frozen_inference.yaml"
+    export_config.parent.mkdir(parents=True, exist_ok=True)
+    export_config.write_text(yaml.safe_dump(export_values, sort_keys=False), encoding="utf-8")
+    calibration = config["common"]["calibration"]
+    protocols = config["common"]["temporal_evaluation"]["periods"]
+    temporal_start = min(str(period["start"]) for period in protocols.values())
+    temporal_end = max(str(period.get("query_end", period["end"])) for period in protocols.values())
+    development_frames: list[pd.DataFrame] = []
+    temporal_frames: list[pd.DataFrame] = []
+    manifest_path = output_root / "prepared_sources_manifest.json"
+    existing_artifacts = (
+        json.loads(manifest_path.read_text(encoding="utf-8"))
+        if resume and manifest_path.is_file()
+        else {}
+    )
+    artifacts: dict[str, Any] = {}
+    for source in sources:
+        existing = existing_artifacts.get(source.source.name)
+        if _prepared_entry_is_valid(existing):
+            development_path = _manifest_path(existing["development_signals"])
+            temporal_path = _manifest_path(existing["temporal_signals"])
+        else:
+            development_path = _prepare_signal_period(
+                source,
+                base_config,
+                export_config,
+                output_root,
+                "development",
+                str(calibration["start_date"]),
+                str(calibration["end_date"]),
+                resume=False,
+            )
+            temporal_path = _prepare_signal_period(
+                source,
+                base_config,
+                export_config,
+                output_root,
+                "temporal",
+                temporal_start,
+                temporal_end,
+                resume=False,
+            )
+        development = pd.read_parquet(development_path)
+        temporal = pd.read_parquet(temporal_path)
+        for frame in (development, temporal):
+            frame["market"] = source.market
+            frame["seed"] = source.source.seed
+            frame["source_name"] = source.source.name
+            frame["timestamp"] = pd.to_datetime(frame["timestamp"], utc=True)
+        development_frames.append(development)
+        temporal_frames.append(temporal)
+        artifacts[source.source.name] = {
+            "development_signals": _path_for_manifest(development_path),
+            "development_signals_sha256": _file_hash(development_path),
+            "temporal_signals": _path_for_manifest(temporal_path),
+            "temporal_signals_sha256": _file_hash(temporal_path),
+        }
+        manifest_path.write_text(json.dumps(artifacts, indent=2), encoding="utf-8")
+    return (
+        pd.concat(development_frames, ignore_index=True),
+        pd.concat(temporal_frames, ignore_index=True),
+        artifacts,
+    )
 
 
 def _git_info() -> tuple[str, bool]:
@@ -67,8 +332,14 @@ def _compute_profit_concentration(trades: pd.DataFrame) -> float:
 
 def create_synthetic_smoke_data() -> pd.DataFrame:
     """Create a minimal synthetic dataframe for offline smoke testing."""
-    dates = pd.date_range("2022-01-01", "2026-03-31", freq="B", tz="UTC")
-    tickers = ["AAPL", "MSFT"]
+    dates = pd.DatetimeIndex(
+        [
+            *pd.date_range("2024-11-01", periods=40, freq="B", tz="UTC"),
+            *pd.date_range("2025-01-01", periods=80, freq="B", tz="UTC"),
+            *pd.date_range("2026-01-01", "2026-06-30", freq="B", tz="UTC"),
+        ]
+    ).drop_duplicates()
+    tickers = ["AAPL"]
     rows = []
     np.random.seed(42)
     price = 100.0
@@ -127,6 +398,8 @@ def run_alignment_study(
     # Load Base Config to merge policy defaults (Fixes P0 Finding #3)
     base_config_path = PROJECT_ROOT / config["study"]["base_config"]
     base_cfg = yaml.safe_load(base_config_path.read_text(encoding="utf-8"))
+    adapter_config_path = PROJECT_ROOT / config["study"]["adapter_config"]
+    adapter_cfg = yaml.safe_load(adapter_config_path.read_text(encoding="utf-8"))
 
     if output_root_override is not None:
         output_root = Path(output_root_override)
@@ -141,55 +414,37 @@ def run_alignment_study(
 
     output_root.mkdir(parents=True, exist_ok=True)
 
-    # Source preflight & discovery (Fixes P0 Finding #1)
-    study_merged_config = _deep_merge(base_cfg, config.get("common", {}))
-    if not smoke_test:
-        try:
-            sources = discover_adapter_sources(study_merged_config, project_root=PROJECT_ROOT)
-        except Exception:
-            # Fallback to fallback_testbed_run if primary is missing
-            fallback_run = config["common"]["experiment"].get("fallback_testbed_run")
-            if fallback_run:
-                study_merged_config["experiment"]["source_testbed_run"] = fallback_run
-                sources = discover_adapter_sources(study_merged_config, project_root=PROJECT_ROOT)
-            else:
-                raise
-    else:
-        sources = [
-            AdapterSource(
-                name="synthetic_US_seed_7",
-                group="regional_US",
-                seed=7,
-                train_path=output_root / "synthetic_train.parquet",
-                val_path=output_root / "synthetic_val.parquet",
-                precomputed_globs=("data/international/US/*.parquet",),
-                backtest_glob="data/international/US/*.parquet",
-            )
-        ]
-
-    source_hashes = {}
-    for src in sources:
-        source_hashes[src.name] = {
-            "train_latents": _file_hash(src.train_path),
-            "val_latents": _file_hash(src.val_path),
-            "encoder": _file_hash(src.encoder_checkpoint) if src.encoder_checkpoint else "none",
-        }
+    # Source preflight fails closed: no implicit fallback and no synthetic production path.
+    study_merged_config = _deep_merge(adapter_cfg, config.get("common", {}))
+    real_sources = [] if smoke_test else _resolve_alignment_sources(study_merged_config)
+    expected_source_count = int(config["study"].get("expected_source_count", len(real_sources)))
+    if not smoke_test and len(real_sources) != expected_source_count:
+        raise RuntimeError(
+            f"Expected {expected_source_count} complete frozen sources, resolved {len(real_sources)}."
+        )
+    source_hashes = {"synthetic_smoke": {"seed": 42}} if smoke_test else _source_hashes(real_sources)
 
     code_hashes = {
         "config": _file_hash(config_file),
         "base_config": _file_hash(base_config_path),
+        "adapter_config": _file_hash(adapter_config_path),
         "runner": _file_hash(Path(__file__)),
         "calibration": _file_hash(PROJECT_ROOT / "src/memory/calibration.py"),
         "backtester": _file_hash(PROJECT_ROOT / "src/backtest/market_memory_backtester.py"),
+        "exporter": _file_hash(PROJECT_ROOT / "scripts/export_phase5_transfer_latents.py"),
+        "memory_evaluator": _file_hash(PROJECT_ROOT / "src/backtest/market_memory_evaluator.py"),
     }
+    input_fingerprint = _payload_hash({"code_hashes": code_hashes, "source_hashes": source_hashes})
 
     if preflight_only:
         preflight_info = {
             "status": "preflight_passed",
-            "source_count": len(sources),
-            "sources": [s.name for s in sources],
+            "source_count": len(real_sources) if not smoke_test else 1,
+            "sources": [s.source.name for s in real_sources] if not smoke_test else ["synthetic_US_seed_7"],
             "source_hashes": source_hashes,
             "code_hashes": code_hashes,
+            "input_fingerprint": input_fingerprint,
+            "smoke_test": smoke_test,
         }
         (output_root / "source_preflight.json").write_text(json.dumps(preflight_info, indent=2), encoding="utf-8")
         return preflight_info
@@ -198,12 +453,28 @@ def run_alignment_study(
     command_line = " ".join(sys.argv)
     timestamp_start = datetime.now(timezone.utc).isoformat()
 
-    # Resume verification (Fixes P1 Finding #5)
+    # Resume verification covers every declared code and immutable data input.
     prov_file = output_root / "provenance.json"
-    if resume and prov_file.exists():
+    if resume and not prov_file.exists():
+        raise RuntimeError("Cannot resume run: provenance.json is missing.")
+    if resume:
         existing_prov = json.loads(prov_file.read_text(encoding="utf-8"))
-        if existing_prov.get("code_hashes", {}).get("config") != code_hashes["config"]:
-            raise RuntimeError("Cannot resume run: configuration SHA-256 hash does not match existing provenance.")
+        if existing_prov.get("input_fingerprint") != input_fingerprint:
+            raise RuntimeError("Cannot resume run: code or immutable source hashes changed.")
+
+    initial_provenance = {
+        "run_id": run_id,
+        "timestamp": timestamp_start,
+        "command_line": command_line,
+        "git_commit": git_commit,
+        "git_dirty": git_dirty,
+        "code_hashes": code_hashes,
+        "source_hashes": source_hashes,
+        "input_fingerprint": input_fingerprint,
+        "status": "running",
+        "smoke_test": smoke_test,
+    }
+    prov_file.write_text(json.dumps(initial_provenance, indent=2), encoding="utf-8")
 
     variants_cfg = config["variants"]
     variant_names = [name for name in variants_cfg if not selected_variants or name in selected_variants]
@@ -219,51 +490,47 @@ def run_alignment_study(
         variant_defs_md.append("")
     (output_root / "variant_definitions.md").write_text("\n".join(variant_defs_md), encoding="utf-8")
 
-    # Load signal frames
+    # Build retrieval signals from the frozen stack. Synthetic data is smoke-only.
     if smoke_test:
         raw_signals = create_synthetic_smoke_data()
+        dev_signals = raw_signals[
+            (raw_signals["timestamp"] >= pd.Timestamp("2022-01-01", tz="UTC"))
+            & (raw_signals["timestamp"] < pd.Timestamp("2025-01-01", tz="UTC"))
+        ].copy()
+        temporal_signals = raw_signals[
+            raw_signals["timestamp"] >= pd.Timestamp("2025-01-01", tz="UTC")
+        ].copy()
+        prepared_artifacts: dict[str, Any] = {"synthetic_smoke": True}
         markets = ["US"]
         seeds = [7]
     else:
-        # Load real Signals across markets and seeds from sources
-        signal_frames = []
-        for src in sources:
-            m_name = src.group.removeprefix("regional_")
-            if src.signal_path and src.signal_path.exists():
-                sf = pd.read_parquet(src.signal_path)
-            elif src.val_path and src.val_path.exists():
-                sf = pd.read_parquet(src.val_path)
-            else:
-                sf = create_synthetic_smoke_data()
-            sf["market"] = m_name
-            sf["seed"] = src.seed
-            signal_frames.append(sf)
-        raw_signals = pd.concat(signal_frames, ignore_index=True)
+        dev_signals, temporal_signals, prepared_artifacts = _prepare_real_signals(
+            real_sources,
+            base_cfg,
+            adapter_cfg,
+            config,
+            output_root,
+            resume=resume,
+        )
         markets = config["common"]["experiment"]["active_markets"]
         seeds = config["common"]["experiment"]["active_seeds"]
 
-    # Objective 2: Downside Calibration on Development Period (2022-01-01 to 2024-12-31)
-    dev_signals = raw_signals[
-        (raw_signals["timestamp"] >= pd.Timestamp("2022-01-01", tz="UTC"))
-        & (raw_signals["timestamp"] <= pd.Timestamp("2024-12-31 23:59:59.999999", tz="UTC"))
-    ]
-
+    # Downside calibration is fit exclusively on causally scored development signals.
     cal_cfg = config["common"].get("calibration", {})
     calibration_model = fit_downside_calibration(
-        dev_signals if not dev_signals.empty else raw_signals,
+        dev_signals,
         adverse_quantile=float(cal_cfg.get("adverse_quantile", 0.90)),
         min_samples=int(cal_cfg.get("min_samples", 30)),
         start_date=str(cal_cfg.get("start_date", "2022-01-01")),
         end_date=str(cal_cfg.get("end_date", "2024-12-31")),
-        source_hash=code_hashes["config"],
+        source_hash=_payload_hash(prepared_artifacts),
     )
 
     (output_root / "calibration_manifest.json").write_text(
         json.dumps(calibration_model.to_dict(), indent=2), encoding="utf-8"
     )
 
-    # Apply calibration to entire signal set
-    calibrated_signals = calibration_model.apply(raw_signals)
+    calibrated_signals = calibration_model.apply(temporal_signals)
 
     # Accounting protocols (Fixes P0 Finding #2)
     protocols = config["common"].get("temporal_evaluation", {}).get("periods", {})
@@ -272,6 +539,7 @@ def run_alignment_study(
             "calendar_portfolio": {
                 "start": "2025-01-01",
                 "end": "2026-03-31",
+                "query_end": "2026-03-31",
                 "entry_cutoff": "2025-12-31",
                 "accounting_cutoff": "2026-03-31",
                 "protocol": "calendar_portfolio",
@@ -279,8 +547,9 @@ def run_alignment_study(
             "q1_to_q1_entry_cohort": {
                 "start": "2025-01-01",
                 "end": "2026-03-31",
+                "query_end": "2026-06-30",
                 "entry_cutoff": "2026-03-31",
-                "accounting_cutoff": None,
+                "accounting_cutoff": "2026-06-30",
                 "protocol": "q1_to_q1_entry_cohort",
             },
         }
@@ -296,6 +565,9 @@ def run_alignment_study(
     base_policy_defaults = base_cfg.get("policy", {})
 
     for protocol_name, p_spec in protocols.items():
+        protocol_start = pd.Timestamp(str(p_spec["start"]), tz="UTC")
+        protocol_end = pd.Timestamp(str(p_spec["end"]), tz="UTC")
+        query_end = pd.Timestamp(str(p_spec.get("query_end", p_spec["end"])), tz="UTC")
         entry_cutoff = p_spec.get("entry_cutoff")
         accounting_cutoff = p_spec.get("accounting_cutoff")
 
@@ -316,10 +588,14 @@ def run_alignment_study(
                     m_signals = calibrated_signals[
                         (calibrated_signals["market"] == market)
                         & (calibrated_signals.get("seed", seed) == seed)
+                        & (calibrated_signals["timestamp"] >= protocol_start)
+                        & (calibrated_signals["timestamp"] <= query_end)
                     ].copy()
 
                     if m_signals.empty:
-                        m_signals = calibrated_signals[calibrated_signals["market"] == market].copy()
+                        raise RuntimeError(
+                            f"No bounded temporal signals for {market} seed {seed} under {protocol_name}."
+                        )
 
                     policy = PolicyConfig(**merged_policy_dict)
 
@@ -334,20 +610,27 @@ def run_alignment_study(
                     metrics = compute_backtest_metrics(trades, equity, policy.initial_capital)
                     profit_conc = _compute_profit_concentration(trades)
 
-                    # Dynamic non-fabricated entry quality (Fixes P0 Finding #4)
+                    # Entry quality uses the exact 63-session outcome attached at signal time.
                     if not trades.empty:
-                        accepted_trades = trades[trades["exit_reason"] != "exposure_rebalance"]
+                        accepted_trades = trades[~trades["is_rebalance"].fillna(False)].copy()
+                        accepted_trades = accepted_trades.drop_duplicates("trade_id", keep="last")
+                        mature = accepted_trades[
+                            accepted_trades["outcome_mature"].fillna(False)
+                            & accepted_trades["realized_return_63"].notna()
+                        ]
                         entry_cnt = len(accepted_trades)
-                        hit_rt = float((accepted_trades["net_return"] > 0).mean()) if entry_cnt > 0 else 0.0
-                        mean_ret = float(accepted_trades["net_return"].mean()) if entry_cnt > 0 else 0.0
-                        mean_alpha = float(accepted_trades["entry_score"].mean()) if entry_cnt > 0 else 0.0
-                        sev_mae = float((accepted_trades["gross_return"] < -0.10).mean()) if entry_cnt > 0 else 0.0
+                        mature_cnt = len(mature)
+                        hit_rt = float((mature["realized_return_63"] > 0).mean()) if mature_cnt else None
+                        mean_ret = float(mature["realized_return_63"].mean()) if mature_cnt else None
+                        mean_alpha = float(mature["realized_alpha_63"].mean()) if mature_cnt else None
+                        sev_mae = float((mature["realized_mae_63"] <= -0.10).mean()) if mature_cnt else None
                     else:
                         entry_cnt = 0
-                        hit_rt = 0.0
-                        mean_ret = 0.0
-                        mean_alpha = 0.0
-                        sev_mae = 0.0
+                        mature_cnt = 0
+                        hit_rt = None
+                        mean_ret = None
+                        mean_alpha = None
+                        sev_mae = None
 
                     entry_rows.append(
                         {
@@ -356,6 +639,8 @@ def run_alignment_study(
                             "market": market,
                             "seed": seed,
                             "entry_count": entry_cnt,
+                            "mature_entry_count": mature_cnt,
+                            "censored_entry_count": entry_cnt - mature_cnt,
                             "hit_rate": hit_rt,
                             "mean_entry_return": mean_ret,
                             "mean_entry_alpha": mean_alpha,
@@ -375,7 +660,8 @@ def run_alignment_study(
                         )
                         decision_log_rows.append(d_item)
 
-                    # Censoring audit
+                    entered_decisions = [item for item in d_log if item.get("decision") == "enter"]
+                    mature_decisions = sum(bool(item.get("outcome_mature", False)) for item in entered_decisions)
                     censoring_rows.append(
                         {
                             "protocol": protocol_name,
@@ -383,10 +669,14 @@ def run_alignment_study(
                             "market": market,
                             "seed": seed,
                             "entry_cutoff": entry_cutoff or "2026-03-31",
-                            "accounting_cutoff": accounting_cutoff or "open_maturity",
-                            "total_trades": len(trades),
-                            "censored_trades": int((trades["exit_reason"] == "end_of_test").sum()) if not trades.empty else 0,
-                            "completed_trades": int((trades["exit_reason"] != "end_of_test").sum()) if not trades.empty else 0,
+                            "protocol_start": protocol_start.isoformat(),
+                            "entry_period_end": protocol_end.isoformat(),
+                            "query_end": query_end.isoformat(),
+                            "accounting_cutoff": accounting_cutoff,
+                            "total_entries": len(entered_decisions),
+                            "mature_entries": mature_decisions,
+                            "censored_entries": len(entered_decisions) - mature_decisions,
+                            "forced_liquidations": int((trades["exit_reason"] == "end_of_test").sum()) if not trades.empty else 0,
                         }
                     )
 
@@ -406,6 +696,12 @@ def run_alignment_study(
                             "promotion_allowed": promotion_allowed,
                         }
                     )
+
+    expected_evaluations = len(protocols) * len(variant_names) * len(markets) * len(seeds)
+    if len(portfolio_rows) != expected_evaluations:
+        raise RuntimeError(
+            f"Incomplete protocol pairing: expected {expected_evaluations}, produced {len(portfolio_rows)}."
+        )
 
     # Save dataframes
     pd.DataFrame(portfolio_rows).to_csv(output_root / "portfolio_results.csv", index=False)
@@ -482,16 +778,29 @@ def run_alignment_study(
     }
     (output_root / "robustness_verdict.json").write_text(json.dumps(verdict, indent=2), encoding="utf-8")
 
-    # Save Provenance JSON & MD (Fixes P1 Finding #5)
+    prepared_manifest = output_root / "prepared_sources_manifest.json"
+    prepared_manifest.write_text(json.dumps(prepared_artifacts, indent=2), encoding="utf-8")
+    output_hashes = {
+        name: _file_hash(output_root / name)
+        for name in (
+            "calibration_manifest.json",
+            "portfolio_results.csv",
+            "censoring_audit.csv",
+            "entry_quality.csv",
+            "decision_audit.parquet",
+            "paired_results.csv",
+            "market_results.csv",
+            "robustness_verdict.json",
+            "prepared_sources_manifest.json",
+        )
+    }
     provenance = {
-        "run_id": run_id,
-        "timestamp": timestamp_start,
-        "command_line": command_line,
-        "git_commit": git_commit,
-        "git_dirty": git_dirty,
-        "code_hashes": code_hashes,
-        "source_hashes": source_hashes,
+        **initial_provenance,
+        "status": "completed",
+        "input_fingerprint": input_fingerprint,
         "calibration_provenance": calibration_model.to_dict(),
+        "prepared_artifacts": prepared_artifacts,
+        "output_hashes": output_hashes,
         "variants": variant_names,
         "hardware_runtime": {"python": sys.version, "platform": sys.platform},
     }
@@ -503,6 +812,7 @@ def run_alignment_study(
         f"- **Timestamp**: `{timestamp_start}`",
         f"- **Git Commit**: `{git_commit}` (dirty: `{git_dirty}`)",
         f"- **Config Hash**: `{code_hashes['config']}`",
+        f"- **Input Fingerprint**: `{input_fingerprint}`",
         f"- **Command**: `{command_line}`",
         f"- **Smoke Test**: `{smoke_test}`",
     ]
@@ -514,13 +824,21 @@ def run_alignment_study(
         "dag_nodes": [
             {"id": "config", "type": "input", "file": str(config_file)},
             {"id": "base_config", "type": "input", "file": str(base_config_path)},
-            {"id": "sources", "type": "input", "source_count": len(sources)},
-            {"id": "calibration", "type": "step", "inputs": ["config", "sources"], "output": "calibration_manifest.json"},
-            {"id": "backtest_calendar", "type": "step", "inputs": ["calibration"], "output": "portfolio_results.csv"},
-            {"id": "backtest_cohort", "type": "step", "inputs": ["calibration"], "output": "censoring_audit.csv"},
+            {"id": "adapter_config", "type": "input", "file": str(adapter_config_path)},
+            {"id": "sources", "type": "input", "source_count": len(real_sources) if not smoke_test else 1, "fingerprint": input_fingerprint},
+            {"id": "frozen_inference", "type": "step", "inputs": ["adapter_config", "sources"], "output": "prepared_sources_manifest.json"},
+            {"id": "memory_scoring", "type": "step", "inputs": ["base_config", "frozen_inference"], "outputs": ["prepared_sources/*/memory/development/eval/signals.parquet", "prepared_sources/*/memory/temporal/eval/signals.parquet"]},
+            {"id": "calibration", "type": "step", "inputs": ["memory_scoring"], "output": "calibration_manifest.json"},
+            {"id": "backtest_calendar", "type": "step", "inputs": ["calibration", "memory_scoring"], "output": "portfolio_results.csv"},
+            {"id": "backtest_cohort", "type": "step", "inputs": ["calibration", "memory_scoring"], "output": "censoring_audit.csv"},
             {"id": "audit", "type": "step", "inputs": ["backtest_calendar", "backtest_cohort"], "outputs": ["decision_audit.parquet", "entry_quality.csv"]},
             {"id": "summary", "type": "step", "inputs": ["audit"], "outputs": ["robustness_verdict.json", "reviewer_summary.md"]},
         ],
+        "commands": {
+            "preflight": f"{sys.executable} scripts/run_action_memory_alignment.py --config {config_path} --run-id {run_id} --preflight",
+            "execute": f"{sys.executable} scripts/run_action_memory_alignment.py --config {config_path} --run-id {run_id}",
+            "resume": f"{sys.executable} scripts/run_action_memory_alignment.py --config {config_path} --run-id {run_id} --resume",
+        },
     }
     (output_root / "experiment_manifest.yaml").write_text(yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8")
 
