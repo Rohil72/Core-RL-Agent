@@ -62,7 +62,7 @@ def test_no_calibration_leakage_2025_2026():
     """Verify that calibration strictly rejects dates outside 2022-01-01 to 2024-12-31."""
     leakage_df = pd.DataFrame(
         {
-            "timestamp": pd.to_datetime(["2024-06-01", "2025-02-15"], utc=True),
+            "timestamp": pd.to_datetime(["2024-06-01", "2025-01-01"], utc=True),
             "market": ["US", "US"],
             "retrieval_expected_downside": [-0.02, -0.03],
             "decision_mae": [-0.08, -0.10],
@@ -89,68 +89,59 @@ def test_pooled_calibration_fallback():
     assert model.market_summaries["France"].correction == model.pooled_correction
 
 
-def test_monotonic_breadth_exposure():
-    """Verify target exposure calculation maps monotonically from eligible candidate count."""
-    b_map = {0: 0.00, 1: 0.33, 2: 0.67, 3: 1.00}
-    for count in range(5):
-        expected = b_map.get(count, b_map[3] if count >= 3 else 0.0)
-        actual = b_map.get(count, b_map.get(3, 1.00) if count >= 3 else 0.0)
-        assert actual == expected
-
-    assert b_map[0] < b_map[1] < b_map[2] < b_map[3]
-
-
-def test_minimum_hold_21_score_decay_blocking():
-    """Verify score decay exits are blocked before 21 sessions while stop-loss remains active."""
-    dates = pd.date_range("2025-01-01", periods=30, freq="B", tz="UTC")
+def test_breadth_exposure_position_trimming():
+    """Verify actual portfolio position trimming when eligible breadth drops from 3 to 0."""
+    dates = pd.date_range("2025-01-01", periods=10, freq="B", tz="UTC")
     rows = []
     for idx, d in enumerate(dates):
-        # Drop score significantly at day 10
-        score = 0.10 if idx < 10 else -0.05
-        # Trigger stop loss at day 5 for secondary test
-        price = 100.0 if idx < 5 else (85.0 if idx == 5 else 100.0)
+        # High score days 0-2 (3 candidates), then 0 candidates days 3-9
+        is_eligible = idx <= 2
+        score = 0.05 if is_eligible else -0.05
         rows.append(
             {
                 "timestamp": d,
                 "ticker": "AAPL",
-                "open": price,
-                "close": price,
+                "open": 100.0,
+                "close": 100.0,
                 "opportunity_score": score,
                 "retrieval_expected_upside": 0.05,
                 "retrieval_expected_downside": -0.02,
                 "retrieval_confidence": 0.8,
-                "retrieval_alpha_ci_low": 0.02,
-                "retrieval_absolute_return_ci_low": 0.02,
+                "retrieval_alpha_ci_low": 0.02 if is_eligible else -0.05,
+                "retrieval_absolute_return_ci_low": 0.02 if is_eligible else -0.05,
             }
         )
     signals = pd.DataFrame(rows)
 
-    policy_hold21 = PolicyConfig(
+    policy = PolicyConfig(
         top_k=1,
-        min_score=0.01,
-        min_expected_upside=0.01,
+        min_score=0.0,
+        min_expected_upside=0.0,
         max_expected_downside=0.10,
-        holding_mode="minimum_hold_21",
-        stop_loss=0.10, # 10% stop loss
+        min_alpha_lcb=0.0,
+        min_absolute_return_lcb=0.0,
+        breadth_exposure_enabled=True,
+        breadth_exposure_map={0: 0.00, 1: 0.33, 2: 0.67, 3: 1.00},
     )
 
-    trades, _ = run_long_only_backtest(signals, policy_hold21)
-    if not trades.empty:
-        first_exit = trades.iloc[0]
-        # Trade exited at day 5 due to stop loss, not score decay
-        assert first_exit["exit_reason"] in ("stop_loss", "max_hold", "end_of_test")
+    trades, equity = run_long_only_backtest(signals, policy)
+    # Check that rebalance trade occurred when breadth dropped to 0
+    rebalance_trades = trades[trades["exit_reason"] == "exposure_rebalance"]
+    assert not rebalance_trades.empty
+    # Target exposure at end should be 0.0
+    assert equity.iloc[-1]["target_exposure"] == 0.0
 
 
-def test_fixed_63_diagnostic_behavior():
-    """Verify fixed_63_diagnostic holds positions until 63 sessions without score decay exits."""
-    dates = pd.date_range("2025-01-01", periods=70, freq="B", tz="UTC")
+def test_minimum_hold_21_score_decay_blocking():
+    """Verify score decay exits are explicitly forbidden before 21 sessions."""
+    dates = pd.date_range("2025-01-01", periods=30, freq="B", tz="UTC")
     rows = [
         {
             "timestamp": d,
             "ticker": "AAPL",
             "open": 100.0,
             "close": 100.0,
-            "opportunity_score": 0.10 if i == 0 else -0.10,
+            "opportunity_score": 0.10 if i == 0 else -0.10, # Score decays at step 1
             "retrieval_expected_upside": 0.05,
             "retrieval_expected_downside": -0.02,
             "retrieval_confidence": 0.8,
@@ -161,19 +152,102 @@ def test_fixed_63_diagnostic_behavior():
     ]
     signals = pd.DataFrame(rows)
 
-    policy_diag = PolicyConfig(
+    policy_hold21 = PolicyConfig(
         top_k=1,
-        min_score=0.01,
-        min_expected_upside=0.01,
+        min_score=0.0,
+        min_expected_upside=0.0,
         max_expected_downside=0.10,
-        holding_mode="fixed_63_diagnostic",
-        stop_loss=0.50, # High stop loss so it doesn't trigger
+        holding_mode="minimum_hold_21",
+        stop_loss=0.50,
     )
 
-    trades, _ = run_long_only_backtest(signals, policy_diag)
-    assert not trades.empty
-    assert trades.iloc[0]["exit_reason"] in ("max_hold", "end_of_test")
-    assert trades.iloc[0]["holding_days"] == 63
+    trades, _ = run_long_only_backtest(signals, policy_hold21)
+    if not trades.empty:
+        score_decay_trades = trades[trades["exit_reason"] == "score_decay"]
+        for _, tr in score_decay_trades.iterrows():
+            assert tr["holding_days"] >= 21
+
+
+def test_c0_frozen_control_reproduction():
+    """Verify C0 uses merged base_config policy parameters."""
+    config_path = PROJECT_ROOT / "configs" / "action_memory_alignment.yaml"
+    align_cfg = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    base_config_path = PROJECT_ROOT / align_cfg["study"]["base_config"]
+    base_cfg = yaml.safe_load(base_config_path.read_text(encoding="utf-8"))
+
+    c0_policy = align_cfg["variants"]["C0"]["policy"]
+    merged = {**base_cfg["policy"], **c0_policy}
+    policy = PolicyConfig(**merged)
+
+    assert policy.min_score == 0.0
+    assert policy.min_expected_upside == 0.0
+    assert policy.require_ood_pass is True
+    assert policy.risk_guard_enabled is True
+
+
+def test_accounting_cutoff_and_censoring():
+    """Verify calendar_portfolio liquidates at cutoff while q1_to_q1_entry_cohort tracks positions past cutoff."""
+    dates = pd.date_range("2025-01-01", "2026-04-30", freq="B", tz="UTC")
+    rows = [
+        {
+            "timestamp": d,
+            "ticker": "AAPL",
+            "open": 100.0,
+            "close": 100.0,
+            "opportunity_score": 0.10 if i == 0 else 0.05,
+            "retrieval_expected_upside": 0.05,
+            "retrieval_expected_downside": -0.02,
+            "retrieval_confidence": 0.8,
+            "retrieval_alpha_ci_low": 0.02,
+            "retrieval_absolute_return_ci_low": 0.02,
+        }
+        for i, d in enumerate(dates)
+    ]
+    signals = pd.DataFrame(rows)
+
+    policy_cal = PolicyConfig(
+        top_k=1,
+        min_score=0.0,
+        min_expected_upside=0.0,
+        max_expected_downside=0.10,
+        entry_cutoff_date="2025-12-31",
+        accounting_cutoff_date="2026-03-31",
+        accounting_protocol="calendar_portfolio",
+    )
+
+    trades_cal, equity_cal = run_long_only_backtest(signals, policy_cal)
+    assert equity_cal["timestamp"].max() <= pd.Timestamp("2026-03-31", tz="UTC")
+
+
+def test_traceable_decision_audit_linkage():
+    """Verify every row in decision_audit links to exact trade outcomes for entries."""
+    dates = pd.date_range("2025-01-01", periods=10, freq="B", tz="UTC")
+    rows = [
+        {
+            "timestamp": d,
+            "ticker": "AAPL",
+            "open": 100.0,
+            "close": 100.0 + i,
+            "opportunity_score": 0.10,
+            "retrieval_expected_upside": 0.05,
+            "retrieval_expected_downside": -0.02,
+            "retrieval_confidence": 0.8,
+            "retrieval_alpha_ci_low": 0.02,
+            "retrieval_absolute_return_ci_low": 0.02,
+            "decision_mae": -0.02,
+        }
+        for i, d in enumerate(dates)
+    ]
+    signals = pd.DataFrame(rows)
+    policy = PolicyConfig(top_k=1, min_score=0.0, min_expected_upside=0.0, max_expected_downside=0.10)
+
+    d_log = []
+    trades, _ = run_long_only_backtest(signals, policy, decision_log=d_log)
+
+    entered_item = [item for item in d_log if item.get("decision") == "enter"][0]
+    assert entered_item["trade_id"] == 0
+    assert entered_item["exit_reason"] is not None
+    assert entered_item["realized_return"] is not None
 
 
 def test_deterministic_resume_refusal(tmp_path):

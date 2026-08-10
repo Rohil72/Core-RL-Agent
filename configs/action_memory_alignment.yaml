@@ -1,6 +1,6 @@
 study:
   name: action_memory_alignment
-  base_config: configs/phase5_decision_alignment_v2.yaml
+  base_config: configs/phase4e_cross_market_sharpe.yaml
   output_root: reports/action_memory_alignment
   expected_source_count: 18
 
@@ -21,7 +21,7 @@ common:
     min_samples: 30
   temporal_evaluation:
     enabled: true
-    require_existing_adapter: false
+    require_existing_adapter: true
     periods:
       calendar_portfolio:
         start: 2025-01-01

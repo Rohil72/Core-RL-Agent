@@ -302,6 +302,12 @@ def run_long_only_backtest(
                                 "absolute_return_lcb": sig_r.get("retrieval_absolute_return_lcb", sig_r.get("retrieval_absolute_return_ci_low")) if sig_r is not None else None,
                                 "calibrated_downside": sig_r.get("retrieval_calibrated_downside") if cfg.use_calibrated_downside and sig_r is not None else (sig_r.get("retrieval_expected_downside") if sig_r is not None else None),
                                 "confidence": sig_r.get("retrieval_confidence") if sig_r is not None else None,
+                                "trade_id": None,
+                                "exit_reason": None,
+                                "holding_duration": None,
+                                "maturity": False,
+                                "realized_return": None,
+                                "realized_mae": None,
                             }
                         )
             candidates = candidates[evidence_reasons.isna()]
@@ -315,7 +321,18 @@ def run_long_only_backtest(
                 for ticker, reason in blocked_reasons.items():
                     if reason is not None:
                         decision_log.append(
-                            {"timestamp": current_date, "ticker": ticker, "decision": "reject", "reason": reason}
+                            {
+                                "timestamp": current_date,
+                                "ticker": ticker,
+                                "decision": "reject",
+                                "reason": reason,
+                                "trade_id": None,
+                                "exit_reason": None,
+                                "holding_duration": None,
+                                "maturity": False,
+                                "realized_return": None,
+                                "realized_mae": None,
+                            }
                         )
             candidates = candidates[blocked_reasons.isna()]
 
@@ -323,6 +340,32 @@ def run_long_only_backtest(
             b_map = cfg.breadth_exposure_map or {0: 0.0, 1: 0.33, 2: 0.67, 3: 1.00}
             eligible_count = len(candidates)
             target_exp = float(b_map.get(eligible_count, b_map.get(3, 1.00) if eligible_count >= 3 else 0.0))
+            if exposure_controller is None and positions:
+                breadth_decision = ExposureDecision(
+                    target_exposure=target_exp,
+                    volatility_scalar=target_exp,
+                    drawdown_scalar=1.0,
+                    evidence_scalar=1.0,
+                    realized_annualized_volatility=None,
+                    current_drawdown=0.0,
+                    median_confidence=None,
+                    median_agreement=None,
+                    median_effective_sample_size=None,
+                    positive_alpha_breadth=None,
+                    reason=f"breadth_{eligible_count}",
+                )
+                cash = _trim_to_target_exposure(
+                    positions,
+                    current,
+                    exec_price_col,
+                    cash,
+                    breadth_decision,
+                    cfg,
+                    i,
+                    current_date,
+                    trades,
+                    rebalance_threshold=0.001,
+                )
         else:
             target_exp = exposure_decision.target_exposure
 
@@ -355,6 +398,12 @@ def run_long_only_backtest(
                                 "decision": "reject",
                                 "reason": "allocator_abstain",
                                 "entry_allocation_fraction": allocation_fraction,
+                                "trade_id": None,
+                                "exit_reason": None,
+                                "holding_duration": None,
+                                "maturity": False,
+                                "realized_return": None,
+                                "realized_mae": None,
                             }
                         )
                     continue
@@ -399,6 +448,12 @@ def run_long_only_backtest(
                             "absolute_return_lcb": sig.get("retrieval_absolute_return_lcb", sig.get("retrieval_absolute_return_ci_low")),
                             "calibrated_downside": sig.get("retrieval_calibrated_downside") if cfg.use_calibrated_downside else sig.get("retrieval_expected_downside"),
                             "confidence": sig.get("retrieval_confidence"),
+                            "trade_id": None,
+                            "exit_reason": None,
+                            "holding_duration": None,
+                            "maturity": False,
+                            "realized_return": None,
+                            "realized_mae": None,
                         }
                     )
         if exposure_controller is not None:
@@ -426,6 +481,50 @@ def run_long_only_backtest(
                 "target_exposure": target_exp if cfg.breadth_exposure_enabled else exposure_decision.target_exposure,
             }
         )
+
+        if cfg.accounting_cutoff_date is not None:
+            acct_cutoff_ts = pd.to_datetime(cfg.accounting_cutoff_date, utc=True)
+            if current_date >= acct_cutoff_ts:
+                # Liquidate open positions at accounting cutoff date and terminate backtest
+                for ticker, pos in list(positions.items()):
+                    if ticker not in current.index:
+                        continue
+                    exit_px = _slipped(float(current.loc[ticker, exec_price_col]), cfg.slippage_bps, "sell")
+                    proceeds = pos["shares"] * exit_px
+                    cash += proceeds
+                    ret = exit_px / pos["entry_fill_price"] - 1.0
+                    trades.append(
+                        {
+                            "ticker": ticker,
+                            "trade_id": pos["trade_id"],
+                            "entry_date": pos["entry_date"],
+                            "exit_date": current_date,
+                            "entry_price": pos["entry_fill_price"],
+                            "exit_price": exit_px,
+                            "shares": pos["shares"],
+                            "cost_basis": pos["cost_basis"],
+                            "entry_score": pos["entry_score"],
+                            "entry_allocation_fraction": pos.get("entry_allocation_fraction", 1.0),
+                            "exit_reason": "end_of_test",
+                            "holding_days": i - pos["entry_i"],
+                            "gross_return": float(current.loc[ticker, exec_price_col]) / pos["entry_price"] - 1.0,
+                            "net_return": ret,
+                            "pnl": proceeds - pos["cost_basis"],
+                            "is_rebalance": False,
+                        }
+                    )
+                    positions.pop(ticker)
+                equity_rows.append(
+                    {
+                        "timestamp": current_date,
+                        "equity": cash,
+                        "cash": cash,
+                        "positions": 0,
+                        "exposure": 0.0,
+                        "target_exposure": 0.0,
+                    }
+                )
+                break
 
     if dates and positions:
         final_date = dates[-1]
@@ -470,6 +569,23 @@ def run_long_only_backtest(
                 "target_exposure": 0.0,
             }
         )
+
+    # Link exact trade outcomes back to decision_log records
+    if decision_log is not None and trades:
+        trade_lookup = {(t["entry_date"], t["ticker"]): t for t in trades if not t.get("is_rebalance", False)}
+        for item in decision_log:
+            key = (item.get("timestamp"), item.get("ticker"))
+            if item.get("decision") == "enter" and key in trade_lookup:
+                tr = trade_lookup[key]
+                item.update(
+                    {
+                        "trade_id": tr["trade_id"],
+                        "exit_reason": tr["exit_reason"],
+                        "holding_duration": tr["holding_days"],
+                        "maturity": bool(tr["holding_days"] >= 63),
+                        "realized_return": tr["net_return"],
+                    }
+                )
 
     equity = pd.DataFrame(equity_rows).drop_duplicates("timestamp", keep="last")
     if not equity.empty:

@@ -72,9 +72,11 @@ def fit_downside_calibration(
     development_df: pd.DataFrame,
     adverse_quantile: float = 0.90,
     min_samples: int = 30,
+    start_date: str = "2022-01-01",
+    end_date: str = "2024-12-31",
     source_hash: str | None = None,
 ) -> DownsideCalibrationModel:
-    """Fit a one-sided residual downside correction using ONLY 2022-2024 development data."""
+    """Fit a one-sided residual downside correction using ONLY development data (2022-01-01 to 2024-12-31)."""
 
     if development_df.empty:
         raise ValueError("Development dataset for calibration cannot be empty.")
@@ -84,13 +86,16 @@ def fit_downside_calibration(
         raise ValueError("Development dataset must contain a timestamp column.")
     df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
 
-    # ZERO-LEAKAGE ENFORCEMENT: Strictly reject any dates outside 2022-01-01 to 2024-12-31
+    start_ts = pd.Timestamp(start_date, tz="UTC")
+    end_ts = pd.Timestamp(f"{end_date} 23:59:59.999999", tz="UTC")
+
+    # ZERO-LEAKAGE ENFORCEMENT: Strictly reject any dates outside start_date to end_date
     min_ts = df["timestamp"].min()
     max_ts = df["timestamp"].max()
-    if min_ts < DEV_START_DATE or max_ts > DEV_END_DATE + pd.Timedelta(days=1):
+    if min_ts < start_ts or max_ts > end_ts:
         raise ValueError(
             f"Downside calibration data contains out-of-bounds timestamps ({min_ts} to {max_ts}). "
-            f"Calibration is strictly restricted to development period {DEV_START_DATE.date()} to {DEV_END_DATE.date()}."
+            f"Calibration is strictly restricted to development period {start_date} to {end_date}."
         )
 
     required_cols = ["retrieval_expected_downside", "decision_mae"]
