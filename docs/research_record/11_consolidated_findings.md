@@ -53,3 +53,13 @@ representation and the conditional usefulness of retrieval-grounded opportunity
 ranking, not a confirmed profitable trading system. Any future confirmation
 must use a freshly frozen universe/period, repaired causal timestamp handling,
 complete inference coverage, and per-market rather than pooled-only gates.
+
+## Final Transport Diagnostic
+
+`configs/temporal_transport_study.yaml` freezes the last untested
+representation-level hypothesis. It compares identical global patch
+Transformers with and without cross-market, cross-period analogue geometry,
+then evaluates both through the C2 minimum-hold policy. See
+`docs/TEMPORAL_TRANSPORT_ENCODER_STUDY.md`. This study is diagnostic because the
+observed interval has already informed prior research; it cannot restore an
+untouched confirmation claim.

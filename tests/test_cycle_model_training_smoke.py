@@ -98,6 +98,9 @@ def test_cycle_model_training_smoke(tmp_path: Path):
             "selected_fold": -1,
             "ticker_holdout_fraction": 0.0,
             "seed": 7,
+            "evaluation_periods": {
+                "observed": {"start": "2021-06-01", "end": "2021-12-31"}
+            },
         },
         "features": {
             "sequence": [
@@ -118,7 +121,7 @@ def test_cycle_model_training_smoke(tmp_path: Path):
                 "event_upside_before_drawdown_126",
             ],
         },
-        "latent_export": {"splits": ["train", "val", "test"]},
+        "latent_export": {"splits": ["train", "val", "test", "observed"]},
         "evaluation": {
             "cooldown_days": 42,
             "catastrophic_return": -0.10,
@@ -136,7 +139,7 @@ def test_cycle_model_training_smoke(tmp_path: Path):
     assert Path(result["report_json"]).exists()
     assert Path(result["report_md"]).exists()
     assert "test" in result["metrics"]
-    assert {"train", "val", "test"}.issubset(set(result["latent_exports"]))
+    assert {"train", "val", "test", "observed"}.issubset(set(result["latent_exports"]))
     for path in result["latent_exports"].values():
         assert Path(path).exists()
     assert (tmp_path / "models" / "latest_training_state.pt").exists()

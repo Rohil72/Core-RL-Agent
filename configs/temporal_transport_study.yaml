@@ -1,0 +1,134 @@
+schema_version: 1
+
+study:
+  name: temporal_transport_encoder
+  base_encoder_config: configs/final_encoder_training.yaml
+  base_memory_config: configs/phase4e_cross_market_sharpe.yaml
+  output_root: reports/temporal_transport_encoder
+  diagnostic_only: true
+  promotion_allowed: false
+
+data:
+  root: data/international
+  markets: [US, India, China, Brazil, France, UK]
+  market_balanced_sampling: true
+  relative_outcomes:
+    enabled: true
+    return_target: future_return_63
+    sector_column: sector
+    minimum_sector_observations: 3
+    universe_alpha_column: future_universe_alpha_63
+    blended_alpha_column: future_blended_alpha_63
+    sector_weight: 0.50
+    group_column: market
+  cross_sectional_relative_features:
+    tech_return_1: relative_return_1
+    tech_momentum_21: relative_momentum_21
+    tech_vol_21: relative_vol_21
+    tech_drawdown: relative_drawdown
+
+periods:
+  train_years: 10
+  validation_years: 1
+  test_years: 1
+  selected_fold: 0
+  observed:
+    start: 2025-01-01
+    end: 2026-03-31
+
+training:
+  seeds: [7, 17, 37]
+  epochs: 20
+  batch_size: 128
+  learning_rate: 0.0002
+  weight_decay: 0.0001
+  grad_clip: 1.0
+  validation_selection_metric: future_target_mae
+  validation_selection_mode: min
+  use_amp: true
+  checkpoint_interval_steps: 250
+
+variants:
+  baseline:
+    description: Same relative inputs and targets, with masked Huber regression only.
+    loss:
+      lambda_reg: 1.0
+      lambda_analogue: 0.0
+      lambda_transport: 0.0
+      lambda_var: 0.0
+  temporal_transport:
+    description: Cross-market, cross-period analogue geometry with temporal hard negatives.
+    loss:
+      lambda_reg: 1.0
+      lambda_analogue: 0.15
+      lambda_transport: 0.10
+      lambda_var: 0.01
+      analogue_target_names:
+        - future_blended_alpha_63
+        - future_max_return_63
+        - future_min_return_63
+        - event_upside_before_drawdown_126
+      analogue_target_weights: [1.0, 0.75, 1.0, 0.50]
+      analogue_candidate_mode: cross_market_and_period
+      minimum_year_gap: 2
+      balance_candidate_domains: true
+      transport_positive_quantile: 0.25
+      transport_negative_quantile: 0.75
+      transport_margin: 0.25
+      variance_target: 0.20
+      enable_variance_regularizer: true
+
+memory:
+  k: 25
+  causal_horizon_sessions: 126
+  minimum_neighbor_separation_sessions: 21
+  same_ticker_mode: exclude
+  target_upside: future_max_return_63
+  target_alpha: future_blended_alpha_63
+  target_downside: future_min_return_63
+  target_path_quality: event_upside_before_drawdown_126
+  target_holding_period: event_peak_offset_63
+  score_mode: alpha_lcb
+  aggregation_method: gaussian
+  trim_fraction: 0.10
+  tail_fraction: 0.25
+  min_neighbors: 15
+  require_outcome_availability: false
+  retrieval_batch_size: 128
+
+policy:
+  top_k: 3
+  min_score: 0.0
+  min_expected_upside: 0.0
+  max_expected_downside: 0.12
+  min_confidence: 0.20
+  min_alpha_lcb: 0.0
+  max_downside_cvar: 0.12
+  min_neighbor_count: 15
+  require_ood_pass: false
+  min_hold_days: 5
+  max_hold_days: 63
+  holding_mode: minimum_hold_21
+  exit_score_fraction: 0.50
+  exit_min_score: 0.0
+  stop_loss: 0.10
+  slippage_bps: 10
+  initial_capital: 100000
+  risk_guard_enabled: true
+  cooldown_sessions: 63
+  rolling_loss_window_sessions: 126
+  quarantine_sessions: 126
+  max_stop_losses: 2
+  cumulative_loss_limit: -0.15
+
+comparison:
+  baseline: baseline
+  candidate: temporal_transport
+  minimum_seed_wins: 2
+  minimum_mean_sharpe_delta: 0.0
+  minimum_worst_seed_sharpe_delta: 0.0
+  maximum_candidate_drawdown: 0.25
+
+hardware:
+  vram_fraction: 0.95
+  estimated_training_hours_per_job: 12.0

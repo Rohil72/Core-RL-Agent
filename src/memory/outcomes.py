@@ -18,6 +18,7 @@ class RelativeOutcomeConfig:
     universe_alpha_column: str = "future_universe_alpha_63"
     blended_alpha_column: str = "future_blended_alpha_63"
     sector_weight: float = 0.50
+    group_column: str | None = None
 
 
 def attach_relative_outcomes(
@@ -40,10 +41,20 @@ def attach_relative_outcomes(
     out = frame.copy()
     out["timestamp"] = pd.to_datetime(out["timestamp"], utc=True)
     returns = pd.to_numeric(out[return_col], errors="coerce")
-    universe = returns.groupby(out["timestamp"]).transform("median")
+    universe_groups: list[pd.Series] = [out["timestamp"]]
+    if cfg.group_column is not None:
+        if cfg.group_column not in out:
+            raise ValueError(
+                f"Relative outcome group column {cfg.group_column!r} is unavailable."
+            )
+        universe_groups.append(out[cfg.group_column].fillna("Unknown").astype(str))
+    universe = returns.groupby(universe_groups).transform("median")
 
     if cfg.sector_column in out:
-        groups = [out["timestamp"], out[cfg.sector_column].fillna("Unknown").astype(str)]
+        groups = [
+            *universe_groups,
+            out[cfg.sector_column].fillna("Unknown").astype(str),
+        ]
         sector = returns.groupby(groups).transform("median")
         sector_count = returns.groupby(groups).transform("count")
         sector = sector.where(sector_count >= cfg.minimum_sector_observations, universe)

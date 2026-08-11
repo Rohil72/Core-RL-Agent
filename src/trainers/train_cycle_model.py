@@ -69,6 +69,7 @@ from src.losses.outcome_geometry import (
     LossBreakdown,
     compute_market_memory_loss,
 )
+from src.memory.outcomes import RelativeOutcomeConfig, attach_relative_outcomes
 from src.models import build_cycle_model
 
 logging.basicConfig(level=logging.INFO)
@@ -342,6 +343,46 @@ def load_precomputed_frame(config: dict[str, Any]) -> pd.DataFrame:
 
     frame = pd.concat(prepared).sort_index()
 
+    relative_cfg = data_cfg.get("relative_outcomes", {})
+    if bool(relative_cfg.get("enabled", False)):
+        with_timestamp = frame.copy()
+        with_timestamp["timestamp"] = with_timestamp.index
+        frame = attach_relative_outcomes(
+            with_timestamp,
+            RelativeOutcomeConfig(
+                return_target=str(relative_cfg.get("return_target", "future_return_63")),
+                sector_column=str(relative_cfg.get("sector_column", "sector")),
+                minimum_sector_observations=int(
+                    relative_cfg.get("minimum_sector_observations", 3)
+                ),
+                universe_alpha_column=str(
+                    relative_cfg.get("universe_alpha_column", "future_universe_alpha_63")
+                ),
+                blended_alpha_column=str(
+                    relative_cfg.get("blended_alpha_column", "future_blended_alpha_63")
+                ),
+                sector_weight=float(relative_cfg.get("sector_weight", 0.50)),
+                group_column=(
+                    str(relative_cfg["group_column"])
+                    if relative_cfg.get("group_column") is not None
+                    else None
+                ),
+            ),
+        ).drop(columns=["timestamp"])
+
+    relative_features = data_cfg.get("cross_sectional_relative_features", {})
+    if relative_features:
+        if not isinstance(relative_features, dict):
+            raise ValueError("data.cross_sectional_relative_features must be a mapping.")
+        timestamps = pd.Series(frame.index, index=frame.index)
+        markets = frame["market"].astype(str)
+        for source, destination in relative_features.items():
+            if source not in frame:
+                raise ValueError(f"Relative feature source {source!r} is unavailable.")
+            values = pd.to_numeric(frame[source], errors="coerce")
+            benchmark = values.groupby([markets, timestamps]).transform("median")
+            frame[str(destination)] = values - benchmark
+
     # Optionally exclude particular calendar years (e.g., 2020) to avoid contamination
     exclude_years = config.get("data", {}).get("exclude_years", [])
     if exclude_years:
@@ -449,6 +490,23 @@ def make_datasets(
         buffered["test"]["ticker"].isin(holdout_tickers)
     ].copy()
 
+    evaluation_periods = split_cfg.get("evaluation_periods", {})
+    if evaluation_periods and not isinstance(evaluation_periods, dict):
+        raise ValueError("split.evaluation_periods must be a mapping.")
+    for name, period in evaluation_periods.items():
+        if name in {"train", "val", "test", "holdout"}:
+            raise ValueError(f"Reserved evaluation period name: {name!r}.")
+        start = pd.Timestamp(str(period["start"]), tz="UTC")
+        end = pd.Timestamp(str(period["end"]), tz="UTC")
+        if end < start:
+            raise ValueError(f"Evaluation period {name!r} ends before it starts.")
+        buffered[name] = build_buffered_period_frame(
+            frame,
+            start,
+            end,
+            history_rows=history_rows,
+        )
+
     train_frame = buffered["train"][
         ~buffered["train"]["ticker"].isin(holdout_tickers)
     ].copy()
@@ -472,6 +530,10 @@ def make_datasets(
         scaled_frames["holdout"] = standardizer.transform(
             buffered["holdout"], feature_cols
         )
+    for name in evaluation_periods:
+        if buffered[name].empty:
+            raise ValueError(f"Evaluation period {name!r} contains no rows.")
+        scaled_frames[name] = standardizer.transform(buffered[name], feature_cols)
 
     window_size = int(config["model"]["window_size"])
     datasets = {
@@ -481,14 +543,18 @@ def make_datasets(
             future_target_cols=future_target_cols,
             window_size=window_size,
             target_start=(
-                split["train_start"]
+                pd.Timestamp(str(evaluation_periods[name]["start"]), tz="UTC")
+                if name in evaluation_periods
+                else split["train_start"]
                 if name == "train"
                 else split["val_start"]
                 if name == "val"
                 else split["test_start"]
             ),
             target_end=(
-                split["train_end"]
+                pd.Timestamp(str(evaluation_periods[name]["end"]), tz="UTC")
+                if name in evaluation_periods
+                else split["train_end"]
                 if name == "train"
                 else split["val_end"]
                 if name == "val"
@@ -505,6 +571,8 @@ def make_datasets(
     }
     if not buffered["holdout"].empty:
         raw_frames["holdout"] = buffered["holdout"]
+    for name in evaluation_periods:
+        raw_frames[name] = buffered[name]
 
     split_meta = {
         "selected_fold": selected_fold,
@@ -512,6 +580,10 @@ def make_datasets(
         "holdout_tickers": holdout_tickers,
         "feature_cols": feature_cols,
         "future_target_cols": future_target_cols,
+        "evaluation_periods": {
+            name: {"start": str(period["start"]), "end": str(period["end"])}
+            for name, period in evaluation_periods.items()
+        },
     }
     return raw_frames, datasets, standardizer, split_meta
 
@@ -719,6 +791,8 @@ def train_one_epoch(
     model.train()
     total_loss = float(initial_total_loss)
     total_count = int(initial_total_count)
+    epoch_transport_triplets = 0
+    epoch_analogue_anchors = 0
 
     # training hyperparams & new knobs
     training_cfg = config["training"]
@@ -857,10 +931,14 @@ def train_one_epoch(
                     future_prediction=pred,
                     future_target=future_target,
                     ticker=batch["ticker"],
+                    market=batch.get("market"),
+                    timestamp=batch.get("timestamp"),
                     target_names=target_names,
                     target_normalizer=target_normalizer,
                     config=loss_config,
                 )
+                epoch_transport_triplets += loss_breakdown.transport_triplet_count
+                epoch_analogue_anchors += loss_breakdown.eligible_anchor_count
                 
                 # We need to compute gradients occasionally for diagnostics
                 if batch_idx % 100 == 0:
@@ -932,6 +1010,7 @@ def train_one_epoch(
                     "ranking_loss": float(loss_breakdown.ranking.detach().cpu()),
                     "variance_loss": float(loss_breakdown.variance.detach().cpu()),
                     "covariance_loss": float(loss_breakdown.covariance.detach().cpu()),
+                    "transport_loss": float(loss_breakdown.transport.detach().cpu()),
                 })
             _dump_training_failure(
                 reason="nonfinite_loss",
@@ -1040,6 +1119,20 @@ def train_one_epoch(
         if progress_callback is not None:
             progress_callback(batch_idx + 1, total_loss, total_count)
 
+    if loss_config is not None:
+        logger.info(
+            "Outcome geometry coverage: analogue_anchors=%d transport_triplets=%d",
+            epoch_analogue_anchors,
+            epoch_transport_triplets,
+        )
+        if (
+            loss_config.lambda_transport > 0
+            and start_batch == 0
+            and epoch_transport_triplets == 0
+        ):
+            raise RuntimeError(
+                "Temporal transport loss produced zero eligible triplets for the epoch."
+            )
     return total_loss / max(total_count, 1)
 
 
@@ -1599,6 +1692,40 @@ def train(
             future_loss_weight=float(training_cfg.get("future_loss_weight", 1.0)),
             max_return_loss_weight=float(training_cfg.get("max_return_loss_weight", 1.0)),
             min_return_loss_weight=float(training_cfg.get("min_return_loss_weight", 1.0)),
+            analogue_target_names=tuple(
+                str(value)
+                for value in loss_cfg.get(
+                    "analogue_target_names",
+                    (
+                        "future_max_return_63",
+                        "future_min_return_63",
+                        "event_upside_before_drawdown_126",
+                    ),
+                )
+            ),
+            analogue_target_weights=tuple(
+                float(value)
+                for value in loss_cfg.get("analogue_target_weights", (1.0, 1.0, 0.5))
+            ),
+            analogue_candidate_mode=str(
+                loss_cfg.get("analogue_candidate_mode", "cross_ticker")
+            ),
+            minimum_year_gap=int(loss_cfg.get("minimum_year_gap", 0)),
+            balance_candidate_domains=bool(
+                loss_cfg.get("balance_candidate_domains", False)
+            ),
+            lambda_transport=float(loss_cfg.get("lambda_transport", 0.0)),
+            transport_positive_quantile=float(
+                loss_cfg.get("transport_positive_quantile", 0.25)
+            ),
+            transport_negative_quantile=float(
+                loss_cfg.get("transport_negative_quantile", 0.75)
+            ),
+            transport_margin=float(loss_cfg.get("transport_margin", 0.25)),
+            variance_target=float(loss_cfg.get("variance_target", 0.20)),
+            enable_variance_regularizer=bool(
+                loss_cfg.get("enable_variance_regularizer", False)
+            ),
         )
         target_normalizer = OutcomeTargetNormalizer()
         target_names = list(getattr(datasets["train"], "future_target_cols", []))
@@ -1765,7 +1892,11 @@ def train(
     model.load_state_dict(best_state)
 
     report = {}
-    for split_name in ("train", "val", "test"):
+    report_splits = ["train", "val", "test"]
+    report_splits.extend(
+        name for name in datasets if name not in {"train", "val", "test", "holdout"}
+    )
+    for split_name in report_splits:
         config["_active_split_name"] = split_name
         config["_export_latents"] = False
         report[split_name] = evaluate_split(

@@ -180,6 +180,7 @@ class TestPhase4B(unittest.TestCase):
             "ticker": ["AAPL", "MSFT", "GOOG"],
             "sector": ["Tech", "Tech", "Comm"],
             "industry": ["Hardware", "Software", "Internet"],
+            "timestamp": [pd.Timestamp("2019-01-01")] * 3,
             "outcome_available_timestamp": [pd.Timestamp("2020-01-01")] * 3,
             "session_index": [0, 0, 0]
         })
@@ -247,6 +248,74 @@ class TestPhase4B(unittest.TestCase):
         self.assertTrue(torch.isfinite(res.analogue))
         res.total.backward()
         self.assertTrue(torch.isfinite(latent.grad).all())
+
+    def test_transport_loss_uses_cross_period_positive_and_hard_negative(self):
+        latent = torch.tensor(
+            [[1.0, 0.0], [0.9, 0.1], [-1.0, 0.0], [0.8, 0.2]],
+            requires_grad=True,
+        )
+        future_target = torch.tensor(
+            [[1.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 1.0], [0.0, 1.0, 1.0]]
+        )
+        names = [
+            "future_max_return_63",
+            "future_min_return_63",
+            "event_upside_before_drawdown_126",
+        ]
+
+        class IdentityNormalizer:
+            def normalize(self, values, _names):
+                return values
+
+        result = compute_market_memory_loss(
+            latent=latent,
+            future_prediction=torch.zeros_like(future_target),
+            future_target=future_target,
+            ticker=["A", "B", "C", "D"],
+            market=["US", "US", "US", "UK"],
+            timestamp=["2018-01-02", "2021-01-02", "2018-01-03", "2021-01-03"],
+            target_names=names,
+            target_normalizer=IdentityNormalizer(),
+            config=OutcomeGeometryLossConfig(
+                lambda_reg=0.0,
+                lambda_analogue=0.0,
+                lambda_transport=1.0,
+                analogue_candidate_mode="cross_period",
+                minimum_year_gap=2,
+                transport_margin=0.25,
+            ),
+        )
+
+        self.assertGreater(result.transport_triplet_count, 0)
+        self.assertTrue(torch.isfinite(result.transport))
+        result.total.backward()
+        self.assertTrue(torch.isfinite(latent.grad).all())
+
+    def test_transport_loss_rejects_missing_timestamps(self):
+        targets = torch.zeros(3, 3)
+
+        class IdentityNormalizer:
+            def normalize(self, values, _names):
+                return values
+
+        with self.assertRaisesRegex(ValueError, "requires batch timestamps"):
+            compute_market_memory_loss(
+                latent=torch.randn(3, 4),
+                future_prediction=targets,
+                future_target=targets,
+                ticker=["A", "B", "C"],
+                target_names=[
+                    "future_max_return_63",
+                    "future_min_return_63",
+                    "event_upside_before_drawdown_126",
+                ],
+                target_normalizer=IdentityNormalizer(),
+                config=OutcomeGeometryLossConfig(
+                    lambda_reg=0.0,
+                    lambda_transport=0.1,
+                    analogue_candidate_mode="cross_period",
+                ),
+            )
 
 if __name__ == '__main__':
     unittest.main()

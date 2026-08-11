@@ -28,6 +28,23 @@ def test_relative_outcomes_are_cross_sectional_and_sector_fallback_is_causal():
     assert np.isclose(result.loc[2, "future_blended_alpha_63"], -0.20)
 
 
+def test_relative_outcomes_can_be_scoped_to_market():
+    frame = pd.DataFrame(
+        {
+            "ticker": ["US_A", "US_B", "IN_A", "IN_B"],
+            "market": ["US", "US", "India", "India"],
+            "timestamp": pd.to_datetime(["2023-01-01"] * 4, utc=True),
+            "future_return_63": [0.30, 0.10, 0.08, 0.02],
+        }
+    )
+    result = attach_relative_outcomes(
+        frame,
+        RelativeOutcomeConfig(group_column="market", sector_weight=0.0),
+    )
+
+    assert np.allclose(result["future_universe_alpha_63"], [0.10, -0.10, 0.03, -0.03])
+
+
 def test_metric_archive_is_non_pickle_and_round_trips(tmp_path):
     metric = FittedRetrievalMetric(
         kind="diagonal",
