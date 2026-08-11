@@ -746,6 +746,13 @@ def _first_nonfinite_parameter(model: nn.Module) -> str | None:
     return None
 
 
+def _first_nonfinite_buffer(model: nn.Module) -> str | None:
+    for name, value in model.named_buffers():
+        if torch.is_tensor(value) and not torch.isfinite(value.detach()).all():
+            return name
+    return None
+
+
 def _first_nonfinite_gradient(model: nn.Module) -> str | None:
     for name, param in model.named_parameters():
         if param.grad is not None and not torch.isfinite(param.grad.detach()).all():
@@ -770,6 +777,25 @@ def _recover_amp_overflow(
     scaler.update()
     optimizer.zero_grad(set_to_none=True)
     return previous_scale, float(scaler.get_scale())
+
+
+def _resolve_amp_dtype(training_cfg: dict[str, Any], device: torch.device) -> torch.dtype:
+    bf16_supported = bool(
+        device.type == "cuda"
+        and getattr(torch.cuda, "is_bf16_supported", lambda: False)()
+    )
+    requested = str(training_cfg.get("amp_dtype", "auto")).lower()
+    if requested in {"float16", "fp16", "half"}:
+        return torch.float16
+    if requested in {"bfloat16", "bf16"}:
+        if device.type == "cuda" and not bf16_supported:
+            raise RuntimeError("training.amp_dtype=bf16 requires BF16-capable CUDA hardware.")
+        return torch.bfloat16
+    if requested != "auto":
+        raise ValueError("training.amp_dtype must be auto, float16, or bfloat16.")
+    if bf16_supported:
+        return torch.bfloat16
+    return torch.float16
 
 
 def train_one_epoch(
@@ -816,7 +842,12 @@ def train_one_epoch(
     elif "future_return_63" in target_names:
         ret_idx = target_names.index("future_return_63")
 
-    use_amp = scaler is not None and getattr(scaler, "is_enabled", lambda: False)()
+    use_amp = bool(training_cfg.get("use_amp", True)) and device.type == "cuda"
+    amp_dtype = _resolve_amp_dtype(training_cfg, device)
+    amp_forward_fallback = bool(
+        training_cfg.get("amp_forward_fallback_to_fp32", False)
+    )
+    amp_forward_fallback_count = 0
     non_blocking = device.type == "cuda"
     consecutive_amp_overflows = 0
     maximum_consecutive_amp_overflows = int(
@@ -866,6 +897,16 @@ def train_one_epoch(
                 extra={"parameter": bad_param},
             )
             raise RuntimeError(f"Non-finite parameter before forward: {bad_param}")
+        bad_buffer = _first_nonfinite_buffer(model)
+        if bad_buffer is not None:
+            _dump_training_failure(
+                reason="nonfinite_buffer_before_forward",
+                model=model,
+                optimizer=optimizer,
+                batch=batch,
+                extra={"buffer": bad_buffer},
+            )
+            raise RuntimeError(f"Non-finite model buffer before forward: {bad_buffer}")
 
         model_input = sequence
         reconstruction_mask = None
@@ -876,7 +917,7 @@ def train_one_epoch(
             )
 
         # Forward + loss under AMP if enabled
-        with autocast(device_type=device.type, enabled=use_amp):
+        with autocast(device_type=device.type, enabled=use_amp, dtype=amp_dtype):
             outputs = _forward_model(
                 model,
                 model_input,
@@ -885,7 +926,29 @@ def train_one_epoch(
 
             logits = outputs["action_logits"]
             pred = outputs["future_pred"]
+            if (
+                (not torch.isfinite(logits).all() or not torch.isfinite(pred).all())
+                and use_amp
+                and amp_forward_fallback
+                and _first_nonfinite_buffer(model) is None
+            ):
+                logger.warning(
+                    "Non-finite %s AMP output at batch=%d; retrying forward in FP32.",
+                    str(amp_dtype).removeprefix("torch."),
+                    batch_idx,
+                )
+                with autocast(device_type=device.type, enabled=False):
+                    outputs = _forward_model(
+                        model,
+                        model_input.float(),
+                        return_reconstruction=reconstruction_loss_weight > 0,
+                    )
+                logits = outputs["action_logits"]
+                pred = outputs["future_pred"]
+                if torch.isfinite(logits).all() and torch.isfinite(pred).all():
+                    amp_forward_fallback_count += 1
             if not torch.isfinite(logits).all() or not torch.isfinite(pred).all():
+                bad_buffer = _first_nonfinite_buffer(model)
                 _dump_training_failure(
                     reason="nonfinite_model_output",
                     model=model,
@@ -894,6 +957,8 @@ def train_one_epoch(
                     extra={
                         "logits_finite": bool(torch.isfinite(logits).all().item()),
                         "future_pred_finite": bool(torch.isfinite(pred).all().item()),
+                        "amp_dtype": str(amp_dtype),
+                        "nonfinite_buffer": bad_buffer,
                     },
                 )
                 raise FloatingPointError("Non-finite model output.")
@@ -1121,9 +1186,11 @@ def train_one_epoch(
 
     if loss_config is not None:
         logger.info(
-            "Outcome geometry coverage: analogue_anchors=%d transport_triplets=%d",
+            "Outcome geometry coverage: analogue_anchors=%d transport_triplets=%d "
+            "fp32_forward_fallbacks=%d",
             epoch_analogue_anchors,
             epoch_transport_triplets,
+            amp_forward_fallback_count,
         )
         if (
             loss_config.lambda_transport > 0
@@ -1675,7 +1742,16 @@ def train(
     # AMP scaler and option. Avoid positional args here because older torch
     # GradScaler variants interpret the first positional argument as init_scale.
     use_amp = bool(training_cfg.get("use_amp", True))
-    scaler = GradScaler(enabled=(use_amp and device.type == "cuda"))
+    amp_dtype = _resolve_amp_dtype(training_cfg, device)
+    scaler = GradScaler(
+        enabled=(use_amp and device.type == "cuda" and amp_dtype == torch.float16)
+    )
+    logger.info(
+        "AMP enabled=%s dtype=%s grad_scaler=%s",
+        use_amp and device.type == "cuda",
+        str(amp_dtype).removeprefix("torch."),
+        scaler.is_enabled(),
+    )
     
     loss_cfg = config["training"].get("loss")
     loss_config = None

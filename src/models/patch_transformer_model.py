@@ -220,11 +220,13 @@ class HierarchicalPatchTransformerCycleModel(nn.Module):
                 # aggregate weighted writes into per-slot updates [S, d]
                 slot_updates = slot_weights @ write_vec
                 with torch.no_grad():
-                    # exponential moving average style update (runtime, not part of backprop)
-                    self.memory_state.mul_(1.0 - float(self.memory_update_rate))
-                    self.memory_state.add_(
-                        float(self.memory_update_rate) * slot_updates
-                    )
+                    if torch.isfinite(slot_updates).all():
+                        candidate = (
+                            self.memory_state * (1.0 - float(self.memory_update_rate))
+                            + float(self.memory_update_rate) * slot_updates
+                        )
+                        if torch.isfinite(candidate).all():
+                            self.memory_state.copy_(candidate)
         except Exception:
             # be conservative: never fail the forward pass on memory update errors
             pass

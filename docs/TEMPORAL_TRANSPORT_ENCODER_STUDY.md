@@ -16,6 +16,12 @@ uses the deterministic C2 policy with a minimum 21-session hold.
 Both variants use the same patch Transformer, input window, targets, training
 period, seeds, optimizer, memory, policy, and transaction costs.
 
+Both encoders use `memory_mode: static_parameter` with runtime memory updates
+disabled. AMP selects BF16 automatically on supported GPUs and falls back to
+FP32 for an isolated non-finite mixed-precision forward pass. These controls
+keep training deterministic with respect to batch order and protect long
+restartable runs from hidden runtime-buffer contamination.
+
 - `baseline`: masked Huber future-outcome regression.
 - `temporal_transport`: the same regression plus cross-market/cross-period
   analogue KL, temporal hard-negative triplets, and a small anti-collapse term.

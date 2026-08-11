@@ -6,6 +6,62 @@ import yaml
 import scripts.run_temporal_transport_study as study_module
 
 
+def test_encoder_config_freezes_runtime_memory_and_enables_safe_amp(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr(study_module, "PROJECT_ROOT", tmp_path)
+    base = {
+        "data": {"precomputed_dir": "unused"},
+        "model": {},
+        "training": {},
+        "split": {},
+        "features": {"sequence": [], "future_targets": []},
+        "latent_export": {},
+        "evaluation": {},
+    }
+    study = {
+        "data": {
+            "root": "data/international",
+            "markets": ["US", "India"],
+            "market_balanced_sampling": True,
+            "relative_outcomes": {"enabled": True},
+            "cross_sectional_relative_features": {
+                "tech_return_1": "relative_return_1"
+            },
+        },
+        "training": {
+            "epochs": 2,
+            "batch_size": 16,
+            "learning_rate": 0.001,
+            "weight_decay": 0.0,
+            "grad_clip": 1.0,
+            "validation_selection_metric": "future_target_mae",
+            "validation_selection_mode": "min",
+            "use_amp": True,
+            "amp_dtype": "auto",
+            "amp_forward_fallback_to_fp32": True,
+            "checkpoint_interval_steps": 10,
+        },
+        "periods": {
+            "train_years": 2,
+            "validation_years": 1,
+            "test_years": 1,
+            "selected_fold": 0,
+            "observed": {"start": "2025-01-01", "end": "2025-03-31"},
+        },
+        "variants": {"candidate": {"loss": {"lambda_reg": 1.0}}},
+        "hardware": {"vram_fraction": 0.9},
+    }
+
+    config_path, _, _ = study_module._encoder_config(
+        base, study, "candidate", 7, tmp_path / "run"
+    )
+    generated = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+
+    assert generated["model"]["memory_mode"] == "static_parameter"
+    assert generated["model"]["memory_update_rate"] == 0.0
+    assert generated["training"]["amp_dtype"] == "auto"
+    assert generated["training"]["amp_forward_fallback_to_fp32"] is True
+
+
 def test_compare_gates_only_on_development_test(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(study_module, "PROJECT_ROOT", tmp_path)
     config = {

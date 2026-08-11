@@ -46,6 +46,8 @@ training:
   validation_selection_metric: future_target_mae
   validation_selection_mode: min
   use_amp: true
+  amp_dtype: auto
+  amp_forward_fallback_to_fp32: true
   checkpoint_interval_steps: 250
 
 variants:

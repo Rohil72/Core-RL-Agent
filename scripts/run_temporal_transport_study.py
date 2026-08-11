@@ -84,6 +84,12 @@ def _encoder_config(
         }
     )
     resolved["data"].pop("precomputed_dir", None)
+    resolved["model"].update(
+        {
+            "memory_mode": "static_parameter",
+            "memory_update_rate": 0.0,
+        }
+    )
     relative_feature_names = list(data_cfg["cross_sectional_relative_features"].values())
     for feature in relative_feature_names:
         if feature not in resolved["features"]["sequence"]:
@@ -107,6 +113,10 @@ def _encoder_config(
             "validation_selection_metric": str(training["validation_selection_metric"]),
             "validation_selection_mode": str(training["validation_selection_mode"]),
             "use_amp": bool(training["use_amp"]),
+            "amp_dtype": str(training.get("amp_dtype", "auto")),
+            "amp_forward_fallback_to_fp32": bool(
+                training.get("amp_forward_fallback_to_fp32", True)
+            ),
             "checkpoint_interval_steps": int(training["checkpoint_interval_steps"]),
             "auto_resume": True,
             "device": "cuda",
