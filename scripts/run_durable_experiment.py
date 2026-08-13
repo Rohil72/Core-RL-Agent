@@ -35,6 +35,17 @@ def main() -> None:
         help="Project-relative changed source path or glob allowed by the migration.",
     )
     parser.add_argument("--migration-operator", help="Person or automation approving the migration.")
+    parser.add_argument(
+        "--migrate-runtime",
+        action="store_true",
+        help="Audit and accept a safe host-runtime metadata change before checkpoint resume.",
+    )
+    parser.add_argument(
+        "--allow-runtime-field",
+        action="append",
+        default=[],
+        help="Changed top-level runtime field explicitly accepted by the migration.",
+    )
     args = parser.parse_args()
 
     runner = DurableExperimentRunner(
@@ -43,6 +54,8 @@ def main() -> None:
         Path(args.project_root),
     )
     selected_stages = set(args.stages) if args.stages else None
+    if args.migrate_source and args.migrate_runtime:
+        parser.error("Choose either --migrate-source or --migrate-runtime, not both.")
     if args.migrate_source:
         if args.plan or args.plan_summary or args.jobs or args.stages:
             parser.error("--migrate-source cannot be combined with plan, job, or stage execution.")
@@ -51,6 +64,16 @@ def main() -> None:
         result = runner.migrate_source_contract(
             reason=args.migration_reason,
             allowed_paths=args.allow_source_path,
+            operator=args.migration_operator,
+        )
+    elif args.migrate_runtime:
+        if args.plan or args.plan_summary or args.jobs or args.stages:
+            parser.error("--migrate-runtime cannot be combined with plan, job, or stage execution.")
+        if not args.migration_reason:
+            parser.error("--migration-reason is required with --migrate-runtime.")
+        result = runner.migrate_runtime_contract(
+            reason=args.migration_reason,
+            allowed_fields=args.allow_runtime_field,
             operator=args.migration_operator,
         )
     elif args.plan or args.plan_summary:

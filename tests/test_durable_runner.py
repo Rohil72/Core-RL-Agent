@@ -190,3 +190,84 @@ def test_source_migration_rejects_undeclared_or_forbidden_changes(tmp_path: Path
             reason="Attempt a forbidden training configuration migration for validation.",
             allowed_paths=["configs/training.yaml"],
         )
+
+
+def test_runtime_migration_accepts_only_declared_safe_host_fields(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = tmp_path / "result.txt"
+    state = tmp_path / "durable-state"
+    manifest_path = tmp_path / "manifest.yaml"
+    manifest_path.write_text(
+        yaml.safe_dump(
+            {
+                "run": {"id": "runtime-migration", "strict_environment": True},
+                "jobs": [
+                    {
+                        "id": "write",
+                        "command": [
+                            sys.executable,
+                            "-c",
+                            f"from pathlib import Path; Path({str(output)!r}).write_text('ok')",
+                        ],
+                        "expected_outputs": ["result.txt"],
+                    }
+                ],
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    assert DurableExperimentRunner(manifest_path, state, tmp_path).run()["status"] == "completed"
+    original = json.loads((state / "contract.json").read_text(encoding="utf-8"))["runtime"]
+
+    monkeypatch.setattr(
+        "src.orchestration.durable_runner._runtime_fingerprint",
+        lambda: {**original, "release": "replacement-kernel"},
+    )
+    migrated = DurableExperimentRunner(manifest_path, state, tmp_path).migrate_runtime_contract(
+        reason="Accept a spot-instance kernel release change with an identical ML runtime.",
+        allowed_fields=["release"],
+        operator="test",
+    )
+    assert migrated["changed_fields"] == ["release"]
+    assert migrated["completed_jobs_preserved"] == 1
+    record = json.loads(Path(migrated["record"]).read_text(encoding="utf-8"))
+    assert record["changes"]["release"] == {
+        "before": original["release"],
+        "after": "replacement-kernel",
+    }
+
+
+def test_runtime_migration_rejects_ml_runtime_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    state = tmp_path / "durable-state"
+    manifest_path = tmp_path / "manifest.yaml"
+    manifest_path.write_text(
+        yaml.safe_dump(
+            {
+                "run": {"id": "unsafe-runtime", "strict_environment": True},
+                "jobs": [
+                    {
+                        "id": "write",
+                        "command": [sys.executable, "-c", "from pathlib import Path; Path('x').write_text('x')"],
+                        "expected_outputs": ["x"],
+                    }
+                ],
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    assert DurableExperimentRunner(manifest_path, state, tmp_path).run()["status"] == "completed"
+    original = json.loads((state / "contract.json").read_text(encoding="utf-8"))["runtime"]
+    monkeypatch.setattr(
+        "src.orchestration.durable_runner._runtime_fingerprint",
+        lambda: {**original, "torch": "different"},
+    )
+    with pytest.raises(RuntimeError, match="unsafe fields"):
+        DurableExperimentRunner(manifest_path, state, tmp_path).migrate_runtime_contract(
+            reason="Attempt to accept an incompatible machine-learning runtime change.",
+            allowed_fields=["torch"],
+        )

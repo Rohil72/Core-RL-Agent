@@ -33,6 +33,8 @@ FORBIDDEN_SOURCE_MIGRATION_PATTERNS = (
     "scripts/build_final_testbed.py",
 )
 
+SAFE_RUNTIME_MIGRATION_FIELDS = frozenset({"release", "nvidia_driver"})
+
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -502,6 +504,120 @@ class DurableExperimentRunner:
                 "changed_paths": [change["path"] for change in changes],
                 "completed_jobs_preserved": len(completed_jobs),
                 "jobs_reset_to_pending": reset_jobs,
+            }
+        finally:
+            self._release_lock()
+
+    def migrate_runtime_contract(
+        self,
+        *,
+        reason: str,
+        allowed_fields: Iterable[str],
+        operator: str | None = None,
+    ) -> dict[str, Any]:
+        """Audit and accept a host-only runtime change for checkpoint resume."""
+        reason = reason.strip()
+        if len(reason) < 20:
+            raise ValueError("Migration reason must contain at least 20 characters.")
+        normalized_allowed = tuple(
+            sorted({str(field).strip() for field in allowed_fields if str(field).strip()})
+        )
+        if not normalized_allowed:
+            raise ValueError("At least one explicitly allowed runtime field is required.")
+        unsafe = sorted(set(normalized_allowed) - SAFE_RUNTIME_MIGRATION_FIELDS)
+        if unsafe:
+            raise RuntimeError(
+                "Runtime migration may only accept host metadata fields "
+                f"{sorted(SAFE_RUNTIME_MIGRATION_FIELDS)}; unsafe fields requested: {unsafe}"
+            )
+
+        self._acquire_lock()
+        try:
+            if not self.contract_path.exists():
+                raise RuntimeError("Cannot migrate a run before its initial contract has been created.")
+            saved = json.loads(self.contract_path.read_text(encoding="utf-8"))
+            current = self._build_contract()
+            self.runtime_fingerprint = current["runtime"]
+
+            immutable_keys = [
+                "run_id",
+                "manifest_sha256",
+                "source",
+                "inputs",
+                "job_runtimes",
+            ]
+            incompatible = [key for key in immutable_keys if saved.get(key) != current.get(key)]
+            if incompatible:
+                raise RuntimeError(
+                    "Runtime migration refused because non-runtime contract fields changed: "
+                    + ", ".join(incompatible)
+                )
+            if self.manifest.hardware.get("required_runtime_fingerprint") is not None:
+                raise RuntimeError(
+                    "Runtime migration is forbidden for a confirmation run with a pinned runtime fingerprint."
+                )
+
+            old_runtime = saved.get("runtime", {})
+            new_runtime = current["runtime"]
+            changed_fields = sorted(
+                key
+                for key in set(old_runtime) | set(new_runtime)
+                if old_runtime.get(key) != new_runtime.get(key)
+            )
+            if not changed_fields:
+                raise RuntimeError("Runtime migration requested, but the runtime fingerprint is unchanged.")
+            undeclared = sorted(set(changed_fields) - set(normalized_allowed))
+            if undeclared:
+                raise RuntimeError(
+                    "Runtime migration contains undeclared changed fields: " + ", ".join(undeclared)
+                )
+
+            migration_dir = self.state_dir / "migrations"
+            migration_dir.mkdir(parents=True, exist_ok=True)
+            existing_records = sorted(migration_dir.glob("*.json"))
+            sequence = len(existing_records) + 1
+            previous_record_sha256 = (
+                _file_sha256(existing_records[-1]) if existing_records else None
+            )
+            record = {
+                "format_version": 1,
+                "sequence": sequence,
+                "run_id": self.manifest.run_id,
+                "migrated_at": _utc_now(),
+                "operator": operator or os.environ.get("USER") or os.environ.get("USERNAME") or "unknown",
+                "reason": reason,
+                "previous_record_sha256": previous_record_sha256,
+                "allowed_fields": list(normalized_allowed),
+                "changed_fields": changed_fields,
+                "changes": {
+                    field: {"before": old_runtime.get(field), "after": new_runtime.get(field)}
+                    for field in changed_fields
+                },
+                "verified_unchanged": immutable_keys,
+                "completed_jobs_preserved": [
+                    job.job_id
+                    for job in self.manifest.jobs
+                    if (self._job_state(job.job_id) or {}).get("status") == "completed"
+                ],
+            }
+            record["record_payload_sha256"] = _sha256_bytes(
+                json.dumps(record, sort_keys=True).encode("utf-8")
+            )
+            record_path = migration_dir / f"{sequence:04d}_runtime_migration.json"
+            _atomic_json(record_path, record)
+
+            migrated_contract = current
+            migrated_contract["created_at"] = saved.get("created_at", record["migrated_at"])
+            migrated_contract["last_migrated_at"] = record["migrated_at"]
+            migrated_contract["migration_count"] = sequence
+            migrated_contract["migration_head_sha256"] = _file_sha256(record_path)
+            _atomic_json(self.contract_path, migrated_contract)
+            return {
+                "status": "migrated",
+                "run_id": self.manifest.run_id,
+                "record": str(record_path),
+                "changed_fields": changed_fields,
+                "completed_jobs_preserved": len(record["completed_jobs_preserved"]),
             }
         finally:
             self._release_lock()

@@ -295,3 +295,59 @@ The repository, `data/international`, `reports/final_testbed`, and the state
 directory must live on storage that survives instance termination. Graceful
 preemption saves after the current optimizer step; abrupt loss resumes from the
 latest periodic checkpoint.
+
+## Audited spot-instance runtime migration
+
+The strict runtime contract intentionally stops a resumed run when the host
+fingerprint changes. A spot instance may return with a different Linux kernel
+release even though Python, PyTorch, CUDA, cuDNN, the NVIDIA driver, GPU model,
+compute capability, and VRAM are unchanged. Accept only that declared host
+metadata change:
+
+```bash
+.venv/bin/python scripts/run_durable_experiment.py \
+  --manifest "reports/temporal_transport_encoder/$RUN_ID/experiment_manifest.yaml" \
+  --state-dir "reports/temporal_transport_encoder/$RUN_ID/orchestration_state" \
+  --project-root /home/core-rl-phase6 \
+  --migrate-runtime \
+  --allow-runtime-field release \
+  --migration-reason "Spot instance resumed with a different Linux kernel release; Python, PyTorch, CUDA, cuDNN, driver and A30 hardware are identical." \
+  --migration-operator rohil
+```
+
+The migration writes a chained record under `orchestration_state/migrations`,
+preserves completed jobs, and updates the runtime fingerprint. It refuses ML
+runtime, source, manifest, input, or job-environment changes. Resume with the
+ordinary runner command after the migration succeeds.
+
+## Manuscript evidence archive
+
+Create a compact reviewer archive after comparison completes:
+
+```bash
+.venv/bin/python scripts/export_manuscript_evidence.py \
+  --run-root "reports/temporal_transport_encoder/$RUN_ID" \
+  --output "/home/temporal_transport_v2_reviewer_evidence.tar.gz" \
+  --profile reviewer
+```
+
+Repeat `--run-root` to consolidate related historical testbeds. The reviewer
+profile includes contracts, migrations, resolved configurations, comparisons,
+metrics, trades, signals, neighbours, training summaries, audits, provenance,
+and SHA-256 checksums where available. It also writes `missing_evidence.json`;
+absence is never treated as proof.
+
+For private reproducibility storage, the full profile additionally includes
+latent tables, checkpoints, job states, and logs and can therefore be large:
+
+```bash
+.venv/bin/python scripts/export_manuscript_evidence.py \
+  --run-root "reports/temporal_transport_encoder/$RUN_ID" \
+  --output "/home/temporal_transport_v2_full_evidence.tar.gz" \
+  --profile full
+```
+
+Do not upload the full profile to a public repository without checking data
+provider terms and archive size. The reviewer archive supports manuscript
+claims; it does not cure survivorship bias, create point-in-time constituents,
+or turn an observed interval into untouched confirmation data.
