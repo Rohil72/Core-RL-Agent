@@ -64,6 +64,7 @@ def main() -> None:
         result = runner.migrate_source_contract(
             reason=args.migration_reason,
             allowed_paths=args.allow_source_path,
+            allowed_runtime_fields=args.allow_runtime_field,
             operator=args.migration_operator,
         )
     elif args.migrate_runtime:

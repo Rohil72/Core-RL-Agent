@@ -271,3 +271,54 @@ def test_runtime_migration_rejects_ml_runtime_changes(
             reason="Attempt to accept an incompatible machine-learning runtime change.",
             allowed_fields=["torch"],
         )
+
+
+def test_source_migration_can_atomically_accept_safe_host_change(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "runner.py"
+    source.write_text("old", encoding="utf-8")
+    output = tmp_path / "result.txt"
+    state = tmp_path / "durable-state"
+    manifest_path = tmp_path / "manifest.yaml"
+    manifest_path.write_text(
+        yaml.safe_dump(
+            {
+                "run": {
+                    "id": "combined-migration",
+                    "strict_environment": True,
+                    "source_patterns": ["runner.py"],
+                },
+                "jobs": [
+                    {
+                        "id": "write",
+                        "command": [
+                            sys.executable,
+                            "-c",
+                            f"from pathlib import Path; Path({str(output)!r}).write_text('ok')",
+                        ],
+                        "expected_outputs": ["result.txt"],
+                    }
+                ],
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    assert DurableExperimentRunner(manifest_path, state, tmp_path).run()["status"] == "completed"
+    original = json.loads((state / "contract.json").read_text(encoding="utf-8"))["runtime"]
+    source.write_text("new", encoding="utf-8")
+    monkeypatch.setattr(
+        "src.orchestration.durable_runner._runtime_fingerprint",
+        lambda: {**original, "release": "replacement-kernel"},
+    )
+
+    migrated = DurableExperimentRunner(manifest_path, state, tmp_path).migrate_source_contract(
+        reason="Accept operational runner recovery and spot-instance kernel replacement together.",
+        allowed_paths=["runner.py"],
+        allowed_runtime_fields=["release"],
+        operator="test",
+    )
+
+    record = json.loads(Path(migrated["record"]).read_text(encoding="utf-8"))
+    assert record["runtime_changes"]["release"]["after"] == "replacement-kernel"

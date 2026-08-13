@@ -367,9 +367,10 @@ class DurableExperimentRunner:
         *,
         reason: str,
         allowed_paths: Iterable[str],
+        allowed_runtime_fields: Iterable[str] = (),
         operator: str | None = None,
     ) -> dict[str, Any]:
-        """Audit and accept an operational source-only change for checkpoint resume."""
+        """Audit operational source and optional safe host changes for checkpoint resume."""
         reason = reason.strip()
         if len(reason) < 20:
             raise ValueError("Migration reason must contain at least 20 characters.")
@@ -380,6 +381,23 @@ class DurableExperimentRunner:
             raise ValueError("At least one explicitly allowed source path is required.")
         if any(Path(path).is_absolute() or ".." in Path(path).parts for path in normalized_allowed):
             raise ValueError("Allowed source paths must be project-relative and cannot contain '..'.")
+        normalized_runtime_allowed = tuple(
+            sorted(
+                {
+                    str(field).strip()
+                    for field in allowed_runtime_fields
+                    if str(field).strip()
+                }
+            )
+        )
+        unsafe_runtime = sorted(
+            set(normalized_runtime_allowed) - SAFE_RUNTIME_MIGRATION_FIELDS
+        )
+        if unsafe_runtime:
+            raise RuntimeError(
+                "Source migration may only combine safe host metadata fields "
+                f"{sorted(SAFE_RUNTIME_MIGRATION_FIELDS)}; unsafe fields requested: {unsafe_runtime}"
+            )
 
         self._acquire_lock()
         try:
@@ -390,7 +408,7 @@ class DurableExperimentRunner:
             self.runtime_fingerprint = current["runtime"]
 
             immutable_keys = ["run_id", "manifest_sha256", "inputs", "job_runtimes"]
-            if self.manifest.strict_environment:
+            if self.manifest.strict_environment and not normalized_runtime_allowed:
                 immutable_keys.append("runtime")
             incompatible = [key for key in immutable_keys if saved.get(key) != current.get(key)]
             if incompatible:
@@ -402,6 +420,28 @@ class DurableExperimentRunner:
             if required_source is not None:
                 raise RuntimeError(
                     "Source migration is forbidden for a confirmation run with a pinned source fingerprint."
+                )
+
+            old_runtime = saved.get("runtime", {})
+            new_runtime = current["runtime"]
+            runtime_changed_fields = sorted(
+                key
+                for key in set(old_runtime) | set(new_runtime)
+                if old_runtime.get(key) != new_runtime.get(key)
+            )
+            undeclared_runtime = sorted(
+                set(runtime_changed_fields) - set(normalized_runtime_allowed)
+            )
+            if undeclared_runtime:
+                raise RuntimeError(
+                    "Source migration contains undeclared changed runtime fields: "
+                    + ", ".join(undeclared_runtime)
+                )
+            if runtime_changed_fields and self.manifest.hardware.get(
+                "required_runtime_fingerprint"
+            ) is not None:
+                raise RuntimeError(
+                    "Combined runtime migration is forbidden for a confirmation run with a pinned runtime fingerprint."
                 )
 
             changes = _fingerprint_changes(saved.get("source", {}), current["source"])
@@ -459,6 +499,14 @@ class DurableExperimentRunner:
                 "new_source_sha256": current["source"]["sha256"],
                 "allowed_paths": list(normalized_allowed),
                 "changes": changes,
+                "allowed_runtime_fields": list(normalized_runtime_allowed),
+                "runtime_changes": {
+                    field: {
+                        "before": old_runtime.get(field),
+                        "after": new_runtime.get(field),
+                    }
+                    for field in runtime_changed_fields
+                },
                 "verified_unchanged": immutable_keys,
                 "checkpoint_resume_contract": [
                     "training_config_fingerprint",

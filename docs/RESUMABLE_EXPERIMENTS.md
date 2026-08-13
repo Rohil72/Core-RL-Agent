@@ -320,6 +320,23 @@ preserves completed jobs, and updates the runtime fingerprint. It refuses ML
 runtime, source, manifest, input, or job-environment changes. Resume with the
 ordinary runner command after the migration succeeds.
 
+When pulling an operational runner fix and returning on a changed spot-instance
+kernel at the same time, migrate both declared changes atomically:
+
+```bash
+.venv/bin/python scripts/run_durable_experiment.py \
+  --manifest "reports/temporal_transport_encoder/$RUN_ID/experiment_manifest.yaml" \
+  --state-dir "reports/temporal_transport_encoder/$RUN_ID/orchestration_state" \
+  --project-root /home/core-rl-phase6 \
+  --migrate-source \
+  --allow-source-path scripts/run_durable_experiment.py \
+  --allow-source-path scripts/export_manuscript_evidence.py \
+  --allow-source-path src/orchestration/durable_runner.py \
+  --allow-runtime-field release \
+  --migration-reason "Install the audited runtime-resume and evidence-export utilities while accepting only the spot-instance Linux kernel release change." \
+  --migration-operator rohil
+```
+
 ## Manuscript evidence archive
 
 Create a compact reviewer archive after comparison completes:
