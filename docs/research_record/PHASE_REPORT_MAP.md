@@ -23,6 +23,7 @@ the implementation contract.
 | Local rank | `configs/local_rank_ensemble.yaml`, `scripts/run_local_rank_ensemble.py` | `reports/local_rank_ensemble/` | rejected; embedding bug found |
 | Final memory | `configs/final_memory_study.yaml`, `scripts/run_final_memory_study.py` | `reports/final_memory_study/final_memory_study_v1/` | rejected; needs repair |
 | Closing repair | `configs/final_memory_repair.yaml`, `docs/FINAL_MEMORY_REPAIR.md` | `reports/final_memory_repair/final_memory_repair_v1/` | implemented; diagnostic-only until run |
+| Temporal transport | `configs/temporal_transport_study.yaml`, `docs/TEMPORAL_TRANSPORT_ENCODER_STUDY.md` | `reports/temporal_transport_encoder/temporal_transport_v2/` | retrieval gain; pooled-calendar trading metrics need repair |
 
 ## Related Research References
 

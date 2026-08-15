@@ -39,6 +39,7 @@ performance cannot be treated as clean causal evidence.
 11. [Final Memory Study](10_final_memory_study.md)
 12. [Consolidated Findings](11_consolidated_findings.md)
 13. [Q1 Publication Readiness](12_q1_readiness.md)
+14. [Temporal-Transport Encoder Study](13_temporal_transport_encoder.md)
 
 The [Phase Report Map](PHASE_REPORT_MAP.md) links each record to the relevant
 tracked document, config, script, and report directory.
@@ -52,4 +53,6 @@ controllers, rally gates, neutral-state rejection, and regionalization have
 not transferred that information reliably across time or markets. The sealed
 global/global confirmation rejected the selected reliability-filtered policy;
 the final enriched-memory study separately remains invalid pending path-quality
-and inference-coverage repairs.
+and inference-coverage repairs. The later temporal-transport study improved
+causal neighbour quality consistently, but its pooled international trading
+metrics require calendar-valuation repair before they can be interpreted.
