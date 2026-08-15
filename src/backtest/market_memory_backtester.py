@@ -652,12 +652,23 @@ def run_long_only_backtest(
 
 
 def _positions_value(positions: dict[str, dict], rows: pd.DataFrame, price_col: str) -> float:
+    """Mark open positions, carrying the last valid price across missing sessions.
+
+    A pooled multi-market calendar contains dates on which one exchange is open
+    while another is closed.  Omitting an open position on those dates values it
+    at zero and creates a fictitious loss.  Each position therefore retains its
+    latest valid mark until that ticker next appears.
+    """
+
     total = 0.0
     for ticker, pos in positions.items():
         if ticker in rows.index:
             px = float(rows.loc[ticker, price_col])
-            if np.isfinite(px):
-                total += pos["shares"] * px
+            if np.isfinite(px) and px > 0:
+                pos["last_valid_mark"] = px
+        px = pos.get("last_valid_mark")
+        if px is not None and np.isfinite(float(px)) and float(px) > 0:
+            total += pos["shares"] * float(px)
     return float(total)
 
 

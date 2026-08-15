@@ -55,4 +55,8 @@ global/global confirmation rejected the selected reliability-filtered policy;
 the final enriched-memory study separately remains invalid pending path-quality
 and inference-coverage repairs. The later temporal-transport study improved
 causal neighbour quality consistently, but its pooled international trading
-metrics require calendar-valuation repair before they can be interpreted.
+metrics required calendar-valuation repair before they could be interpreted.
+That repair and a frozen, CPU-only closing evaluation harness are now
+implemented; the final baseline-versus-candidate trading conclusion remains
+pending the new twelve-cohort run and must retain the observed-period
+contamination label.

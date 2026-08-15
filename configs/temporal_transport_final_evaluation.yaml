@@ -1,0 +1,64 @@
+schema_version: 1
+
+study:
+  name: temporal_transport_final_evaluation
+  source_run: reports/temporal_transport_encoder/temporal_transport_v2
+  output_root: reports/temporal_transport_final_evaluation
+  diagnostic_only: true
+  promotion_allowed: false
+  frozen_models: true
+
+design:
+  variants: [baseline, temporal_transport]
+  baseline: baseline
+  candidate: temporal_transport
+  seeds: [7, 17, 37]
+  periods: [test, observed]
+  markets: [US, India, China, Brazil, France, UK]
+  development_period: test
+  observed_period: observed
+  observed_period_is_contaminated: true
+
+evaluation:
+  primary_cost_bps: 10
+  cost_sensitivity_bps: [0, 10, 25, 50]
+  momentum_window: 21
+  random_trials: 20
+  random_seed: 1701
+  bootstrap_samples: 2000
+  bootstrap_mean_block_sessions: 21
+  bootstrap_seed: 1701
+  minimum_daily_return: -0.95
+  write_trade_ledgers: true
+
+policy:
+  top_k: 3
+  min_score: 0.0
+  min_expected_upside: 0.0
+  max_expected_downside: 0.12
+  min_confidence: 0.20
+  min_alpha_lcb: 0.0
+  max_downside_cvar: 0.12
+  min_neighbor_count: 15
+  require_ood_pass: false
+  min_hold_days: 5
+  max_hold_days: 63
+  holding_mode: minimum_hold_21
+  exit_score_fraction: 0.50
+  exit_min_score: 0.0
+  stop_loss: 0.10
+  slippage_bps: 10
+  initial_capital: 100000
+  risk_guard_enabled: true
+  cooldown_sessions: 63
+  rolling_loss_window_sessions: 126
+  quarantine_sessions: 126
+  max_stop_losses: 2
+  cumulative_loss_limit: -0.15
+
+development_gates:
+  minimum_seed_wins: 2
+  minimum_mean_pooled_sharpe_delta: 0.0
+  minimum_market_seed_win_fraction: 0.50
+  maximum_candidate_drawdown: 0.25
+

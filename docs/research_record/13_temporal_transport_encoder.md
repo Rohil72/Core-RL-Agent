@@ -196,22 +196,27 @@ Sortino, drawdown, Calmar, and any gate derived from them. It does not alter
 the saved embeddings, neighbour identities, neighbour outcomes, retrieval
 MAEs, NDCG, rank correlations, or concentration diagnostics.
 
-## Required Re-evaluation
+## Closing Re-evaluation Implementation
 
-1. Preserve the six completed models and twelve signal/neighbour tables.
-2. Carry each open position at its last valid close on a market holiday; never
-   execute an order on a closed market.
-3. Preferably compute one equity curve per market and combine synchronized,
-   explicitly currency-treated market returns for the pooled result.
-4. Add invariants rejecting non-positive equity, unexplained one-day collapse,
-   infinite ratios, and inconsistencies between ending return and daily-return
-   compounding.
-5. Rerun baseline, temporal transport, momentum, random, and equal-weight
-   references from the same saved signal tables.
-6. Recreate the comparison and verdict under a new evaluation run ID. Do not
-   overwrite the historical invalid verdict.
-7. Report 2024 as development evidence and 2025 through Q1 2026 as an observed
-   diagnostic only.
+The repair is implemented as a new, frozen evaluation contract:
+
+1. The six completed models and twelve signal tables are inputs; no model is
+   retrained.
+2. The shared backtester carries each open position at its last valid mark when
+   its exchange is closed.
+3. The primary evaluation runs six independent local-currency books and pools
+   only their equal-weight normalized daily returns. It does not claim a
+   globally funded FX-converted wealth portfolio.
+4. Accounting invariants reject non-finite or non-positive equity, implausible
+   one-session collapse, invalid drawdown, and return/equity mismatch.
+5. The fixed comparison includes retrieval, direct model head, 21-session
+   momentum, equal-weight buy-and-hold, and twenty repeated random rankings.
+6. Costs are evaluated at 0, 10, 25, and 50 basis points. Paired uncertainty is
+   estimated by a 2,000-sample stationary bootstrap with a 21-session mean
+   block length.
+7. The new output has its own run ID and preserves the invalid historical
+   verdict. The 2024 period is the development gate; 2025 through Q1 2026 stays
+   diagnostic and promotion remains disabled.
 
 This repair is CPU-only and does not justify changing the encoder, loss,
 memory, policy thresholds, or training data.
@@ -238,4 +243,8 @@ diagnostic and cannot establish untouched temporal confirmation.
 - Historical emitted verdict: `reports/temporal_transport_encoder/temporal_transport_v2/comparison/verdict.json`
 - Study implementation: `scripts/run_temporal_transport_study.py`
 - Study configuration: `configs/temporal_transport_study.yaml`
-- Backtester requiring repair: `src/backtest/market_memory_backtester.py`
+- Closing evaluation: `scripts/run_temporal_transport_final_evaluation.py`
+- Closing configuration: `configs/temporal_transport_final_evaluation.yaml`
+- Statistical helpers: `src/eval/closing_evaluation.py`
+- Citation and decision ledger: `docs/research/TEMPORAL_TRANSPORT_FINAL_EVALUATION_REFERENCES.md`
+- Repaired backtester: `src/backtest/market_memory_backtester.py`

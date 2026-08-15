@@ -92,6 +92,31 @@ def test_final_liquidation_uses_each_tickers_last_available_bar():
     assert equity.iloc[-1]["equity"] > 0
 
 
+def test_missing_market_session_carries_last_valid_position_mark():
+    signals = _signals()
+    missing = (
+        (signals["ticker"] == "AAA")
+        & (signals["timestamp"] == pd.Timestamp("2024-01-03", tz="UTC"))
+    )
+    signals = signals.loc[~missing].copy()
+    policy = PolicyConfig(
+        top_k=1,
+        min_hold_days=10,
+        max_hold_days=20,
+        stop_loss=0.95,
+        slippage_bps=0,
+        initial_capital=1000,
+    )
+
+    _, equity = run_long_only_backtest(signals, policy)
+    missing_day = equity.loc[
+        equity["timestamp"] == pd.Timestamp("2024-01-03", tz="UTC")
+    ].iloc[0]
+
+    assert missing_day["equity"] == 1000.0
+    assert missing_day["positions"] == 1
+
+
 def test_entry_sizing_does_not_use_the_current_close_before_open_execution():
     rows = []
     for day in range(4):

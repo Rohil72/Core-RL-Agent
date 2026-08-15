@@ -136,13 +136,20 @@ def equal_weight_buy_hold(
     first = pivot.apply(
         lambda values: values.dropna().iloc[0] if values.notna().any() else np.nan
     )
-    relative = pivot.divide(first, axis=1).mean(axis=1, skipna=True).dropna()
+    # Carry a security's last observable mark after it enters the portfolio.
+    # This prevents holidays or isolated missing bars from changing the
+    # constituent count or marking an existing holding at zero.
+    relative_by_ticker = pivot.divide(first, axis=1).ffill()
+    relative = relative_by_ticker.mean(axis=1, skipna=True).dropna()
     cost_factor = 1.0 - float(slippage_bps) / 10000.0
     curve = initial_capital * cost_factor * relative
     if len(curve):
         curve.iloc[-1] *= cost_factor
     equity = pd.DataFrame({"timestamp": curve.index, "equity": curve.to_numpy(dtype=float)})
-    equity["return"] = equity["equity"].pct_change().fillna(0.0)
+    equity["return"] = equity["equity"].pct_change()
+    if not equity.empty:
+        equity.loc[equity.index[0], "return"] = equity.iloc[0]["equity"] / initial_capital - 1.0
+    equity["return"] = equity["return"].fillna(0.0)
     equity["drawdown"] = equity["equity"] / equity["equity"].cummax() - 1.0
     equity["exposure"] = 1.0
     return {
