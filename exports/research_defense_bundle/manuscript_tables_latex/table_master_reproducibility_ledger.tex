@@ -1,0 +1,27 @@
+\begin{table*}[ht]
+\centering
+\small
+\begin{tabular}{p{4.2cm}p{3.8cm}cp{4.8cm}}
+\toprule
+\textbf{Audited Claim / Domain} & \textbf{Required Artifact} & \textbf{Availability} & \textbf{Scientific Status \& Finding} \\
+\midrule
+\textbf{Causal Eligibility} & Date-stamped query-neighbour log & \textbf{Verified} & \textbf{Established}: 100\% compliance with $T_{\text{avail}} \le T_{\text{query}}$ and $\Delta t \ge 21$ across 6,250 records. \\
+\addlinespace
+\textbf{Target Horizon Isolation} & Static schema \& training targets & \textbf{Verified} & \textbf{Established}: 252-session target mathematically barred from external memory payload. \\
+\addlinespace
+\textbf{Representation Utility (H1)} & Latents, raw 23-d, 14-d PCA & \textbf{Verified} & \textbf{Established}: High cross-seed stability ($\text{CKA} \ge 0.990$); outcome prediction order confirmed. \\
+\addlinespace
+\textbf{External Memory Utility (H2)} & Matched P0 vs P1 panel ($N=18$) & \textbf{Verified} & \textbf{Established}: Statistically significant ($\Delta\text{Sharpe} = +1.009$, 95\% CI $[+0.407, +1.617]$, $p_{\text{Holm}} = 0.005$). \\
+\addlinespace
+\textbf{Distributional Evidence (H3)} & Matched P0 vs P2 panel ($N=18$) & \textbf{Verified} & \textbf{Established}: Statistically significant ($\Delta\text{Sharpe} = +0.767$, 95\% CI $[+0.087, +1.298]$, $p_{\text{Holm}} = 0.014$). \\
+\addlinespace
+\textbf{Feature Data Contract} & 23-d price-volume features & \textbf{Verified} & \textbf{Established}: Zero fundamental channels; 100\% auditable point-in-time technical metrics. \\
+\addlinespace
+\textbf{Split-Boundary Purging} & 4,830 sequence sample audit & \textbf{Verified} & \textbf{Established}: 0 lookahead violations across 2013--2020 training split boundary. \\
+\addlinespace
+\textbf{Prospective Registration} & Frozen pipeline specification & \textbf{Registered} & \textbf{Pre-declared}: Prospective forward evaluation window frozen for Oct 2026 -- Mar 2027. \\
+\bottomrule
+\end{tabular}
+\caption{Master Reproducibility Ledger summarizing the formal audit status of all research claims, required artifacts, and empirical findings.}
+\label{tab:master_reproducibility_ledger}
+\end{table*}

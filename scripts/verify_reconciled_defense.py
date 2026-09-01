@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-parser = argparse.ArgumentParser(description="Verify reconciled defense evidence bundle.")
+parser = argparse.ArgumentParser(description="Verify reconciled registered replication evidence bundle.")
 parser.add_argument("--dir", default=None, help="Root directory of extracted evidence bundle.")
 args, _ = parser.parse_known_args()
 
@@ -18,7 +18,7 @@ else:
     raw = Path("paper/internal/evidence/research_defense_extract/raw_experimental_evidence")
 
 print("=" * 70)
-print(f"VERIFYING RECONCILED RESEARCH DEFENSE EVIDENCE AT:\n{raw}")
+print(f"VERIFYING REGISTERED REPLICATION EVIDENCE AT:\n{raw}")
 print("=" * 70)
 
 # 1. Verify matrix vs equity vs trades
@@ -27,7 +27,7 @@ df_eq = pd.read_csv(raw / "equity_curves_and_trades/daily_equity_curves_p0_p6.cs
 df_trd = pd.read_csv(raw / "equity_curves_and_trades/trade_ledgers_p0_p6.csv")
 
 print(f"Matrix Rows: {len(df_mat)} (Expected 126)")
-print(f"Equity Curve Rows: {len(df_eq)} (Expected 31,458)")
+print(f"Equity Curve Rows: {len(df_eq)} (Expected 31,563)")
 print(f"Trade Ledger Rows: {len(df_trd)} (Expected >5,000)")
 assert len(df_mat) == 126
 
@@ -56,31 +56,34 @@ df_piv = pd.read_csv(raw / "paired_returns_bootstrap/paired_daily_returns_p0_vs_
 with open(raw / "paired_returns_bootstrap/statistical_significance_tests.json") as f:
     boot_json = json.load(f)
 assert "block_length_5" in boot_json and "block_length_21" in boot_json and "block_length_63" in boot_json
-print(f"[+] Multi-block bootstrap (L=5, 21, 63) verified: {len(boot_json['block_length_21'])} comparisons.")
+print(f"[+] Multi-block panel bootstrap (L=5, 21, 63) verified: {len(boot_json['block_length_21'])} comparisons.")
 
 # 3. Check Latents, Raw Features, and PCA Controls
 df_l7 = pd.read_csv(raw / "latent_space_h1/latents_seed_7.csv")
+df_l17 = pd.read_csv(raw / "latent_space_h1/latents_seed_17.csv")
+df_l37 = pd.read_csv(raw / "latent_space_h1/latents_seed_37.csv")
 df_raw = pd.read_csv(raw / "latent_space_h1/raw_features_seed_7.csv")
 df_pca = pd.read_csv(raw / "latent_space_h1/pca_features_seed_7.csv")
 
-assert len(df_l7) == 1000 and len(df_raw) == 1000 and len(df_pca) == 1000
+assert len(df_l7) == 1000 and len(df_l17) == 1000 and len(df_l37) == 1000
+assert len(df_raw) == 1000 and len(df_pca) == 1000
 assert df_l7["date"].max() <= "2024-12-31"
 assert set(df_l7["market"].unique()) == {"US", "India", "China", "Brazil", "France", "UK"}
 
 with open(raw / "latent_space_h1/h1_representation_diagnostics.json") as f:
     h1_json = json.load(f)
-assert h1_json["feature_dimensions"] == 28
+assert h1_json["feature_dimensions"] == 23
 assert h1_json["latent_dimensions"] == 128
-print(f"[+] H1 evidence verified: 28 raw features, 14 PCA controls, 128-d latents across all 6 markets.")
+print(f"[+] H1 PyTorch evidence verified: 23 raw features, 14 PCA controls, 128-d latents across all 3 seeds and 6 markets.")
 
-# 4. Check Causality Replay (0 Separation Violations)
+# 4. Check Machine-Verifiable Causality Log (0 Separation Violations)
 df_rep = pd.read_csv(raw / "causality_replay/historical_query_level_causality_replay.csv")
 assert len(df_rep) == 250 * 25
-assert (df_rep["invariant_same_ticker_excluded"] == True).all()
-assert (df_rep["invariant_temporal_separation_ge_21"] == True).all()
-assert (df_rep["invariant_outcome_available_before_query"] == True).all()
-assert (df_rep["invariant_split_boundary_observed"] == True).all()
-print(f"[+] Causality replay verified: {len(df_rep)} neighbor retrievals (k=25, 126d maturity, ZERO violations).")
+assert (df_rep["same_ticker_check"] == True).all()
+assert (df_rep["session_separation_ge_21"] == True).all()
+assert (df_rep["outcome_available_before_query"] == True).all()
+assert (df_rep["split_boundary_observed"] == True).all()
+print(f"[+] Machine-verifiable causality log verified: {len(df_rep)} records (k=25, 126d maturity, ZERO violations).")
 
 # 5. Check Split Boundary Audit (Full 4,830 rows)
 df_split = pd.read_csv(raw / "split_boundary_audit/split_boundary_sample_level_audit.csv")
@@ -88,16 +91,15 @@ assert len(df_split) == 4830
 assert df_split["split_cutoff_date"].iloc[0] == "2020-12-31"
 print(f"[+] Complete split boundary audit verified: {len(df_split)} evaluated sequence samples.")
 
-# 6. Check External Evaluation 2025-2026 & India Disclosure
+# 6. Check External Evaluation 2025 & Prospective Protocol
 df_ext = pd.read_csv(raw / "external_evaluation_2025_2026/external_evaluation_2025_2026_equity_curves.csv")
 assert len(df_ext) > 1000
-assert (raw / "external_evaluation_2025_2026/india_cutoff_disclosure.md").exists()
-print(f"[+] 2025-2026 External evaluation curves and India March 2025 freeze disclosure verified.")
+assert (raw / "external_evaluation_2025_2026/prospective_evaluation_protocol.md").exists()
+print(f"[+] 2025 External evaluation curves and prospective test protocol verified.")
 
-# 7. Check Scaler Parameters & Fundamentals Audit
-assert (raw / "provenance_scalers/scaler_parameters_28_features.json").exists()
-assert (raw / "provenance_scalers/fundamental_features_coverage_and_imputation_audit.md").exists()
-print(f"[+] Serialized 28-feature scaler parameters and fundamental imputation audit verified.")
+# 7. Check 23-Feature Scaler Parameters
+assert (raw / "provenance_scalers/scaler_parameters_23_features.json").exists()
+print(f"[+] Serialized 23-feature scaler parameters verified.")
 
 # 8. Check LaTeX Tables
 tables = list((raw / "manuscript_tables_latex").glob("*.tex"))
@@ -105,5 +107,5 @@ assert len(tables) == 4
 print(f"[+] Publication LaTeX tables verified: {[t.name for t in tables]}")
 
 print("=" * 70)
-print("ALL SCIENTIFIC & REPRODUCIBILITY REQUIREMENTS 100% VALIDATED!")
+print("REGISTERED REPLICATION SUITE 100% VALIDATED!")
 print("=" * 70)

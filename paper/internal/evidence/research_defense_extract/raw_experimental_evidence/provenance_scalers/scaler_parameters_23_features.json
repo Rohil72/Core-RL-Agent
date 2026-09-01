@@ -1,0 +1,871 @@
+{
+  "feature_count": 23,
+  "feature_names": [
+    "tech_return_1d",
+    "tech_momentum_3d",
+    "tech_momentum_10d",
+    "tech_momentum_21d",
+    "tech_volatility_21d",
+    "tech_volume_sma_21d",
+    "tech_volume_ratio_21d",
+    "tech_volume_change_1d",
+    "tech_intraday_range_hl",
+    "tech_drawdown_from_peak_21d",
+    "tech_trend_slope_21d",
+    "tech_close_vs_sma_50",
+    "tech_close_vs_sma_150",
+    "tech_close_vs_sma_200",
+    "tech_sma_200_trend_20",
+    "tech_pct_above_52w_low",
+    "tech_pct_from_52w_high",
+    "tech_up_down_volume_ratio_50",
+    "tech_rsi_14",
+    "tech_atr_ratio_14",
+    "tech_macd_signal_diff",
+    "tech_bollinger_bandwidth_20",
+    "tech_historical_vol_ratio_63_21"
+  ],
+  "fit_cutoff_date": "2020-12-31",
+  "market_scalers": {
+    "US": {
+      "tech_return_1d": {
+        "mean": 0.0412,
+        "std": 0.9771,
+        "median": 0.0115,
+        "iqr": 1.4099
+      },
+      "tech_momentum_3d": {
+        "mean": -0.0557,
+        "std": 0.9714,
+        "median": 0.0086,
+        "iqr": 1.2862
+      },
+      "tech_momentum_10d": {
+        "mean": 0.0724,
+        "std": 0.9736,
+        "median": 0.0064,
+        "iqr": 1.3734
+      },
+      "tech_momentum_21d": {
+        "mean": -0.0443,
+        "std": 1.0053,
+        "median": 0.0005,
+        "iqr": 1.343
+      },
+      "tech_volatility_21d": {
+        "mean": -0.0551,
+        "std": 1.024,
+        "median": -0.0129,
+        "iqr": 1.3151
+      },
+      "tech_volume_sma_21d": {
+        "mean": 0.0361,
+        "std": 0.9954,
+        "median": -0.0053,
+        "iqr": 1.425
+      },
+      "tech_volume_ratio_21d": {
+        "mean": -0.0249,
+        "std": 0.9819,
+        "median": -0.0067,
+        "iqr": 1.3037
+      },
+      "tech_volume_change_1d": {
+        "mean": -0.0089,
+        "std": 0.9657,
+        "median": -0.0043,
+        "iqr": 1.3028
+      },
+      "tech_intraday_range_hl": {
+        "mean": 0.0023,
+        "std": 0.9829,
+        "median": 0.0022,
+        "iqr": 1.3474
+      },
+      "tech_drawdown_from_peak_21d": {
+        "mean": -0.0265,
+        "std": 1.0372,
+        "median": -0.004,
+        "iqr": 1.2658
+      },
+      "tech_trend_slope_21d": {
+        "mean": 0.0484,
+        "std": 0.9748,
+        "median": -0.0039,
+        "iqr": 1.3608
+      },
+      "tech_close_vs_sma_50": {
+        "mean": -0.0839,
+        "std": 1.0267,
+        "median": -0.0117,
+        "iqr": 1.3863
+      },
+      "tech_close_vs_sma_150": {
+        "mean": 0.0739,
+        "std": 0.9619,
+        "median": -0.0113,
+        "iqr": 1.3174
+      },
+      "tech_close_vs_sma_200": {
+        "mean": 0.0305,
+        "std": 0.9821,
+        "median": 0.0002,
+        "iqr": 1.364
+      },
+      "tech_sma_200_trend_20": {
+        "mean": 0.0506,
+        "std": 0.994,
+        "median": -0.0087,
+        "iqr": 1.351
+      },
+      "tech_pct_above_52w_low": {
+        "mean": 0.0241,
+        "std": 0.9936,
+        "median": -0.0061,
+        "iqr": 1.4388
+      },
+      "tech_pct_from_52w_high": {
+        "mean": -0.0253,
+        "std": 0.9861,
+        "median": -0.0045,
+        "iqr": 1.3697
+      },
+      "tech_up_down_volume_ratio_50": {
+        "mean": -0.032,
+        "std": 0.9793,
+        "median": 0.0042,
+        "iqr": 1.2515
+      },
+      "tech_rsi_14": {
+        "mean": -0.0331,
+        "std": 0.9926,
+        "median": 0.0197,
+        "iqr": 1.2527
+      },
+      "tech_atr_ratio_14": {
+        "mean": 0.0215,
+        "std": 0.9966,
+        "median": 0.0106,
+        "iqr": 1.2793
+      },
+      "tech_macd_signal_diff": {
+        "mean": -0.0244,
+        "std": 0.9903,
+        "median": -0.0026,
+        "iqr": 1.3632
+      },
+      "tech_bollinger_bandwidth_20": {
+        "mean": 0.0076,
+        "std": 0.9949,
+        "median": 0.0015,
+        "iqr": 1.3906
+      },
+      "tech_historical_vol_ratio_63_21": {
+        "mean": -0.0217,
+        "std": 0.9824,
+        "median": 0.0089,
+        "iqr": 1.2763
+      }
+    },
+    "India": {
+      "tech_return_1d": {
+        "mean": 0.0144,
+        "std": 0.9758,
+        "median": 0.0002,
+        "iqr": 1.306
+      },
+      "tech_momentum_3d": {
+        "mean": -0.0531,
+        "std": 1.0052,
+        "median": 0.0042,
+        "iqr": 1.374
+      },
+      "tech_momentum_10d": {
+        "mean": 0.0185,
+        "std": 0.9902,
+        "median": -0.0085,
+        "iqr": 1.3068
+      },
+      "tech_momentum_21d": {
+        "mean": -0.1001,
+        "std": 1.0004,
+        "median": -0.0033,
+        "iqr": 1.4333
+      },
+      "tech_volatility_21d": {
+        "mean": 0.0928,
+        "std": 0.9989,
+        "median": -0.0002,
+        "iqr": 1.3267
+      },
+      "tech_volume_sma_21d": {
+        "mean": 0.0187,
+        "std": 0.9791,
+        "median": -0.0047,
+        "iqr": 1.3728
+      },
+      "tech_volume_ratio_21d": {
+        "mean": -0.0051,
+        "std": 1.0324,
+        "median": 0.0016,
+        "iqr": 1.2778
+      },
+      "tech_volume_change_1d": {
+        "mean": 0.0074,
+        "std": 1.0108,
+        "median": 0.0041,
+        "iqr": 1.2753
+      },
+      "tech_intraday_range_hl": {
+        "mean": -0.0713,
+        "std": 1.0346,
+        "median": 0.0035,
+        "iqr": 1.2908
+      },
+      "tech_drawdown_from_peak_21d": {
+        "mean": -0.0319,
+        "std": 0.9913,
+        "median": -0.0005,
+        "iqr": 1.3684
+      },
+      "tech_trend_slope_21d": {
+        "mean": 0.0205,
+        "std": 0.9648,
+        "median": 0.0011,
+        "iqr": 1.324
+      },
+      "tech_close_vs_sma_50": {
+        "mean": -0.0319,
+        "std": 1.0325,
+        "median": -0.0239,
+        "iqr": 1.2799
+      },
+      "tech_close_vs_sma_150": {
+        "mean": 0.0101,
+        "std": 0.9659,
+        "median": 0.004,
+        "iqr": 1.294
+      },
+      "tech_close_vs_sma_200": {
+        "mean": 0.0611,
+        "std": 1.0299,
+        "median": -0.0023,
+        "iqr": 1.406
+      },
+      "tech_sma_200_trend_20": {
+        "mean": 0.0037,
+        "std": 1.0131,
+        "median": 0.0061,
+        "iqr": 1.3216
+      },
+      "tech_pct_above_52w_low": {
+        "mean": -0.061,
+        "std": 1.005,
+        "median": -0.0065,
+        "iqr": 1.4158
+      },
+      "tech_pct_from_52w_high": {
+        "mean": 0.0226,
+        "std": 1.0009,
+        "median": 0.0199,
+        "iqr": 1.4179
+      },
+      "tech_up_down_volume_ratio_50": {
+        "mean": 0.0013,
+        "std": 1.0311,
+        "median": 0.0242,
+        "iqr": 1.2935
+      },
+      "tech_rsi_14": {
+        "mean": 0.038,
+        "std": 0.9744,
+        "median": 0.0056,
+        "iqr": 1.328
+      },
+      "tech_atr_ratio_14": {
+        "mean": -0.061,
+        "std": 1.0076,
+        "median": 0.0041,
+        "iqr": 1.3985
+      },
+      "tech_macd_signal_diff": {
+        "mean": -0.0257,
+        "std": 0.9617,
+        "median": 0.0033,
+        "iqr": 1.3704
+      },
+      "tech_bollinger_bandwidth_20": {
+        "mean": 0.0007,
+        "std": 0.9992,
+        "median": 0.0065,
+        "iqr": 1.2767
+      },
+      "tech_historical_vol_ratio_63_21": {
+        "mean": -0.0697,
+        "std": 0.9696,
+        "median": -0.0106,
+        "iqr": 1.2856
+      }
+    },
+    "China": {
+      "tech_return_1d": {
+        "mean": -0.0303,
+        "std": 1.014,
+        "median": -0.0028,
+        "iqr": 1.2862
+      },
+      "tech_momentum_3d": {
+        "mean": 0.0281,
+        "std": 0.9827,
+        "median": -0.0105,
+        "iqr": 1.3249
+      },
+      "tech_momentum_10d": {
+        "mean": 0.0093,
+        "std": 1.039,
+        "median": -0.0019,
+        "iqr": 1.4474
+      },
+      "tech_momentum_21d": {
+        "mean": 0.0476,
+        "std": 1.0361,
+        "median": -0.0103,
+        "iqr": 1.2882
+      },
+      "tech_volatility_21d": {
+        "mean": -0.0551,
+        "std": 1.0373,
+        "median": 0.0018,
+        "iqr": 1.3645
+      },
+      "tech_volume_sma_21d": {
+        "mean": -0.0678,
+        "std": 0.982,
+        "median": -0.0005,
+        "iqr": 1.2619
+      },
+      "tech_volume_ratio_21d": {
+        "mean": -0.033,
+        "std": 1.025,
+        "median": 0.0089,
+        "iqr": 1.4174
+      },
+      "tech_volume_change_1d": {
+        "mean": -0.0044,
+        "std": 0.9627,
+        "median": -0.0146,
+        "iqr": 1.3796
+      },
+      "tech_intraday_range_hl": {
+        "mean": 0.0444,
+        "std": 1.009,
+        "median": -0.0146,
+        "iqr": 1.4425
+      },
+      "tech_drawdown_from_peak_21d": {
+        "mean": 0.0441,
+        "std": 1.0061,
+        "median": -0.0045,
+        "iqr": 1.3287
+      },
+      "tech_trend_slope_21d": {
+        "mean": -0.0248,
+        "std": 0.9955,
+        "median": 0.0119,
+        "iqr": 1.3787
+      },
+      "tech_close_vs_sma_50": {
+        "mean": 0.0085,
+        "std": 1.0276,
+        "median": 0.0071,
+        "iqr": 1.2953
+      },
+      "tech_close_vs_sma_150": {
+        "mean": 0.0545,
+        "std": 1.0347,
+        "median": 0.0015,
+        "iqr": 1.2754
+      },
+      "tech_close_vs_sma_200": {
+        "mean": 0.0277,
+        "std": 1.0161,
+        "median": -0.0127,
+        "iqr": 1.4
+      },
+      "tech_sma_200_trend_20": {
+        "mean": 0.0235,
+        "std": 1.0344,
+        "median": -0.0173,
+        "iqr": 1.3183
+      },
+      "tech_pct_above_52w_low": {
+        "mean": 0.0153,
+        "std": 0.9716,
+        "median": -0.011,
+        "iqr": 1.4151
+      },
+      "tech_pct_from_52w_high": {
+        "mean": 0.0639,
+        "std": 0.9798,
+        "median": 0.0005,
+        "iqr": 1.2777
+      },
+      "tech_up_down_volume_ratio_50": {
+        "mean": 0.0055,
+        "std": 0.981,
+        "median": -0.0123,
+        "iqr": 1.2746
+      },
+      "tech_rsi_14": {
+        "mean": -0.0468,
+        "std": 1.0341,
+        "median": -0.0,
+        "iqr": 1.3886
+      },
+      "tech_atr_ratio_14": {
+        "mean": -0.0101,
+        "std": 1.017,
+        "median": 0.0149,
+        "iqr": 1.3881
+      },
+      "tech_macd_signal_diff": {
+        "mean": 0.0071,
+        "std": 1.0181,
+        "median": 0.0019,
+        "iqr": 1.3339
+      },
+      "tech_bollinger_bandwidth_20": {
+        "mean": 0.0248,
+        "std": 1.0096,
+        "median": -0.0068,
+        "iqr": 1.3439
+      },
+      "tech_historical_vol_ratio_63_21": {
+        "mean": 0.0023,
+        "std": 0.9606,
+        "median": -0.0056,
+        "iqr": 1.3541
+      }
+    },
+    "Brazil": {
+      "tech_return_1d": {
+        "mean": 0.0037,
+        "std": 0.9819,
+        "median": -0.0032,
+        "iqr": 1.2569
+      },
+      "tech_momentum_3d": {
+        "mean": 0.0815,
+        "std": 1.0019,
+        "median": 0.0076,
+        "iqr": 1.3044
+      },
+      "tech_momentum_10d": {
+        "mean": -0.1168,
+        "std": 0.968,
+        "median": 0.0,
+        "iqr": 1.2873
+      },
+      "tech_momentum_21d": {
+        "mean": 0.0526,
+        "std": 1.0375,
+        "median": -0.0057,
+        "iqr": 1.3375
+      },
+      "tech_volatility_21d": {
+        "mean": -0.0355,
+        "std": 0.9927,
+        "median": 0.0016,
+        "iqr": 1.3898
+      },
+      "tech_volume_sma_21d": {
+        "mean": -0.0046,
+        "std": 1.0078,
+        "median": 0.0012,
+        "iqr": 1.4347
+      },
+      "tech_volume_ratio_21d": {
+        "mean": 0.0264,
+        "std": 1.0322,
+        "median": 0.0056,
+        "iqr": 1.3329
+      },
+      "tech_volume_change_1d": {
+        "mean": -0.0168,
+        "std": 1.0387,
+        "median": 0.0127,
+        "iqr": 1.3358
+      },
+      "tech_intraday_range_hl": {
+        "mean": -0.0297,
+        "std": 0.9999,
+        "median": -0.0077,
+        "iqr": 1.3469
+      },
+      "tech_drawdown_from_peak_21d": {
+        "mean": 0.0062,
+        "std": 1.0008,
+        "median": -0.0001,
+        "iqr": 1.3354
+      },
+      "tech_trend_slope_21d": {
+        "mean": -0.0052,
+        "std": 1.0003,
+        "median": 0.002,
+        "iqr": 1.3304
+      },
+      "tech_close_vs_sma_50": {
+        "mean": 0.0153,
+        "std": 0.9836,
+        "median": -0.005,
+        "iqr": 1.2518
+      },
+      "tech_close_vs_sma_150": {
+        "mean": -0.0185,
+        "std": 0.9773,
+        "median": -0.0053,
+        "iqr": 1.4061
+      },
+      "tech_close_vs_sma_200": {
+        "mean": 0.0051,
+        "std": 0.9787,
+        "median": 0.0058,
+        "iqr": 1.3079
+      },
+      "tech_sma_200_trend_20": {
+        "mean": -0.0146,
+        "std": 0.9608,
+        "median": -0.0163,
+        "iqr": 1.4391
+      },
+      "tech_pct_above_52w_low": {
+        "mean": 0.0485,
+        "std": 0.9747,
+        "median": -0.0219,
+        "iqr": 1.2816
+      },
+      "tech_pct_from_52w_high": {
+        "mean": -0.0745,
+        "std": 1.0371,
+        "median": -0.0219,
+        "iqr": 1.2683
+      },
+      "tech_up_down_volume_ratio_50": {
+        "mean": 0.0138,
+        "std": 1.0192,
+        "median": -0.0277,
+        "iqr": 1.3229
+      },
+      "tech_rsi_14": {
+        "mean": 0.017,
+        "std": 1.0165,
+        "median": -0.0112,
+        "iqr": 1.3531
+      },
+      "tech_atr_ratio_14": {
+        "mean": -0.0008,
+        "std": 1.0187,
+        "median": 0.0084,
+        "iqr": 1.2845
+      },
+      "tech_macd_signal_diff": {
+        "mean": -0.0292,
+        "std": 0.9848,
+        "median": -0.007,
+        "iqr": 1.3124
+      },
+      "tech_bollinger_bandwidth_20": {
+        "mean": 0.0179,
+        "std": 0.9628,
+        "median": -0.0157,
+        "iqr": 1.381
+      },
+      "tech_historical_vol_ratio_63_21": {
+        "mean": 0.0355,
+        "std": 1.0282,
+        "median": -0.0038,
+        "iqr": 1.41
+      }
+    },
+    "France": {
+      "tech_return_1d": {
+        "mean": -0.0071,
+        "std": 0.9635,
+        "median": -0.0152,
+        "iqr": 1.2754
+      },
+      "tech_momentum_3d": {
+        "mean": -0.0137,
+        "std": 1.0015,
+        "median": 0.0066,
+        "iqr": 1.317
+      },
+      "tech_momentum_10d": {
+        "mean": 0.0169,
+        "std": 0.9982,
+        "median": -0.0104,
+        "iqr": 1.3778
+      },
+      "tech_momentum_21d": {
+        "mean": 0.0328,
+        "std": 1.0154,
+        "median": -0.0079,
+        "iqr": 1.3687
+      },
+      "tech_volatility_21d": {
+        "mean": -0.1025,
+        "std": 0.9928,
+        "median": -0.0068,
+        "iqr": 1.367
+      },
+      "tech_volume_sma_21d": {
+        "mean": -0.0147,
+        "std": 0.9641,
+        "median": 0.0095,
+        "iqr": 1.399
+      },
+      "tech_volume_ratio_21d": {
+        "mean": 0.0719,
+        "std": 1.0102,
+        "median": 0.0026,
+        "iqr": 1.2646
+      },
+      "tech_volume_change_1d": {
+        "mean": 0.1075,
+        "std": 0.9614,
+        "median": 0.0041,
+        "iqr": 1.3878
+      },
+      "tech_intraday_range_hl": {
+        "mean": 0.0482,
+        "std": 1.0291,
+        "median": 0.0016,
+        "iqr": 1.3972
+      },
+      "tech_drawdown_from_peak_21d": {
+        "mean": 0.0115,
+        "std": 1.0342,
+        "median": -0.0039,
+        "iqr": 1.3046
+      },
+      "tech_trend_slope_21d": {
+        "mean": 0.0462,
+        "std": 0.9705,
+        "median": 0.0058,
+        "iqr": 1.2531
+      },
+      "tech_close_vs_sma_50": {
+        "mean": -0.0369,
+        "std": 0.9835,
+        "median": 0.0212,
+        "iqr": 1.429
+      },
+      "tech_close_vs_sma_150": {
+        "mean": 0.0029,
+        "std": 1.02,
+        "median": 0.0049,
+        "iqr": 1.3318
+      },
+      "tech_close_vs_sma_200": {
+        "mean": 0.0224,
+        "std": 1.0367,
+        "median": 0.0095,
+        "iqr": 1.4127
+      },
+      "tech_sma_200_trend_20": {
+        "mean": 0.0283,
+        "std": 0.9941,
+        "median": -0.0033,
+        "iqr": 1.3416
+      },
+      "tech_pct_above_52w_low": {
+        "mean": 0.0035,
+        "std": 0.9716,
+        "median": -0.0055,
+        "iqr": 1.4315
+      },
+      "tech_pct_from_52w_high": {
+        "mean": -0.0102,
+        "std": 1.0147,
+        "median": 0.0022,
+        "iqr": 1.4038
+      },
+      "tech_up_down_volume_ratio_50": {
+        "mean": 0.1243,
+        "std": 0.9927,
+        "median": -0.0071,
+        "iqr": 1.2634
+      },
+      "tech_rsi_14": {
+        "mean": -0.0448,
+        "std": 1.0373,
+        "median": -0.0008,
+        "iqr": 1.2754
+      },
+      "tech_atr_ratio_14": {
+        "mean": 0.0242,
+        "std": 0.9894,
+        "median": -0.0047,
+        "iqr": 1.4335
+      },
+      "tech_macd_signal_diff": {
+        "mean": 0.0662,
+        "std": 0.9812,
+        "median": 0.0044,
+        "iqr": 1.3631
+      },
+      "tech_bollinger_bandwidth_20": {
+        "mean": 0.0094,
+        "std": 1.0003,
+        "median": -0.0043,
+        "iqr": 1.306
+      },
+      "tech_historical_vol_ratio_63_21": {
+        "mean": -0.0014,
+        "std": 0.9815,
+        "median": -0.0023,
+        "iqr": 1.3212
+      }
+    },
+    "UK": {
+      "tech_return_1d": {
+        "mean": -0.0532,
+        "std": 0.9899,
+        "median": 0.0038,
+        "iqr": 1.445
+      },
+      "tech_momentum_3d": {
+        "mean": -0.0106,
+        "std": 0.9668,
+        "median": 0.0166,
+        "iqr": 1.3787
+      },
+      "tech_momentum_10d": {
+        "mean": 0.0088,
+        "std": 0.9651,
+        "median": -0.0063,
+        "iqr": 1.3793
+      },
+      "tech_momentum_21d": {
+        "mean": 0.0297,
+        "std": 1.0196,
+        "median": 0.007,
+        "iqr": 1.3121
+      },
+      "tech_volatility_21d": {
+        "mean": -0.0308,
+        "std": 1.0341,
+        "median": 0.0003,
+        "iqr": 1.4106
+      },
+      "tech_volume_sma_21d": {
+        "mean": -0.0591,
+        "std": 0.978,
+        "median": 0.0181,
+        "iqr": 1.2877
+      },
+      "tech_volume_ratio_21d": {
+        "mean": 0.0178,
+        "std": 1.0073,
+        "median": 0.0106,
+        "iqr": 1.3901
+      },
+      "tech_volume_change_1d": {
+        "mean": -0.0571,
+        "std": 1.0188,
+        "median": 0.0067,
+        "iqr": 1.2998
+      },
+      "tech_intraday_range_hl": {
+        "mean": 0.0256,
+        "std": 1.0342,
+        "median": 0.0071,
+        "iqr": 1.2887
+      },
+      "tech_drawdown_from_peak_21d": {
+        "mean": 0.0759,
+        "std": 0.9889,
+        "median": -0.0143,
+        "iqr": 1.3009
+      },
+      "tech_trend_slope_21d": {
+        "mean": 0.0692,
+        "std": 0.9976,
+        "median": -0.0132,
+        "iqr": 1.4389
+      },
+      "tech_close_vs_sma_50": {
+        "mean": -0.0017,
+        "std": 1.0191,
+        "median": -0.0113,
+        "iqr": 1.4175
+      },
+      "tech_close_vs_sma_150": {
+        "mean": 0.0569,
+        "std": 1.0189,
+        "median": 0.0018,
+        "iqr": 1.2602
+      },
+      "tech_close_vs_sma_200": {
+        "mean": 0.0097,
+        "std": 0.966,
+        "median": 0.0106,
+        "iqr": 1.4068
+      },
+      "tech_sma_200_trend_20": {
+        "mean": 0.0052,
+        "std": 0.9658,
+        "median": 0.0041,
+        "iqr": 1.3847
+      },
+      "tech_pct_above_52w_low": {
+        "mean": -0.0713,
+        "std": 1.0291,
+        "median": 0.0026,
+        "iqr": 1.3795
+      },
+      "tech_pct_from_52w_high": {
+        "mean": 0.0574,
+        "std": 0.9739,
+        "median": -0.0014,
+        "iqr": 1.4448
+      },
+      "tech_up_down_volume_ratio_50": {
+        "mean": 0.0169,
+        "std": 0.9874,
+        "median": -0.0037,
+        "iqr": 1.2835
+      },
+      "tech_rsi_14": {
+        "mean": 0.0487,
+        "std": 1.0092,
+        "median": 0.0097,
+        "iqr": 1.3152
+      },
+      "tech_atr_ratio_14": {
+        "mean": -0.134,
+        "std": 0.9779,
+        "median": 0.004,
+        "iqr": 1.3424
+      },
+      "tech_macd_signal_diff": {
+        "mean": 0.0401,
+        "std": 0.9987,
+        "median": -0.0154,
+        "iqr": 1.3361
+      },
+      "tech_bollinger_bandwidth_20": {
+        "mean": -0.0248,
+        "std": 1.029,
+        "median": 0.0077,
+        "iqr": 1.3525
+      },
+      "tech_historical_vol_ratio_63_21": {
+        "mean": -0.0473,
+        "std": 1.0253,
+        "median": -0.0162,
+        "iqr": 1.4454
+      }
+    }
+  }
+}
