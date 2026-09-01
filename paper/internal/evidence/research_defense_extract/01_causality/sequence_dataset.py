@@ -133,12 +133,14 @@ class CycleSequenceDataset(Dataset):
         window_size: int,
         target_start: pd.Timestamp | None = None,
         target_end: pd.Timestamp | None = None,
+        max_label_horizon_sessions: int = 0,
     ) -> None:
         self.feature_cols = list(feature_cols)
         self.future_target_cols = list(future_target_cols)
         self.window_size = int(window_size)
         self.target_start = target_start
         self.target_end = target_end
+        self.max_label_horizon_sessions = int(max_label_horizon_sessions)
         self.frame = frame
         self.series: dict[str, dict[str, Any]] = {}
         self.samples: list[tuple[str, int]] = []
@@ -181,6 +183,16 @@ class CycleSequenceDataset(Dataset):
                     continue
                 if self.target_end is not None and timestamp > self.target_end:
                     continue
+                # Split-boundary purging: drop samples whose future label horizon exceeds boundary
+                if self.max_label_horizon_sessions > 0:
+                    if end_idx + self.max_label_horizon_sessions >= len(g):
+                        continue
+                    if self.target_end is not None:
+                        # Ensure future horizon timestamp does not cross target_end
+                        future_ts = g.index[end_idx + self.max_label_horizon_sessions]
+                        if future_ts > self.target_end:
+                            continue
+
                 self.samples.append((ticker, end_idx))
                 self.sample_markets.append(str(self.series[ticker]["market"]))
 

@@ -20,7 +20,7 @@ class RetrievalConfig:
     exclude_query_sector: bool = False
     exclude_query_industry: bool = False
     min_confidence: float | None = None
-    require_outcome_availability: bool = False
+    require_outcome_availability: bool = True
     maximum_memory_age_days: int | None = None
 
 
@@ -44,13 +44,19 @@ def build_retrieval_index(
     config: RetrievalConfig,
 ) -> RetrievalIndex:
     """Precompute immutable filters used by every query against one memory."""
-    if "outcome_available_timestamp" not in memory.columns and config.require_outcome_availability:
-        raise ValueError("Memory frame must contain 'outcome_available_timestamp'.")
-    availability_source = (
-        memory["outcome_available_timestamp"]
-        if "outcome_available_timestamp" in memory
-        else memory["timestamp"]
-    )
+    if "outcome_available_timestamp" in memory.columns:
+        availability_source = memory["outcome_available_timestamp"]
+    elif "timestamp" in memory.columns and config.causal_horizon_sessions > 0:
+        # Enforce maturity offset based on causal_horizon_sessions
+        ts = pd.to_datetime(memory["timestamp"], utc=True, errors="coerce")
+        # Approximate trading session maturity as 7/5 calendar days per session
+        cal_days = int(np.ceil(config.causal_horizon_sessions * 7.0 / 5.0))
+        availability_source = ts + pd.to_timedelta(cal_days, unit="D")
+    else:
+        if config.require_outcome_availability:
+            raise ValueError("Memory frame must contain 'outcome_available_timestamp'.")
+        availability_source = memory["timestamp"]
+
     availability = pd.to_datetime(availability_source, utc=True, errors="coerce")
     # Parquet may preserve timestamps at microsecond precision while Timestamp.value
     # is nanoseconds. Convert explicitly before integer comparison to avoid lookahead.

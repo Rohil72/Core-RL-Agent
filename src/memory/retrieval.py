@@ -20,7 +20,7 @@ class RetrievalConfig:
     exclude_query_sector: bool = False
     exclude_query_industry: bool = False
     min_confidence: float | None = None
-    require_outcome_availability: bool = False
+    require_outcome_availability: bool = True
     maximum_memory_age_days: int | None = None
 
 
@@ -44,13 +44,13 @@ def build_retrieval_index(
     config: RetrievalConfig,
 ) -> RetrievalIndex:
     """Precompute immutable filters used by every query against one memory."""
-    if "outcome_available_timestamp" not in memory.columns and config.require_outcome_availability:
+    if "outcome_available_timestamp" in memory.columns:
+        availability_source = memory["outcome_available_timestamp"]
+    elif config.require_outcome_availability:
         raise ValueError("Memory frame must contain 'outcome_available_timestamp'.")
-    availability_source = (
-        memory["outcome_available_timestamp"]
-        if "outcome_available_timestamp" in memory
-        else memory["timestamp"]
-    )
+    else:
+        availability_source = memory["timestamp"]
+
     availability = pd.to_datetime(availability_source, utc=True, errors="coerce")
     # Parquet may preserve timestamps at microsecond precision while Timestamp.value
     # is nanoseconds. Convert explicitly before integer comparison to avoid lookahead.
