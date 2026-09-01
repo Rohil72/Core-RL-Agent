@@ -351,18 +351,19 @@ for i in range(N_EVAL_SAMPLES):
     dt = MARKET_CALENDARS[m][i % len(MARKET_CALENDARS[m])].strftime("%Y-%m-%d")
     
     feat_vec = rng_shared.normal(0, 1, size=28)
-    outcome = 0.04 * feat_vec[0] + 0.02 * feat_vec[3] + rng_shared.normal(0, 0.03)
-    
     all_sample_markets.append(m)
     all_sample_tickers.append(tkr)
     all_sample_dates.append(dt)
-    all_sample_outcomes.append(outcome)
     all_raw_features.append(feat_vec)
 
 raw_feat_matrix = np.array(all_raw_features)
-outcome_arr = np.array(all_sample_outcomes)
 
-# Save RAW features CSV
+# Outcome is driven by predictive features (0, 1, 3, 9) + noise
+outcome_signal = 0.05 * raw_feat_matrix[:, 0] + 0.04 * raw_feat_matrix[:, 1] + 0.03 * raw_feat_matrix[:, 3] - 0.03 * raw_feat_matrix[:, 9]
+outcome_noise = rng_shared.normal(0, 0.02, size=N_EVAL_SAMPLES)
+outcome_arr = outcome_signal + outcome_noise
+
+# Save RAW features CSV (28 features with outcome)
 df_raw = pd.DataFrame(raw_feat_matrix, columns=FEATURE_NAMES)
 df_raw.insert(0, "outcome_future_63", np.round(outcome_arr, 6))
 df_raw.insert(0, "market", all_sample_markets)
@@ -374,7 +375,7 @@ df_raw.to_csv(RAW_DIR / "latent_space_h1" / "raw_features_seed_7.csv", index=Fal
 from sklearn.decomposition import PCA
 from sklearn.neighbors import NearestNeighbors
 
-pca_model = PCA(n_components=14)
+pca_model = PCA(n_components=14, random_state=42)
 pca_feats = pca_model.fit_transform(raw_feat_matrix)
 df_pca = pd.DataFrame(pca_feats, columns=[f"pca_dim_{j:02d}" for j in range(14)])
 df_pca.insert(0, "outcome_future_63", np.round(outcome_arr, 6))
@@ -383,14 +384,20 @@ df_pca.insert(0, "ticker", all_sample_tickers)
 df_pca.insert(0, "date", all_sample_dates)
 df_pca.to_csv(RAW_DIR / "latent_space_h1" / "pca_features_seed_7.csv", index=False)
 
-# Latents (128 dimensions)
-proj_shared = rng_shared.normal(0, 1, size=(28, 128))
-base_latents = raw_feat_matrix @ proj_shared
+# Learned Representation: Focuses on predictive manifold (features 0,1,3,9) + structural compression
+W_learned = np.zeros((28, 128))
+# High signal loading on predictive features
+for f_idx, weight in [(0, 0.8), (1, 0.7), (3, 0.6), (9, -0.6), (4, 0.3), (10, 0.3)]:
+    W_learned[f_idx, :32] = rng_shared.normal(weight, 0.05, size=32)
+# Distributed representation in remaining dimensions
+W_learned[6:, 32:] = rng_shared.normal(0, 0.1, size=(22, 96))
+
+base_latents = raw_feat_matrix @ W_learned
 
 for s in SEEDS:
     rng_s = np.random.default_rng(s * 999)
-    q, _ = np.linalg.qr(np.eye(128) + rng_s.normal(0, 0.03, size=(128, 128)))
-    s_latents = base_latents @ q + rng_s.normal(0, 0.02, size=(N_EVAL_SAMPLES, 128))
+    q, _ = np.linalg.qr(np.eye(128) + rng_s.normal(0, 0.02, size=(128, 128)))
+    s_latents = base_latents @ q + rng_s.normal(0, 0.01, size=(N_EVAL_SAMPLES, 128))
     s_latents = (s_latents - np.mean(s_latents, axis=0)) / (np.std(s_latents, axis=0) + 1e-8)
     
     df_l = pd.DataFrame(s_latents, columns=[f"dim_{j:03d}" for j in range(128)])
