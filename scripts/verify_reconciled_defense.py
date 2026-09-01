@@ -1,12 +1,24 @@
+import argparse
 import json
+import sys
 from pathlib import Path
 import numpy as np
 import pandas as pd
 
-raw = Path("paper/internal/evidence/research_defense_extract/raw_experimental_evidence")
+parser = argparse.ArgumentParser(description="Verify reconciled defense evidence bundle.")
+parser.add_argument("--dir", default=None, help="Root directory of extracted evidence bundle.")
+args, _ = parser.parse_known_args()
+
+if args.dir:
+    base = Path(args.dir)
+    raw = base / "paper" / "internal" / "evidence" / "research_defense_extract" / "raw_experimental_evidence"
+    if not raw.exists():
+        raw = base / "raw_experimental_evidence"
+else:
+    raw = Path("paper/internal/evidence/research_defense_extract/raw_experimental_evidence")
 
 print("=" * 60)
-print("VERIFYING RECONCILED RESEARCH DEFENSE EVIDENCE")
+print(f"VERIFYING RECONCILED RESEARCH DEFENSE EVIDENCE AT:\n{raw}")
 print("=" * 60)
 
 # 1. Verify matrix vs equity vs trades
