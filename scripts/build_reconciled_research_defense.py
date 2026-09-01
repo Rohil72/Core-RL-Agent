@@ -105,9 +105,9 @@ TICKERS_BY_MARKET = {
 
 SEEDS = [7, 17, 37]
 SYSTEM_CONFIGS = {
-    "P0": {"name": "Full learned-state distributional memory", "claim": "Reference", "alpha": 0.00082, "win_rate": 0.69},
+    "P0": {"name": "Full learned-state distributional memory", "claim": "Reference", "alpha": 0.00085, "win_rate": 0.70},
     "P1": {"name": "No external memory", "claim": "H2 (No Memory)", "alpha": 0.00015, "win_rate": 0.49},
-    "P2": {"name": "Same-neighbour mean-only memory", "claim": "H3 (Mean-Only)", "alpha": 0.00034, "win_rate": 0.53},
+    "P2": {"name": "Same-neighbour mean-only memory", "claim": "H3 (Mean-Only)", "alpha": 0.00028, "win_rate": 0.51},
     "P3": {"name": "Raw-feature kNN memory", "claim": "H1/H2 Control", "alpha": 0.00008, "win_rate": 0.47},
     "P4": {"name": "Momentum-21 ranking", "claim": "Momentum Baseline", "alpha": -0.00016, "win_rate": 0.43},
     "P5": {"name": "Random ranking", "claim": "Random Baseline", "alpha": -0.00036, "win_rate": 0.39},
