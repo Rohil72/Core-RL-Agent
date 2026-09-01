@@ -1,0 +1,19 @@
+\begin{table}[ht]
+\centering
+\small
+\begin{tabular}{llrcccccc}
+\toprule
+\textbf{Sys} & \textbf{System Name} & \textbf{Claim} & \textbf{Return} & \textbf{Sharpe} & \textbf{Sortino} & \textbf{MaxDD} & \textbf{Win\%} & \textbf{Trades} \\
+\midrule
+P0 & Full learned-state distributional memory & Reference & +20.29% & 1.693 & 2.978 & -7.85% & 57.6% & 57 \\
+P1 & No external memory & H2 (No Memory) & +2.18% & 0.152 & 0.265 & -13.46% & 50.1% & 55 \\
+P2 & Same-neighbour mean-only memory & H3 (Mean-Only) & +4.24% & 0.383 & 0.672 & -10.76% & 50.8% & 57 \\
+P3 & Raw-feature kNN memory & H1/H2 Control & +2.78% & 0.239 & 0.391 & -11.05% & 50.8% & 57 \\
+P4 & Momentum-21 ranking & Momentum Baseline & -1.27% & -0.151 & -0.226 & -14.91% & 47.2% & 57 \\
+P5 & Random ranking & Random Baseline & -9.63% & -0.768 & -1.231 & -17.13% & 46.2% & 57 \\
+P6 & Equal-weight buy-and-hold context & Equal Weight Context & +9.56% & 0.882 & 1.516 & -10.02% & 55.7% & 56 \\
+\bottomrule
+\end{tabular}
+\caption{Cross-Market Primary Systems Comparison (P0--P6) across 6 markets $\times$ 3 seeds (126 cells) in the 2024 evaluation window.}
+\label{tab:primary_systems_p0_p6}
+\end{table}

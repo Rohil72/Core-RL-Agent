@@ -1,10 +1,41 @@
 {
-  "normalization_method": "RobustScaler + StandardScaler fit strictly on train split (<= 2020-12-31)",
-  "feature_dimensions": 128,
+  "normalization_method": "RobustScaler (IQR 25-75) + StandardScaler (mean=0, std=1)",
+  "training_fit_cutoff": "2020-12-31",
+  "feature_dimensions": 28,
+  "input_features": [
+    "tech_return_1",
+    "tech_momentum_3",
+    "tech_momentum_10",
+    "tech_momentum_21",
+    "tech_vol_21",
+    "tech_avg_volume_21",
+    "tech_volume_ratio",
+    "tech_volume_change_1",
+    "tech_intraday_range",
+    "tech_drawdown",
+    "tech_trend_slope",
+    "tech_sma_50",
+    "tech_close_vs_sma_50",
+    "tech_sma_150",
+    "tech_close_vs_sma_150",
+    "tech_sma_200",
+    "tech_close_vs_sma_200",
+    "tech_sma_200_trend_20",
+    "tech_52w_low",
+    "tech_52w_high",
+    "tech_pct_above_52w_low",
+    "tech_pct_from_52w_high",
+    "tech_up_down_volume_ratio_50",
+    "fund_pe_ratio",
+    "fund_pb_ratio",
+    "fund_ev_ebitda",
+    "fund_debt_to_equity",
+    "fund_roe"
+  ],
   "scalers_by_market": {
     "US": {
-      "train_sessions": 2016,
-      "features_scaled": 42,
+      "train_fit_sessions": 1826,
+      "features_scaled": 28,
       "outlier_clipping_quantiles": [
         0.01,
         0.99
@@ -12,8 +43,8 @@
       "checkpoint_commit": "23922607a8d45c47c198fde609f0f046440231f7"
     },
     "India": {
-      "train_sessions": 2016,
-      "features_scaled": 42,
+      "train_fit_sessions": 1826,
+      "features_scaled": 28,
       "outlier_clipping_quantiles": [
         0.01,
         0.99
@@ -21,8 +52,8 @@
       "checkpoint_commit": "23922607a8d45c47c198fde609f0f046440231f7"
     },
     "China": {
-      "train_sessions": 2016,
-      "features_scaled": 42,
+      "train_fit_sessions": 1826,
+      "features_scaled": 28,
       "outlier_clipping_quantiles": [
         0.01,
         0.99
@@ -30,8 +61,8 @@
       "checkpoint_commit": "23922607a8d45c47c198fde609f0f046440231f7"
     },
     "Brazil": {
-      "train_sessions": 2016,
-      "features_scaled": 42,
+      "train_fit_sessions": 1826,
+      "features_scaled": 28,
       "outlier_clipping_quantiles": [
         0.01,
         0.99
@@ -39,8 +70,8 @@
       "checkpoint_commit": "23922607a8d45c47c198fde609f0f046440231f7"
     },
     "France": {
-      "train_sessions": 2016,
-      "features_scaled": 42,
+      "train_fit_sessions": 1826,
+      "features_scaled": 28,
       "outlier_clipping_quantiles": [
         0.01,
         0.99
@@ -48,8 +79,8 @@
       "checkpoint_commit": "23922607a8d45c47c198fde609f0f046440231f7"
     },
     "UK": {
-      "train_sessions": 2016,
-      "features_scaled": 42,
+      "train_fit_sessions": 1826,
+      "features_scaled": 28,
       "outlier_clipping_quantiles": [
         0.01,
         0.99

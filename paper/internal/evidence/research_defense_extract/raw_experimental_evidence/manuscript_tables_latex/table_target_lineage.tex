@@ -1,0 +1,20 @@
+\begin{table}[ht]
+\centering
+\small
+\begin{tabular}{llcccl}
+\toprule
+\textbf{Target Name} & \textbf{Target Type} & \textbf{Horizon} & \textbf{Pre-train} & \textbf{Memory/Policy} & \textbf{Causal Role} \\
+\midrule
+\texttt{future\_return\_21} & Forward Return & 21 sessions & Yes & Yes & Short-term retrieval alpha \\
+\texttt{future\_return\_63} & Forward Return & 63 sessions & Yes & Yes & Primary 63-session policy utility \\
+\texttt{future\_return\_126} & Forward Return & 126 sessions & Yes & Yes & Intermediate cycle anchoring \\
+\texttt{future\_return\_252} & Forward Return & 252 sessions & Yes & Yes & Annualized trajectory alignment \\
+\texttt{future\_max\_return\_252} & Maximum Upside & 252 sessions & Yes & \textbf{BARRED} & Self-supervised representation only \\
+\texttt{future\_drawdown\_63} & Maximum Downside & 63 sessions & Yes & Yes & CVaR risk conditioning \\
+\texttt{future\_volatility\_63} & Realized Volatility & 63 sessions & Yes & Yes & Volatility scaling \\
+\texttt{cycle\_direction\_63} & Binary Regime & 63 sessions & Yes & Yes & Trend concordance filter \\
+\bottomrule
+\end{tabular}
+\caption{Target lineage and isolation protocol. The 252-session target $128 \times 28$ is mathematically isolated from inference.}
+\label{tab:target_lineage}
+\end{table}

@@ -1,0 +1,17 @@
+\begin{table}[ht]
+\centering
+\small
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Hypothesis Comparison} & \textbf{$\Delta$Sharpe} & \textbf{95\% Bootstrap CI} & \textbf{$p_{\text{Holm}}$} & \textbf{$q_{\text{FDR}}$} \\
+\midrule
+P0 vs P1 (H2 Memory Benefit) & +1.329 & [+0.695, +1.930] & 0.0050 & 0.00500 \\
+P0 vs P2 (H3 Distributional Benefit) & +1.150 & [+0.568, +1.809] & 0.0050 & 0.00250 \\
+P0 vs P3 (H1 Representation Benefit) & +1.230 & [+0.590, +1.853] & 0.0050 & 0.00167 \\
+P0 vs P4 (Momentum Superiority) & +1.611 & [+0.954, +2.222] & 0.0050 & 0.00125 \\
+P0 vs P5 (Random Superiority) & +2.292 & [+1.700, +2.864] & 0.0050 & 0.00100 \\
+\bottomrule
+\end{tabular}
+\caption{Moving-block bootstrap paired difference tests (21-session blocks, 1,000 replications) for primary hypotheses.}
+\label{tab:statistical_bootstrap}
+\end{table}
