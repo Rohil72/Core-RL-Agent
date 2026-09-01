@@ -263,6 +263,10 @@ def run_long_only_backtest(
             )
 
             if raw_return <= -cfg.stop_loss:
+                # NOTE: stop_loss trigger uses the pre-slippage raw_return.
+                # The actual executed net_return will be ≈ -(stop_loss + 2*slippage_bps/10000)
+                # because the exit fill is slipped. This is the standard next-open execution
+                # convention; adjusting the trigger would introduce partial-fill lookahead.
                 exits.append((ticker, "stop_loss"))
             elif hold_days >= cfg.max_hold_days:
                 exits.append((ticker, "max_hold"))

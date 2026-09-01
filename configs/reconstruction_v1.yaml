@@ -1,0 +1,135 @@
+schema_version: 1
+
+study:
+  title: "Causal Historical Market Memory Reconstruction, Baselines, and Ablations"
+  run_family: "reports/reconstruction_v1"
+  declaration: "New scientific study performed after retrospective inspection under a newly frozen, immutable contract."
+  seeds: [7, 17, 37]
+  device: "cuda"
+  allow_cpu_fallback: true
+  use_amp: true
+
+markets:
+  US:
+    exchange: "NYSE_NASDAQ"
+    currency: "USD"
+    benchmark: "^GSPC"
+    execution_cost_bps: 10.0
+    requested_tickers: [AAPL, MSFT, NVDA, AMZN, GOOGL, META, AVGO, CRM, ORCL, AMD, ADBE, INTU, ISRG, AMGN, REGN, LMT, NOC, V]
+  India:
+    exchange: "NSE"
+    currency: "INR"
+    benchmark: "^NSEI"
+    execution_cost_bps: 20.0
+    requested_tickers: [RELIANCE.NS, TCS.NS, HDFCBANK.NS, INFY.NS, ICICIBANK.NS, BHARTIARTL.NS, SBIN.NS, ITC.NS, HINDUNILVR.NS, LT.NS, BAJFINANCE.NS, HCLTECH.NS, MARUTI.NS, SUNPHARMA.NS, TATAMOTORS.NS, AXISBANK.NS, NTPC.NS, TITAN.NS]
+  China:
+    exchange: "SSE"
+    currency: "CNY"
+    benchmark: "000300.SS"
+    execution_cost_bps: 20.0
+    requested_tickers: [600519.SS, 601398.SS, 601288.SS, 601939.SS, 601857.SS, 600036.SS, 601988.SS, 600276.SS, 601318.SS, 601088.SS, 600900.SS, 600030.SS, 601668.SS, 600028.SS, 601899.SS, 601328.SS, 601998.SS, 600019.SS]
+  Brazil:
+    exchange: "B3"
+    currency: "BRL"
+    benchmark: "^BVSP"
+    execution_cost_bps: 15.0
+    requested_tickers: [PETR4.SA, VALE3.SA, ITUB4.SA, BBDC4.SA, ABEV3.SA, B3SA3.SA, BBAS3.SA, WEGE3.SA, RENT3.SA, SUZB3.SA, GGBR4.SA, RDOR3.SA, LREN3.SA, EQTL3.SA, PRIO3.SA, CIEL3.SA, JBSS3.SA, EMBR3.SA]
+    excluded_tickers:
+      CIEL3.SA: "historical reason unavailable"
+      JBSS3.SA: "historical reason unavailable"
+      EMBR3.SA: "historical reason unavailable"
+  France:
+    exchange: "EURONEXT_PARIS"
+    currency: "EUR"
+    benchmark: "^FCHI"
+    execution_cost_bps: 20.0
+    requested_tickers: [MC.PA, OR.PA, TTE.PA, SAN.PA, AIR.PA, SU.PA, AI.PA, RMS.PA, BNP.PA, EL.PA, CS.PA, CDIB.PA, SAF.PA, DG.PA, KER.PA, BN.PA, DSY.PA, STM.PA]
+    excluded_tickers:
+      STM.PA: "historical reason unavailable"
+  UK:
+    exchange: "LSE"
+    currency: "GBP"
+    benchmark: "^FTSE"
+    execution_cost_bps: 25.0
+    requested_tickers: [SHEL.L, AZN.L, HSBA.L, ULVR.L, BP.L, REL.L, DGE.L, GSK.L, RIO.L, BATS.L, LSEG.L, CPG.L, PRU.L, VOD.L, BA.L, NG.L, EXPN.L, AHT.L]
+    excluded_tickers:
+      AHT.L: "historical reason unavailable"
+
+periods:
+  encoder_fit: ["2013-01-01", "2020-12-31"]
+  encoder_validation: ["2021-01-01", "2021-12-31"]
+  representation_evaluation: ["2022-01-01", "2022-12-31"]
+  policy_development: ["2022-01-01", "2023-12-31"]
+  development_evaluation: ["2024-01-01", "2024-12-31"]
+  later_common_window: ["2025-01-01", "2026-03-31"]
+
+encoder:
+  window_size: 252
+  num_features: 28
+  d_model: 96
+  nhead: 4
+  num_layers: 4
+  patch_size: 5
+  latent_dim: 128
+  num_memory_slots: 8
+  dropout: 0.10
+  training:
+    epochs: 12
+    batch_size: 64
+    learning_rate: 0.0004
+    weight_decay: 0.0001
+    future_loss_weight: 1.0
+    reconstruction_loss_weight: 0.02
+    action_loss_weight: 0.0
+    grad_clip: 5.0
+    strict_cutoff_contract: true
+
+memory:
+  nominal_k: 25
+  min_neighbors: 15
+  causal_horizon_sessions: 126
+  minimum_neighbor_separation_sessions: 21
+  same_ticker_mode: "exclude"
+  aggregation_method: "gaussian"
+  trim_fraction: 0.10
+  tail_fraction: 0.25
+  retrieval_batch_size: 128
+
+policy:
+  initial_capital: 100000.0
+  max_positions: 3
+  min_hold_days: 5
+  max_hold_days: 63
+  stop_loss: 0.10
+  exit_score_fraction: 0.50
+  exit_min_score: 0.0
+  risk_guard_enabled: true
+  cooldown_sessions: 63
+  fill_convention: "next_open"
+
+reliability:
+  target_event: "future_blended_alpha_63 > 0.002"
+  fit_fraction: 0.70
+  calibration_embargo_sessions: 63
+  minimum_fit_rows: 500
+  minimum_calibration_rows: 200
+  logistic_c: 0.10
+  isotonic_minimum_unique_scores: 10
+  nominal_coverage: 0.25
+  sweep_coverages: [0.25, 0.50, 0.75, 1.00]
+
+primary_systems:
+  P0: "Full learned-state distributional memory"
+  P1: "No external memory"
+  P2: "Same-neighbour mean-only memory"
+  P3: "Raw-feature kNN memory"
+  P4: "Momentum-21 ranking"
+  P5: "Random ranking"
+  P6: "Equal-weight buy-and-hold context"
+
+statistical_methods:
+  bootstrap_method: "moving_block"
+  primary_block_length_sessions: 21
+  sensitivity_block_lengths: [5, 63]
+  bootstrap_iterations: 1000
+  multiplicity_correction: "holm"
