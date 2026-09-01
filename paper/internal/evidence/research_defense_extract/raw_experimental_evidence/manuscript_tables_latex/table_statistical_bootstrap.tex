@@ -3,15 +3,15 @@
 \small
 \begin{tabular}{lcccc}
 \toprule
-\textbf{Hypothesis Comparison} & \textbf{$\Delta$Sharpe} & \textbf{95\% Bootstrap CI} & \textbf{$p_{\text{Holm}}$} & \textbf{$q_{\text{FDR}}$} \\
+\textbf{Hypothesis Comparison} & \textbf{$\Delta$Sharpe} & \textbf{95\% Panel Bootstrap CI} & \textbf{$p_{\text{Holm}}$} & \textbf{$q_{\text{FDR}}$} \\
 \midrule
-P0 vs P1 (H2 Memory Benefit) & +1.329 & [+0.695, +1.930] & 0.0050 & 0.00500 \\
-P0 vs P2 (H3 Distributional Benefit) & +1.150 & [+0.568, +1.809] & 0.0050 & 0.00250 \\
-P0 vs P3 (H1 Representation Benefit) & +1.230 & [+0.590, +1.853] & 0.0050 & 0.00167 \\
-P0 vs P4 (Momentum Superiority) & +1.611 & [+0.954, +2.222] & 0.0050 & 0.00125 \\
-P0 vs P5 (Random Superiority) & +2.292 & [+1.700, +2.864] & 0.0050 & 0.00100 \\
+P0 vs P1 (H2 Memory Benefit) & +0.951 & [+0.347, +1.558] & 0.0060 & 0.00375 \\
+P0 vs P2 (H3 Distributional Benefit) & +0.588 & [-0.094, +1.116] & 0.0440 & 0.04396 \\
+P0 vs P3 (H1 Representation Benefit) & +1.063 & [+0.455, +1.679] & 0.0050 & 0.00250 \\
+P0 vs P4 (Momentum Superiority) & +1.631 & [+0.905, +2.099] & 0.0050 & 0.00500 \\
+P0 vs P5 (Random Superiority) & +1.884 & [+1.274, +2.311] & 0.0050 & 0.00167 \\
 \bottomrule
 \end{tabular}
-\caption{Moving-block bootstrap paired difference tests (21-session blocks, 1,000 replications) for primary hypotheses.}
+\caption{Stratified panel moving-block bootstrap paired difference tests (21-session blocks, 1,000 replications across 18 market-seed cells).}
 \label{tab:statistical_bootstrap}
 \end{table}

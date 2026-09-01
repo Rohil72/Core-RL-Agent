@@ -16,5 +16,5 @@ In `reports/final_testbed/phase6_a30_final_v1/data_audit.csv`, fundamental cover
 ### Deterministic Causal Imputation Rule
 To guarantee strictly causal behavior and eliminate lookahead bias:
 1. Point-in-Time Availability: Fundamentals are held constant from their filing timestamp until the next reported period.
-2. Neutral Median Imputation: For securities or historical windows where quarterly fundamental disclosures are absent, features are imputed using the cross-sectional sector median computed strictly on the training partition ($\le 2020-12-31$), or set to zero under standardized coordinates.
-3. Robust Clamping: Imputed values are clamped to $[-5.0, +5.0]$ standard deviations to prevent outlier distortion.
+2. Neutral Median Imputation: For securities or historical windows where quarterly fundamental disclosures are absent, features are imputed using the cross-sectional sector median computed strictly on the training partition (<= 2020-12-31), or set to zero under standardized coordinates.
+3. Robust Clamping: Imputed values are clamped to [-5.0, +5.0] standard deviations to prevent outlier distortion.
