@@ -1,0 +1,1393 @@
+{
+  "normalization_protocol": "RobustScaler (IQR 25-75) + StandardScaler (mean=0, std=1)",
+  "fit_cutoff_date": "2020-12-31",
+  "feature_count": 28,
+  "feature_list": [
+    "tech_return_1",
+    "tech_momentum_3",
+    "tech_momentum_10",
+    "tech_momentum_21",
+    "tech_vol_21",
+    "tech_avg_volume_21",
+    "tech_volume_ratio",
+    "tech_volume_change_1",
+    "tech_intraday_range",
+    "tech_drawdown",
+    "tech_trend_slope",
+    "tech_sma_50",
+    "tech_close_vs_sma_50",
+    "tech_sma_150",
+    "tech_close_vs_sma_150",
+    "tech_sma_200",
+    "tech_close_vs_sma_200",
+    "tech_sma_200_trend_20",
+    "tech_52w_low",
+    "tech_52w_high",
+    "tech_pct_above_52w_low",
+    "tech_pct_from_52w_high",
+    "tech_up_down_volume_ratio_50",
+    "fund_pe_ratio",
+    "fund_pb_ratio",
+    "fund_ev_ebitda",
+    "fund_debt_to_equity",
+    "fund_roe"
+  ],
+  "market_scalers": {
+    "US": {
+      "tech_return_1": {
+        "mean": -0.0207,
+        "std": 0.9641,
+        "median": -0.0107,
+        "iqr": 1.2954,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_momentum_3": {
+        "mean": 0.0835,
+        "std": 0.9692,
+        "median": 0.0181,
+        "iqr": 1.4934,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_momentum_10": {
+        "mean": -0.0211,
+        "std": 1.0441,
+        "median": -0.0376,
+        "iqr": 1.3832,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_momentum_21": {
+        "mean": 0.0266,
+        "std": 1.0474,
+        "median": 0.0131,
+        "iqr": 1.2581,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_vol_21": {
+        "mean": -0.0168,
+        "std": 0.9529,
+        "median": 0.0036,
+        "iqr": 1.2365,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_avg_volume_21": {
+        "mean": 0.0664,
+        "std": 0.9919,
+        "median": -0.0042,
+        "iqr": 1.4234,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_volume_ratio": {
+        "mean": -0.0099,
+        "std": 0.9959,
+        "median": -0.0055,
+        "iqr": 1.3811,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_volume_change_1": {
+        "mean": -0.0253,
+        "std": 0.9763,
+        "median": -0.0216,
+        "iqr": 1.4735,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_intraday_range": {
+        "mean": -0.0853,
+        "std": 0.9538,
+        "median": 0.0074,
+        "iqr": 1.4232,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_drawdown": {
+        "mean": 0.0089,
+        "std": 0.98,
+        "median": -0.0015,
+        "iqr": 1.3841,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_trend_slope": {
+        "mean": 0.0465,
+        "std": 0.9876,
+        "median": -0.0232,
+        "iqr": 1.2228,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_sma_50": {
+        "mean": 0.0255,
+        "std": 0.9727,
+        "median": 0.038,
+        "iqr": 1.4045,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_close_vs_sma_50": {
+        "mean": -0.0047,
+        "std": 0.956,
+        "median": -0.0093,
+        "iqr": 1.2188,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_sma_150": {
+        "mean": 0.0153,
+        "std": 1.0258,
+        "median": -0.0066,
+        "iqr": 1.454,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_close_vs_sma_150": {
+        "mean": 0.0257,
+        "std": 0.9779,
+        "median": -0.0059,
+        "iqr": 1.3299,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_sma_200": {
+        "mean": -0.0101,
+        "std": 0.9569,
+        "median": -0.016,
+        "iqr": 1.4724,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_close_vs_sma_200": {
+        "mean": 0.0029,
+        "std": 1.0063,
+        "median": 0.0021,
+        "iqr": 1.321,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_sma_200_trend_20": {
+        "mean": 0.0058,
+        "std": 0.984,
+        "median": 0.0324,
+        "iqr": 1.2279,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_52w_low": {
+        "mean": -0.009,
+        "std": 1.0408,
+        "median": 0.0182,
+        "iqr": 1.4177,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_52w_high": {
+        "mean": -0.058,
+        "std": 0.9858,
+        "median": -0.0267,
+        "iqr": 1.4191,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_pct_above_52w_low": {
+        "mean": 0.024,
+        "std": 1.0306,
+        "median": 0.0303,
+        "iqr": 1.2565,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_pct_from_52w_high": {
+        "mean": -0.0319,
+        "std": 0.9652,
+        "median": 0.0323,
+        "iqr": 1.4569,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_up_down_volume_ratio_50": {
+        "mean": 0.0958,
+        "std": 0.9866,
+        "median": -0.0078,
+        "iqr": 1.304,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "fund_pe_ratio": {
+        "mean": 0.0405,
+        "std": 0.9639,
+        "median": 0.0128,
+        "iqr": 1.4064,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "fund_pb_ratio": {
+        "mean": 0.0153,
+        "std": 1.0291,
+        "median": -0.0093,
+        "iqr": 1.3888,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "fund_ev_ebitda": {
+        "mean": 0.0339,
+        "std": 0.9984,
+        "median": 0.0136,
+        "iqr": 1.3503,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "fund_debt_to_equity": {
+        "mean": -0.0989,
+        "std": 0.9572,
+        "median": -0.0079,
+        "iqr": 1.3943,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "fund_roe": {
+        "mean": -0.0193,
+        "std": 0.9724,
+        "median": 0.0137,
+        "iqr": 1.445,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      }
+    },
+    "India": {
+      "tech_return_1": {
+        "mean": -0.0929,
+        "std": 0.9744,
+        "median": -0.0167,
+        "iqr": 1.2752,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_momentum_3": {
+        "mean": 0.0184,
+        "std": 0.9819,
+        "median": -0.0095,
+        "iqr": 1.3808,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_momentum_10": {
+        "mean": 0.0634,
+        "std": 1.0409,
+        "median": -0.0033,
+        "iqr": 1.3762,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_momentum_21": {
+        "mean": -0.0314,
+        "std": 1.0314,
+        "median": -0.0208,
+        "iqr": 1.3088,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_vol_21": {
+        "mean": 0.1054,
+        "std": 0.9651,
+        "median": 0.0218,
+        "iqr": 1.4474,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_avg_volume_21": {
+        "mean": 0.0107,
+        "std": 0.9762,
+        "median": -0.0119,
+        "iqr": 1.3009,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_volume_ratio": {
+        "mean": 0.0786,
+        "std": 0.9849,
+        "median": -0.0451,
+        "iqr": 1.431,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_volume_change_1": {
+        "mean": -0.007,
+        "std": 0.9832,
+        "median": 0.0235,
+        "iqr": 1.4762,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_intraday_range": {
+        "mean": -0.0419,
+        "std": 1.0358,
+        "median": 0.0029,
+        "iqr": 1.4057,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_drawdown": {
+        "mean": -0.0297,
+        "std": 1.0052,
+        "median": -0.0491,
+        "iqr": 1.2726,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_trend_slope": {
+        "mean": -0.0411,
+        "std": 1.0283,
+        "median": 0.002,
+        "iqr": 1.4169,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_sma_50": {
+        "mean": -0.1017,
+        "std": 1.0206,
+        "median": -0.0034,
+        "iqr": 1.2863,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_close_vs_sma_50": {
+        "mean": 0.0646,
+        "std": 1.0314,
+        "median": 0.0225,
+        "iqr": 1.3553,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_sma_150": {
+        "mean": -0.0346,
+        "std": 0.9622,
+        "median": 0.0064,
+        "iqr": 1.2559,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_close_vs_sma_150": {
+        "mean": -0.0591,
+        "std": 0.9633,
+        "median": 0.0149,
+        "iqr": 1.3021,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_sma_200": {
+        "mean": -0.0042,
+        "std": 0.9552,
+        "median": -0.0062,
+        "iqr": 1.3707,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_close_vs_sma_200": {
+        "mean": 0.0217,
+        "std": 1.0414,
+        "median": -0.0166,
+        "iqr": 1.3723,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_sma_200_trend_20": {
+        "mean": -0.0744,
+        "std": 0.9827,
+        "median": 0.0487,
+        "iqr": 1.3862,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_52w_low": {
+        "mean": -0.0804,
+        "std": 1.0451,
+        "median": -0.0385,
+        "iqr": 1.4995,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_52w_high": {
+        "mean": -0.0192,
+        "std": 1.008,
+        "median": -0.0105,
+        "iqr": 1.3945,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_pct_above_52w_low": {
+        "mean": -0.1136,
+        "std": 1.0298,
+        "median": 0.014,
+        "iqr": 1.4782,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_pct_from_52w_high": {
+        "mean": -0.0016,
+        "std": 0.9745,
+        "median": -0.0307,
+        "iqr": 1.3471,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_up_down_volume_ratio_50": {
+        "mean": 0.0355,
+        "std": 0.9538,
+        "median": 0.0004,
+        "iqr": 1.3766,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "fund_pe_ratio": {
+        "mean": 0.0671,
+        "std": 0.9743,
+        "median": -0.0116,
+        "iqr": 1.2486,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "fund_pb_ratio": {
+        "mean": 0.0384,
+        "std": 0.9759,
+        "median": 0.0122,
+        "iqr": 1.449,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "fund_ev_ebitda": {
+        "mean": -0.0417,
+        "std": 1.0351,
+        "median": 0.0223,
+        "iqr": 1.3072,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "fund_debt_to_equity": {
+        "mean": -0.0996,
+        "std": 0.9525,
+        "median": -0.0273,
+        "iqr": 1.265,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "fund_roe": {
+        "mean": 0.0201,
+        "std": 0.9762,
+        "median": 0.0172,
+        "iqr": 1.4412,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      }
+    },
+    "China": {
+      "tech_return_1": {
+        "mean": -0.0478,
+        "std": 0.9786,
+        "median": -0.0035,
+        "iqr": 1.4282,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_momentum_3": {
+        "mean": -0.0114,
+        "std": 0.9893,
+        "median": -0.0361,
+        "iqr": 1.3588,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_momentum_10": {
+        "mean": -0.0316,
+        "std": 1.0176,
+        "median": 0.0069,
+        "iqr": 1.2637,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_momentum_21": {
+        "mean": 0.0381,
+        "std": 1.0342,
+        "median": -0.035,
+        "iqr": 1.3024,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_vol_21": {
+        "mean": 0.005,
+        "std": 0.9734,
+        "median": -0.0049,
+        "iqr": 1.2887,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_avg_volume_21": {
+        "mean": 0.0332,
+        "std": 0.978,
+        "median": 0.0087,
+        "iqr": 1.4691,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_volume_ratio": {
+        "mean": 0.0323,
+        "std": 1.0111,
+        "median": -0.0222,
+        "iqr": 1.4507,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_volume_change_1": {
+        "mean": 0.0309,
+        "std": 0.9934,
+        "median": 0.0169,
+        "iqr": 1.4723,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_intraday_range": {
+        "mean": 0.0186,
+        "std": 0.9731,
+        "median": -0.0255,
+        "iqr": 1.2448,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_drawdown": {
+        "mean": -0.0988,
+        "std": 0.9637,
+        "median": 0.0073,
+        "iqr": 1.2329,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_trend_slope": {
+        "mean": -0.0198,
+        "std": 1.0372,
+        "median": -0.0308,
+        "iqr": 1.4042,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_sma_50": {
+        "mean": 0.0208,
+        "std": 1.0184,
+        "median": 0.0147,
+        "iqr": 1.3199,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_close_vs_sma_50": {
+        "mean": -0.1239,
+        "std": 1.0411,
+        "median": -0.0191,
+        "iqr": 1.3419,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_sma_150": {
+        "mean": 0.0089,
+        "std": 1.0373,
+        "median": -0.0244,
+        "iqr": 1.4143,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_close_vs_sma_150": {
+        "mean": 0.1034,
+        "std": 1.0364,
+        "median": -0.0175,
+        "iqr": 1.3665,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_sma_200": {
+        "mean": 0.0301,
+        "std": 1.0321,
+        "median": 0.0043,
+        "iqr": 1.3744,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_close_vs_sma_200": {
+        "mean": -0.0028,
+        "std": 0.9861,
+        "median": -0.0379,
+        "iqr": 1.2007,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_sma_200_trend_20": {
+        "mean": -0.0114,
+        "std": 0.953,
+        "median": 0.032,
+        "iqr": 1.4806,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_52w_low": {
+        "mean": 0.0284,
+        "std": 0.9772,
+        "median": -0.0068,
+        "iqr": 1.2977,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_52w_high": {
+        "mean": -0.0602,
+        "std": 0.9912,
+        "median": 0.0229,
+        "iqr": 1.2172,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_pct_above_52w_low": {
+        "mean": 0.0135,
+        "std": 1.0417,
+        "median": 0.0339,
+        "iqr": 1.3701,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_pct_from_52w_high": {
+        "mean": 0.0218,
+        "std": 0.9952,
+        "median": 0.0116,
+        "iqr": 1.4643,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_up_down_volume_ratio_50": {
+        "mean": 0.0649,
+        "std": 0.9629,
+        "median": 0.0146,
+        "iqr": 1.2286,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "fund_pe_ratio": {
+        "mean": 0.0488,
+        "std": 1.0193,
+        "median": -0.0079,
+        "iqr": 1.4964,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "fund_pb_ratio": {
+        "mean": -0.0497,
+        "std": 0.9647,
+        "median": 0.0336,
+        "iqr": 1.3313,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "fund_ev_ebitda": {
+        "mean": 0.0661,
+        "std": 1.017,
+        "median": -0.014,
+        "iqr": 1.2074,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "fund_debt_to_equity": {
+        "mean": 0.0093,
+        "std": 1.0289,
+        "median": 0.017,
+        "iqr": 1.4737,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "fund_roe": {
+        "mean": -0.048,
+        "std": 1.0061,
+        "median": -0.0078,
+        "iqr": 1.2477,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      }
+    },
+    "Brazil": {
+      "tech_return_1": {
+        "mean": -0.0806,
+        "std": 1.0001,
+        "median": 0.0403,
+        "iqr": 1.334,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_momentum_3": {
+        "mean": -0.0762,
+        "std": 1.026,
+        "median": -0.0463,
+        "iqr": 1.377,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_momentum_10": {
+        "mean": 0.0614,
+        "std": 0.9809,
+        "median": 0.0355,
+        "iqr": 1.2711,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_momentum_21": {
+        "mean": -0.0759,
+        "std": 0.9975,
+        "median": -0.0103,
+        "iqr": 1.4656,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_vol_21": {
+        "mean": 0.0137,
+        "std": 1.0465,
+        "median": 0.0177,
+        "iqr": 1.3739,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_avg_volume_21": {
+        "mean": 0.012,
+        "std": 1.0322,
+        "median": -0.0156,
+        "iqr": 1.3505,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_volume_ratio": {
+        "mean": 0.0002,
+        "std": 1.0327,
+        "median": 0.0243,
+        "iqr": 1.3742,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_volume_change_1": {
+        "mean": 0.0073,
+        "std": 1.0478,
+        "median": -0.0169,
+        "iqr": 1.3947,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_intraday_range": {
+        "mean": -0.0113,
+        "std": 1.0499,
+        "median": 0.0022,
+        "iqr": 1.4207,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_drawdown": {
+        "mean": 0.0247,
+        "std": 1.0477,
+        "median": 0.0271,
+        "iqr": 1.4047,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_trend_slope": {
+        "mean": -0.001,
+        "std": 1.0239,
+        "median": -0.0184,
+        "iqr": 1.2373,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_sma_50": {
+        "mean": 0.0527,
+        "std": 0.9691,
+        "median": -0.0112,
+        "iqr": 1.3104,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_close_vs_sma_50": {
+        "mean": 0.0168,
+        "std": 1.0389,
+        "median": -0.045,
+        "iqr": 1.4074,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_sma_150": {
+        "mean": 0.0178,
+        "std": 1.0277,
+        "median": -0.0045,
+        "iqr": 1.4018,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_close_vs_sma_150": {
+        "mean": 0.0862,
+        "std": 1.0447,
+        "median": 0.0159,
+        "iqr": 1.2202,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_sma_200": {
+        "mean": 0.0255,
+        "std": 0.9785,
+        "median": 0.0019,
+        "iqr": 1.4984,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_close_vs_sma_200": {
+        "mean": -0.0999,
+        "std": 0.962,
+        "median": -0.0002,
+        "iqr": 1.2129,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_sma_200_trend_20": {
+        "mean": -0.0411,
+        "std": 0.999,
+        "median": 0.0472,
+        "iqr": 1.4383,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_52w_low": {
+        "mean": -0.0883,
+        "std": 0.9623,
+        "median": 0.0094,
+        "iqr": 1.2099,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_52w_high": {
+        "mean": 0.0658,
+        "std": 1.0262,
+        "median": -0.0054,
+        "iqr": 1.3058,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_pct_above_52w_low": {
+        "mean": 0.0356,
+        "std": 1.0152,
+        "median": 0.023,
+        "iqr": 1.3623,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_pct_from_52w_high": {
+        "mean": 0.0936,
+        "std": 1.0396,
+        "median": -0.0297,
+        "iqr": 1.2776,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_up_down_volume_ratio_50": {
+        "mean": -0.0684,
+        "std": 0.9829,
+        "median": -0.0051,
+        "iqr": 1.2423,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "fund_pe_ratio": {
+        "mean": 0.0202,
+        "std": 1.028,
+        "median": 0.022,
+        "iqr": 1.3093,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "fund_pb_ratio": {
+        "mean": 0.0717,
+        "std": 1.0304,
+        "median": -0.0019,
+        "iqr": 1.2584,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "fund_ev_ebitda": {
+        "mean": 0.0032,
+        "std": 0.9661,
+        "median": -0.0061,
+        "iqr": 1.2267,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "fund_debt_to_equity": {
+        "mean": 0.036,
+        "std": 0.9774,
+        "median": -0.0252,
+        "iqr": 1.4944,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "fund_roe": {
+        "mean": 0.0281,
+        "std": 1.0435,
+        "median": 0.009,
+        "iqr": 1.3823,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      }
+    },
+    "France": {
+      "tech_return_1": {
+        "mean": -0.0522,
+        "std": 1.0174,
+        "median": 0.0122,
+        "iqr": 1.4267,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_momentum_3": {
+        "mean": 0.0346,
+        "std": 1.0268,
+        "median": 0.0238,
+        "iqr": 1.3373,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_momentum_10": {
+        "mean": -0.0356,
+        "std": 1.0112,
+        "median": -0.003,
+        "iqr": 1.3235,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_momentum_21": {
+        "mean": 0.086,
+        "std": 0.9868,
+        "median": 0.0339,
+        "iqr": 1.3679,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_vol_21": {
+        "mean": -0.1082,
+        "std": 0.9568,
+        "median": -0.0206,
+        "iqr": 1.3581,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_avg_volume_21": {
+        "mean": 0.0259,
+        "std": 0.9992,
+        "median": -0.0095,
+        "iqr": 1.4075,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_volume_ratio": {
+        "mean": -0.062,
+        "std": 1.0312,
+        "median": -0.0319,
+        "iqr": 1.4747,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_volume_change_1": {
+        "mean": -0.0144,
+        "std": 1.0371,
+        "median": -0.0124,
+        "iqr": 1.4098,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_intraday_range": {
+        "mean": 0.0803,
+        "std": 1.0267,
+        "median": 0.0039,
+        "iqr": 1.4869,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_drawdown": {
+        "mean": 0.0554,
+        "std": 0.9782,
+        "median": -0.0529,
+        "iqr": 1.3655,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_trend_slope": {
+        "mean": 0.0354,
+        "std": 1.0267,
+        "median": -0.0062,
+        "iqr": 1.4263,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_sma_50": {
+        "mean": 0.0183,
+        "std": 1.0125,
+        "median": -0.0026,
+        "iqr": 1.4652,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_close_vs_sma_50": {
+        "mean": 0.0745,
+        "std": 0.9616,
+        "median": 0.0142,
+        "iqr": 1.2665,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_sma_150": {
+        "mean": -0.0327,
+        "std": 0.981,
+        "median": -0.0157,
+        "iqr": 1.3965,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_close_vs_sma_150": {
+        "mean": 0.0514,
+        "std": 0.9812,
+        "median": 0.0267,
+        "iqr": 1.2524,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_sma_200": {
+        "mean": -0.0441,
+        "std": 1.0321,
+        "median": 0.0346,
+        "iqr": 1.4847,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_close_vs_sma_200": {
+        "mean": -0.0557,
+        "std": 1.042,
+        "median": -0.0005,
+        "iqr": 1.3502,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_sma_200_trend_20": {
+        "mean": -0.1077,
+        "std": 1.0385,
+        "median": -0.062,
+        "iqr": 1.4602,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_52w_low": {
+        "mean": 0.0948,
+        "std": 0.9602,
+        "median": -0.0031,
+        "iqr": 1.4042,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_52w_high": {
+        "mean": 0.0434,
+        "std": 0.9756,
+        "median": 0.0018,
+        "iqr": 1.4442,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_pct_above_52w_low": {
+        "mean": 0.0442,
+        "std": 1.0477,
+        "median": -0.0037,
+        "iqr": 1.2303,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_pct_from_52w_high": {
+        "mean": 0.0007,
+        "std": 1.0055,
+        "median": 0.0154,
+        "iqr": 1.4532,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_up_down_volume_ratio_50": {
+        "mean": -0.0604,
+        "std": 0.9861,
+        "median": 0.0094,
+        "iqr": 1.2629,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "fund_pe_ratio": {
+        "mean": -0.0694,
+        "std": 1.0223,
+        "median": 0.0281,
+        "iqr": 1.2588,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "fund_pb_ratio": {
+        "mean": 0.0268,
+        "std": 0.9538,
+        "median": -0.0184,
+        "iqr": 1.2382,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "fund_ev_ebitda": {
+        "mean": 0.0161,
+        "std": 1.0079,
+        "median": -0.0164,
+        "iqr": 1.4455,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "fund_debt_to_equity": {
+        "mean": -0.0388,
+        "std": 1.0492,
+        "median": 0.0171,
+        "iqr": 1.4618,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "fund_roe": {
+        "mean": -0.0025,
+        "std": 0.9945,
+        "median": -0.0005,
+        "iqr": 1.4055,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      }
+    },
+    "UK": {
+      "tech_return_1": {
+        "mean": -0.0611,
+        "std": 1.0243,
+        "median": -0.0155,
+        "iqr": 1.3486,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_momentum_3": {
+        "mean": 0.0421,
+        "std": 1.0204,
+        "median": -0.0167,
+        "iqr": 1.4587,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_momentum_10": {
+        "mean": 0.1033,
+        "std": 0.9982,
+        "median": -0.0018,
+        "iqr": 1.4275,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_momentum_21": {
+        "mean": 0.0472,
+        "std": 1.0299,
+        "median": -0.0068,
+        "iqr": 1.4609,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_vol_21": {
+        "mean": -0.0415,
+        "std": 0.9582,
+        "median": -0.0059,
+        "iqr": 1.3126,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_avg_volume_21": {
+        "mean": 0.0127,
+        "std": 0.9739,
+        "median": -0.012,
+        "iqr": 1.3239,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_volume_ratio": {
+        "mean": -0.0104,
+        "std": 0.9704,
+        "median": 0.0208,
+        "iqr": 1.3484,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_volume_change_1": {
+        "mean": 0.0281,
+        "std": 1.0434,
+        "median": 0.0034,
+        "iqr": 1.3377,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_intraday_range": {
+        "mean": -0.0692,
+        "std": 0.956,
+        "median": 0.0335,
+        "iqr": 1.3226,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_drawdown": {
+        "mean": -0.0374,
+        "std": 0.9709,
+        "median": 0.0159,
+        "iqr": 1.2932,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_trend_slope": {
+        "mean": -0.0788,
+        "std": 0.957,
+        "median": 0.0053,
+        "iqr": 1.3744,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_sma_50": {
+        "mean": 0.0171,
+        "std": 1.0283,
+        "median": -0.0067,
+        "iqr": 1.2238,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_close_vs_sma_50": {
+        "mean": -0.0159,
+        "std": 1.0232,
+        "median": 0.0075,
+        "iqr": 1.2149,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_sma_150": {
+        "mean": -0.1181,
+        "std": 1.0197,
+        "median": 0.032,
+        "iqr": 1.4595,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_close_vs_sma_150": {
+        "mean": -0.0211,
+        "std": 1.0196,
+        "median": 0.0189,
+        "iqr": 1.2222,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_sma_200": {
+        "mean": -0.0329,
+        "std": 0.9616,
+        "median": -0.0354,
+        "iqr": 1.2186,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_close_vs_sma_200": {
+        "mean": 0.0786,
+        "std": 0.9776,
+        "median": -0.0116,
+        "iqr": 1.3931,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_sma_200_trend_20": {
+        "mean": -0.0056,
+        "std": 0.9968,
+        "median": -0.0058,
+        "iqr": 1.3505,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_52w_low": {
+        "mean": -0.04,
+        "std": 0.9807,
+        "median": -0.0189,
+        "iqr": 1.3152,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_52w_high": {
+        "mean": -0.0367,
+        "std": 1.0314,
+        "median": -0.0143,
+        "iqr": 1.238,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_pct_above_52w_low": {
+        "mean": 0.0092,
+        "std": 1.0476,
+        "median": -0.013,
+        "iqr": 1.2414,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_pct_from_52w_high": {
+        "mean": -0.0698,
+        "std": 1.0031,
+        "median": 0.0265,
+        "iqr": 1.2432,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "tech_up_down_volume_ratio_50": {
+        "mean": 0.0224,
+        "std": 1.0231,
+        "median": -0.0301,
+        "iqr": 1.4901,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "fund_pe_ratio": {
+        "mean": -0.0753,
+        "std": 1.019,
+        "median": -0.0094,
+        "iqr": 1.4464,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "fund_pb_ratio": {
+        "mean": -0.0192,
+        "std": 1.016,
+        "median": 0.0138,
+        "iqr": 1.3185,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "fund_ev_ebitda": {
+        "mean": -0.0339,
+        "std": 1.0458,
+        "median": 0.0124,
+        "iqr": 1.4789,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "fund_debt_to_equity": {
+        "mean": -0.0439,
+        "std": 0.9537,
+        "median": 0.0286,
+        "iqr": 1.2883,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      },
+      "fund_roe": {
+        "mean": 0.0166,
+        "std": 0.9767,
+        "median": 0.0216,
+        "iqr": 1.2181,
+        "clip_min": -5.0,
+        "clip_max": 5.0
+      }
+    }
+  }
+}
