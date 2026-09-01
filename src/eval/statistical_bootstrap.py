@@ -12,7 +12,7 @@ import logging
 from dataclasses import dataclass
 from itertools import combinations
 from math import comb
-from typing import Any, Callable, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
 import numpy as np
 import pandas as pd
@@ -214,3 +214,72 @@ def compute_pbo_from_matrix(
         evaluated += 1
 
     return float(below_median / evaluated) if evaluated > 0 else 0.0
+
+
+def run_primary_comparison_bootstrap_suite(
+    returns_by_system: Mapping[str, np.ndarray | pd.Series],
+    block_lengths: Sequence[int] = (5, 21, 63),
+    n_bootstraps: int = 1000,
+    confidence_level: float = 0.95,
+    random_seed: int = 7,
+) -> dict[str, Any]:
+    """Execute complete bootstrap significance testing across block lengths."""
+    def sharpe_metric(r: np.ndarray) -> float:
+        mu = float(np.nanmean(r))
+        sigma = float(np.nanstd(r, ddof=1))
+        if sigma <= 1e-12 or not np.isfinite(sigma):
+            return 0.0
+        return float(np.sqrt(252) * (mu / sigma))
+
+    comparisons = [
+        ("P0 vs P1 (H2 Memory Benefit)", "P0", "P1"),
+        ("P0 vs P2 (H3 Distributional Benefit)", "P0", "P2"),
+        ("P0 vs P3 (H1 Representation Benefit)", "P0", "P3"),
+        ("P0 vs P4 (Momentum Superiority)", "P0", "P4"),
+        ("P0 vs P5 (Random Superiority)", "P0", "P5"),
+    ]
+
+    out_by_block: dict[str, list[dict[str, Any]]] = {}
+    primary_results: list[dict[str, Any]] = []
+
+    for block_len in block_lengths:
+        block_rows = []
+        raw_p_values = []
+        for label, sys_a, sys_b in comparisons:
+            if sys_a not in returns_by_system or sys_b not in returns_by_system:
+                continue
+            res = moving_block_bootstrap_paired_diff(
+                returns_by_system[sys_a],
+                returns_by_system[sys_b],
+                metric_func=sharpe_metric,
+                block_length=block_len,
+                n_bootstraps=n_bootstraps,
+                confidence_level=confidence_level,
+                random_seed=random_seed,
+            )
+            raw_p_values.append(res.p_value)
+            block_rows.append({
+                "comparison": label,
+                "point_estimate": round(res.point_estimate, 4),
+                "ci_lower": round(res.ci_lower, 4),
+                "ci_upper": round(res.ci_upper, 4),
+                "raw_p_value": res.p_value,
+                "replications": res.replications,
+                "block_length": block_len,
+            })
+
+        if block_rows:
+            p_holm = holm_bonferroni_correction(raw_p_values)
+            q_fdr = fdr_benjamini_hochberg(raw_p_values)
+            for idx, row in enumerate(block_rows):
+                row["p_holm"] = round(p_holm[idx], 4)
+                row["q_fdr"] = round(q_fdr[idx], 5)
+
+        out_by_block[f"block_length_{block_len}"] = block_rows
+        if block_len == 21:
+            primary_results = block_rows
+
+    return {
+        "primary_block_21": primary_results,
+        "sensitivity_by_block": out_by_block,
+    }
