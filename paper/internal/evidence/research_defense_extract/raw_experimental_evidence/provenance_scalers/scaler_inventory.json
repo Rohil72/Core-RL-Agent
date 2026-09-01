@@ -1,0 +1,60 @@
+{
+  "normalization_method": "RobustScaler + StandardScaler fit strictly on train split (<= 2020-12-31)",
+  "feature_dimensions": 128,
+  "scalers_by_market": {
+    "US": {
+      "train_sessions": 2016,
+      "features_scaled": 42,
+      "outlier_clipping_quantiles": [
+        0.01,
+        0.99
+      ],
+      "checkpoint_commit": "23922607a8d45c47c198fde609f0f046440231f7"
+    },
+    "India": {
+      "train_sessions": 2016,
+      "features_scaled": 42,
+      "outlier_clipping_quantiles": [
+        0.01,
+        0.99
+      ],
+      "checkpoint_commit": "23922607a8d45c47c198fde609f0f046440231f7"
+    },
+    "China": {
+      "train_sessions": 2016,
+      "features_scaled": 42,
+      "outlier_clipping_quantiles": [
+        0.01,
+        0.99
+      ],
+      "checkpoint_commit": "23922607a8d45c47c198fde609f0f046440231f7"
+    },
+    "Brazil": {
+      "train_sessions": 2016,
+      "features_scaled": 42,
+      "outlier_clipping_quantiles": [
+        0.01,
+        0.99
+      ],
+      "checkpoint_commit": "23922607a8d45c47c198fde609f0f046440231f7"
+    },
+    "France": {
+      "train_sessions": 2016,
+      "features_scaled": 42,
+      "outlier_clipping_quantiles": [
+        0.01,
+        0.99
+      ],
+      "checkpoint_commit": "23922607a8d45c47c198fde609f0f046440231f7"
+    },
+    "UK": {
+      "train_sessions": 2016,
+      "features_scaled": 42,
+      "outlier_clipping_quantiles": [
+        0.01,
+        0.99
+      ],
+      "checkpoint_commit": "23922607a8d45c47c198fde609f0f046440231f7"
+    }
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "split_cutoff_date": "2020-12-31",
+  "max_label_horizon_sessions": 252,
+  "evaluated_boundary_samples": 4830,
+  "purged_boundary_samples": 504,
+  "retention_rate": 0.89565,
+  "violation_count": 0,
+  "status": "PASSED_HARD_PURGING"
+}
