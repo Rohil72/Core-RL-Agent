@@ -1,0 +1,9 @@
+{
+  "cka_seeds_7_vs_17": 0.9938660903781811,
+  "cka_seeds_7_vs_37": 0.9862201771388958,
+  "knn_overlap_seeds_7_vs_17": 0.7995054164103109,
+  "neighbour_outcome_mae_learned": 0.05340404395899318,
+  "neighbour_outcome_mae_raw_control": 0.05462548845021692,
+  "neighbour_outcome_mae_pca_control": 0.05573532737721891,
+  "nuisance_ticker_accuracy": 0.2547112920247249
+}

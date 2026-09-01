@@ -1,0 +1,123 @@
+[
+  {
+    "field": "future_return_21",
+    "horizon_sessions": 21,
+    "encoder_target": true,
+    "stored_in_memory": false,
+    "used_in_reliability": false,
+    "used_in_scoring": false,
+    "used_in_exits": false,
+    "required_availability_rule": "Mature through session 21 if used",
+    "proven_status": "PASS"
+  },
+  {
+    "field": "future_return_63",
+    "horizon_sessions": 63,
+    "encoder_target": true,
+    "stored_in_memory": true,
+    "used_in_reliability": true,
+    "used_in_scoring": false,
+    "used_in_exits": false,
+    "required_availability_rule": "Mature through session 63 if used",
+    "proven_status": "PASS"
+  },
+  {
+    "field": "future_return_126",
+    "horizon_sessions": 126,
+    "encoder_target": true,
+    "stored_in_memory": false,
+    "used_in_reliability": false,
+    "used_in_scoring": false,
+    "used_in_exits": false,
+    "required_availability_rule": "Mature through session 126 if used",
+    "proven_status": "PASS"
+  },
+  {
+    "field": "future_max_return_63",
+    "horizon_sessions": 63,
+    "encoder_target": true,
+    "stored_in_memory": true,
+    "used_in_reliability": true,
+    "used_in_scoring": true,
+    "used_in_exits": false,
+    "required_availability_rule": "Entire 63-session path complete if used",
+    "proven_status": "PASS"
+  },
+  {
+    "field": "future_max_return_252",
+    "horizon_sessions": 252,
+    "encoder_target": true,
+    "stored_in_memory": false,
+    "used_in_reliability": false,
+    "used_in_scoring": false,
+    "used_in_exits": false,
+    "required_availability_rule": "Entire 252-session path complete; strictly excluded from memory",
+    "proven_status": "PASS"
+  },
+  {
+    "field": "future_min_return_63",
+    "horizon_sessions": 63,
+    "encoder_target": true,
+    "stored_in_memory": true,
+    "used_in_reliability": true,
+    "used_in_scoring": true,
+    "used_in_exits": false,
+    "required_availability_rule": "Entire 63-session path complete if used",
+    "proven_status": "PASS"
+  },
+  {
+    "field": "event_peak_offset_63",
+    "horizon_sessions": 63,
+    "encoder_target": true,
+    "stored_in_memory": true,
+    "used_in_reliability": false,
+    "used_in_scoring": true,
+    "used_in_exits": false,
+    "required_availability_rule": "Entire 63-session path complete if used",
+    "proven_status": "PASS"
+  },
+  {
+    "field": "event_drawdown_offset_63",
+    "horizon_sessions": 63,
+    "encoder_target": true,
+    "stored_in_memory": false,
+    "used_in_reliability": false,
+    "used_in_scoring": false,
+    "used_in_exits": false,
+    "required_availability_rule": "Entire 63-session path complete if used",
+    "proven_status": "PASS"
+  },
+  {
+    "field": "event_upside_before_drawdown_126",
+    "horizon_sessions": 126,
+    "encoder_target": true,
+    "stored_in_memory": true,
+    "used_in_reliability": false,
+    "used_in_scoring": true,
+    "used_in_exits": false,
+    "required_availability_rule": "Entire 126-session path complete if used",
+    "proven_status": "PASS"
+  },
+  {
+    "field": "event_upside_hit_126",
+    "horizon_sessions": 126,
+    "encoder_target": true,
+    "stored_in_memory": false,
+    "used_in_reliability": false,
+    "used_in_scoring": false,
+    "used_in_exits": false,
+    "required_availability_rule": "Entire 126-session path complete if used",
+    "proven_status": "PASS"
+  },
+  {
+    "field": "event_drawdown_hit_126",
+    "horizon_sessions": 126,
+    "encoder_target": true,
+    "stored_in_memory": false,
+    "used_in_reliability": false,
+    "used_in_scoring": false,
+    "used_in_exits": false,
+    "required_availability_rule": "Entire 126-session path complete if used",
+    "proven_status": "PASS"
+  }
+]

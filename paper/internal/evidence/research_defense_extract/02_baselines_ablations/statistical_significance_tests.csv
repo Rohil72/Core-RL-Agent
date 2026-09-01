@@ -1,0 +1,6 @@
+comparison,point_estimate,ci_lower,ci_upper,p_value,p_holm,q_fdr,replications,block_length
+P0 vs P1 (H2 Memory Benefit),0.874,0.412,1.336,0.0004,0.0008,0.0005,1000,21
+P0 vs P2 (H3 Distributional Benefit),0.644,0.22,1.068,0.0032,0.0032,0.0032,1000,21
+P0 vs P3 (H1 Representation Benefit),0.969,0.51,1.428,0.0001,0.0005,0.0001666666666666667,1000,21
+P0 vs P4 (Momentum Superiority),1.274,0.78,1.768,0.0001,0.0005,0.0001666666666666667,1000,21
+P0 vs P5 (Random Superiority),1.534,1.02,2.048,0.0001,0.0005,0.0001666666666666667,1000,21

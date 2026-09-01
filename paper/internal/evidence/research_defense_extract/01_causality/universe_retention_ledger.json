@@ -1,0 +1,174 @@
+{
+  "totals": {
+    "requested": 108,
+    "available": 103,
+    "excluded": 5
+  },
+  "by_market": {
+    "US": {
+      "market": "US",
+      "requested_count": 18,
+      "available_count": 18,
+      "excluded_count": 0,
+      "available_tickers": [
+        "AAPL",
+        "MSFT",
+        "NVDA",
+        "AMZN",
+        "GOOGL",
+        "META",
+        "AVGO",
+        "CRM",
+        "ORCL",
+        "AMD",
+        "ADBE",
+        "INTU",
+        "ISRG",
+        "AMGN",
+        "REGN",
+        "LMT",
+        "NOC",
+        "V"
+      ],
+      "excluded_tickers": {}
+    },
+    "India": {
+      "market": "India",
+      "requested_count": 18,
+      "available_count": 18,
+      "excluded_count": 0,
+      "available_tickers": [
+        "RELIANCE.NS",
+        "TCS.NS",
+        "HDFCBANK.NS",
+        "INFY.NS",
+        "ICICIBANK.NS",
+        "BHARTIARTL.NS",
+        "SBIN.NS",
+        "ITC.NS",
+        "HINDUNILVR.NS",
+        "LT.NS",
+        "BAJFINANCE.NS",
+        "HCLTECH.NS",
+        "MARUTI.NS",
+        "SUNPHARMA.NS",
+        "TATAMOTORS.NS",
+        "AXISBANK.NS",
+        "NTPC.NS",
+        "TITAN.NS"
+      ],
+      "excluded_tickers": {}
+    },
+    "China": {
+      "market": "China",
+      "requested_count": 18,
+      "available_count": 18,
+      "excluded_count": 0,
+      "available_tickers": [
+        "600519.SS",
+        "601398.SS",
+        "601288.SS",
+        "601939.SS",
+        "601857.SS",
+        "600036.SS",
+        "601988.SS",
+        "600276.SS",
+        "601318.SS",
+        "601088.SS",
+        "600900.SS",
+        "600030.SS",
+        "601668.SS",
+        "600028.SS",
+        "601899.SS",
+        "601328.SS",
+        "601998.SS",
+        "600019.SS"
+      ],
+      "excluded_tickers": {}
+    },
+    "Brazil": {
+      "market": "Brazil",
+      "requested_count": 18,
+      "available_count": 15,
+      "excluded_count": 3,
+      "available_tickers": [
+        "PETR4.SA",
+        "VALE3.SA",
+        "ITUB4.SA",
+        "BBDC4.SA",
+        "ABEV3.SA",
+        "B3SA3.SA",
+        "BBAS3.SA",
+        "WEGE3.SA",
+        "RENT3.SA",
+        "SUZB3.SA",
+        "GGBR4.SA",
+        "RDOR3.SA",
+        "LREN3.SA",
+        "EQTL3.SA",
+        "PRIO3.SA"
+      ],
+      "excluded_tickers": {
+        "CIEL3.SA": "historical reason unavailable",
+        "JBSS3.SA": "historical reason unavailable",
+        "EMBR3.SA": "historical reason unavailable"
+      }
+    },
+    "France": {
+      "market": "France",
+      "requested_count": 18,
+      "available_count": 17,
+      "excluded_count": 1,
+      "available_tickers": [
+        "MC.PA",
+        "OR.PA",
+        "TTE.PA",
+        "SAN.PA",
+        "AIR.PA",
+        "SU.PA",
+        "AI.PA",
+        "RMS.PA",
+        "BNP.PA",
+        "EL.PA",
+        "CS.PA",
+        "CDIB.PA",
+        "SAF.PA",
+        "DG.PA",
+        "KER.PA",
+        "BN.PA",
+        "DSY.PA"
+      ],
+      "excluded_tickers": {
+        "STM.PA": "historical reason unavailable"
+      }
+    },
+    "UK": {
+      "market": "UK",
+      "requested_count": 18,
+      "available_count": 17,
+      "excluded_count": 1,
+      "available_tickers": [
+        "SHEL.L",
+        "AZN.L",
+        "HSBA.L",
+        "ULVR.L",
+        "BP.L",
+        "REL.L",
+        "DGE.L",
+        "GSK.L",
+        "RIO.L",
+        "BATS.L",
+        "LSEG.L",
+        "CPG.L",
+        "PRU.L",
+        "VOD.L",
+        "BA.L",
+        "NG.L",
+        "EXPN.L"
+      ],
+      "excluded_tickers": {
+        "AHT.L": "historical reason unavailable"
+      }
+    }
+  }
+}

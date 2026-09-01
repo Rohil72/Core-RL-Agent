@@ -1,0 +1,86 @@
+[
+  {
+    "System":"P0",
+    "Name":"Full learned-state distributional memory",
+    "Claim":"Reference",
+    "Total Return":0.2261,
+    "Annualized Return":0.228,
+    "Sharpe":1.084,
+    "Sortino":1.153,
+    "Max Drawdown":-0.1716,
+    "Win Rate":0.7,
+    "Trades":70
+  },
+  {
+    "System":"P1",
+    "Name":"No external memory",
+    "Claim":"H2 (No Memory)",
+    "Total Return":0.041,
+    "Annualized Return":0.041,
+    "Sharpe":0.21,
+    "Sortino":0.23,
+    "Max Drawdown":-0.224,
+    "Win Rate":0.485,
+    "Trades":68
+  },
+  {
+    "System":"P2",
+    "Name":"Same-neighbour mean-only memory",
+    "Claim":"H3 (Mean-Only)",
+    "Total Return":0.083,
+    "Annualized Return":0.084,
+    "Sharpe":0.44,
+    "Sortino":0.48,
+    "Max Drawdown":-0.205,
+    "Win Rate":0.529,
+    "Trades":70
+  },
+  {
+    "System":"P3",
+    "Name":"Raw-feature kNN memory",
+    "Claim":"H1\/H2 Control (Raw kNN)",
+    "Total Return":0.021,
+    "Annualized Return":0.021,
+    "Sharpe":0.115,
+    "Sortino":0.12,
+    "Max Drawdown":-0.261,
+    "Win Rate":0.47,
+    "Trades":66
+  },
+  {
+    "System":"P4",
+    "Name":"Momentum-21 ranking",
+    "Claim":"Momentum Baseline",
+    "Total Return":-0.045,
+    "Annualized Return":-0.045,
+    "Sharpe":-0.19,
+    "Sortino":-0.21,
+    "Max Drawdown":-0.298,
+    "Win Rate":0.42,
+    "Trades":72
+  },
+  {
+    "System":"P5",
+    "Name":"Random ranking",
+    "Claim":"Random Baseline",
+    "Total Return":-0.092,
+    "Annualized Return":-0.092,
+    "Sharpe":-0.45,
+    "Sortino":-0.49,
+    "Max Drawdown":-0.342,
+    "Win Rate":0.38,
+    "Trades":70
+  },
+  {
+    "System":"P6",
+    "Name":"Equal-weight buy-and-hold context",
+    "Claim":"Equal Weight Context",
+    "Total Return":0.185,
+    "Annualized Return":0.187,
+    "Sharpe":0.89,
+    "Sortino":0.95,
+    "Max Drawdown":-0.198,
+    "Win Rate":0.55,
+    "Trades":103
+  }
+]

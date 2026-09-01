@@ -1,0 +1,57 @@
+[
+  {
+    "comparison": "P0 vs P1 (H2 Memory Benefit)",
+    "point_estimate": 0.874,
+    "ci_lower": 0.412,
+    "ci_upper": 1.336,
+    "p_value": 0.0004,
+    "p_holm": 0.0008,
+    "q_fdr": 0.0005,
+    "replications": 1000,
+    "block_length": 21
+  },
+  {
+    "comparison": "P0 vs P2 (H3 Distributional Benefit)",
+    "point_estimate": 0.644,
+    "ci_lower": 0.22,
+    "ci_upper": 1.068,
+    "p_value": 0.0032,
+    "p_holm": 0.0032,
+    "q_fdr": 0.0032,
+    "replications": 1000,
+    "block_length": 21
+  },
+  {
+    "comparison": "P0 vs P3 (H1 Representation Benefit)",
+    "point_estimate": 0.969,
+    "ci_lower": 0.51,
+    "ci_upper": 1.428,
+    "p_value": 0.0001,
+    "p_holm": 0.0005,
+    "q_fdr": 0.0001666666666666667,
+    "replications": 1000,
+    "block_length": 21
+  },
+  {
+    "comparison": "P0 vs P4 (Momentum Superiority)",
+    "point_estimate": 1.274,
+    "ci_lower": 0.78,
+    "ci_upper": 1.768,
+    "p_value": 0.0001,
+    "p_holm": 0.0005,
+    "q_fdr": 0.0001666666666666667,
+    "replications": 1000,
+    "block_length": 21
+  },
+  {
+    "comparison": "P0 vs P5 (Random Superiority)",
+    "point_estimate": 1.534,
+    "ci_lower": 1.02,
+    "ci_upper": 2.048,
+    "p_value": 0.0001,
+    "p_holm": 0.0005,
+    "q_fdr": 0.0001666666666666667,
+    "replications": 1000,
+    "block_length": 21
+  }
+]

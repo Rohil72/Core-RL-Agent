@@ -1,0 +1,14 @@
+{
+  "run_id": "phase6_a30_final_v1",
+  "output": "reports/final_testbed/phase6_a30_final_v1",
+  "manifest": "reports/final_testbed/phase6_a30_final_v1/experiment_manifest.yaml",
+  "job_count": 551,
+  "jobs_by_stage": {
+    "data": 7,
+    "pilot": 61,
+    "full": 483,
+    "confirmation": 0
+  },
+  "confirmation_enabled": false,
+  "confirmation_note": "Confirmation jobs are intentionally absent until select_final_policy passes and a one-shot lock is created."
+}

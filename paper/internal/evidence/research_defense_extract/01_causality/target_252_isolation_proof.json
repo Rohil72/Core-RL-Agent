@@ -1,0 +1,11 @@
+{
+  "invariant_name": "252-session target isolation",
+  "total_evaluated": 4,
+  "violations": 0,
+  "status": "PASS",
+  "details": {
+    "prohibited_term": "future_max_return_252",
+    "found_in": [],
+    "proven_isolated": true
+  }
+}

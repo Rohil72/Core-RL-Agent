@@ -1,0 +1,29 @@
+{
+  "candidate_id": "global_global__coverage_025",
+  "encoder_topology": "global",
+  "memory_topology": "global",
+  "nominal_coverage": 0.25,
+  "learning_rate": 0.0004,
+  "batch_size": 64,
+  "latent_dim": 128,
+  "num_memory_slots": 8,
+  "k_neighbors": 25,
+  "min_neighbors": 15,
+  "temporal_separation_sessions": 21,
+  "same_ticker_mode": "exclude",
+  "aggregation": "gaussian",
+  "trim_fraction": 0.1,
+  "tail_fraction": 0.25,
+  "max_positions": 3,
+  "stop_loss": 0.1,
+  "max_hold_days": 63,
+  "fill_convention": "next_open",
+  "costs_bps": {
+    "US": 10,
+    "Brazil": 15,
+    "India": 20,
+    "China": 20,
+    "France": 20,
+    "UK": 25
+  }
+}

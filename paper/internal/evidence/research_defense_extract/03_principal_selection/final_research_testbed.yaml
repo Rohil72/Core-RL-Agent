@@ -1,0 +1,129 @@
+schema_version: 1
+
+experiment:
+  run_id: phase6_international_v1
+  output_root: reports/final_testbed
+  data_root: data/international
+  start: 2013-01-01
+  end: 2026-06-30
+  minimum_sessions: 2000
+  minimum_tickers: 15
+  minimum_fundamental_coverage: 0.0
+  development_test_year: 2024
+  confirmation_year: 2025
+  source_universe_cutoff: 2017-12-31
+  development_only_until_final_lock: true
+
+periods:
+  download_start: 2013-01-01
+  download_end: 2026-06-30
+  encoder_train: [2013-01-01, 2020-12-31]
+  encoder_validation: [2021-01-01, 2021-12-31]
+  encoder_test: [2022-01-01, 2022-12-31]
+  policy_development: [2022-01-01, 2023-12-31]
+  policy_selection: [2024-01-01, 2024-12-31]
+  locked_confirmation: [2025-01-01, 2026-03-31]
+  outcome_maturation_end: 2026-06-30
+
+research_matrix:
+  seeds: [7, 17, 37]
+  pilot_seed: 7
+  pilot_markets: [US, India, China, Brazil]
+  encoder_representations: [regional, global]
+  policy_algorithms: [bandit, cql, iql, td3bc]
+  pilot_policy_winners: 2
+  minimum_pilot_market_wins: 3
+  minimum_final_market_wins: 5
+  confirmation_enabled: false
+
+hardware:
+  require_cuda: true
+  gpu_count: 1
+  cuda_visible_devices: "0"
+  minimum_vram_gb: 6
+  minimum_compute_capability: [7, 5]
+  vram_fraction: 0.95
+  allow_cpu_fallback: false
+  amp: true
+  checkpoint_interval_steps: 250
+
+storage:
+  persistent_required: true
+  minimum_free_gb: 20
+  state_subdir: orchestration_state
+  retain_latest_training_state: true
+  retain_logs: true
+
+budgets:
+  data:
+    max_gpu_hours: 0
+  pilot:
+    max_gpu_hours: 100
+  full:
+    max_gpu_hours: 300
+  confirmation:
+    max_gpu_hours: 60
+
+policy_training:
+  pilot_steps: 30000
+  final_steps: 100000
+  device: cuda
+  offline_dataset:
+    top_k: 3
+    exposures: [0.0, 0.25, 0.50, 0.75, 1.0]
+    behavior_policies: [cash, full, score_scaled, volatility_target, exploratory]
+    transaction_cost_bps: 10.0
+    score_column: pred_utility_q50
+    reward_column: decision_return_1
+    target_daily_volatility: 0.01
+    volatility_lookback: 21
+    exploratory_probability: 0.20
+    seed: 7
+
+promotion_gates:
+  target_pooled_sharpe: 2.0
+  maximum_drawdown: 0.20
+  minimum_positive_markets: 5
+  maximum_pbo: 0.50
+  maximum_profit_concentration: 0.35
+  require_non_degenerate_actions: true
+  require_local_and_global_comparison: true
+  require_three_seed_confirmation: true
+
+markets:
+  US:
+    exchange: NYSE_NASDAQ
+    currency: USD
+    benchmark: ^GSPC
+    execution_cost_bps: 10
+    tickers: [AAPL, MSFT, NVDA, AMZN, GOOGL, META, AVGO, CRM, ORCL, AMD, ADBE, INTU, ISRG, AMGN, REGN, LMT, NOC, V]
+  India:
+    exchange: NSE
+    currency: INR
+    benchmark: ^NSEI
+    execution_cost_bps: 20
+    tickers: [RELIANCE.NS, TCS.NS, HDFCBANK.NS, ICICIBANK.NS, INFY.NS, BHARTIARTL.NS, LT.NS, MARUTI.NS, SUNPHARMA.NS, "M&M.NS", TITAN.NS, BAJFINANCE.NS, HCLTECH.NS, ASIANPAINT.NS, EICHERMOT.NS, ULTRACEMCO.NS, TECHM.NS, PIDILITIND.NS]
+  China:
+    exchange: SSE_SZSE
+    currency: CNY
+    benchmark: 000300.SS
+    execution_cost_bps: 20
+    tickers: [600519.SS, 601318.SS, 600036.SS, 600276.SS, 600887.SS, 601888.SS, 601012.SS, 600309.SS, 000858.SZ, 000333.SZ, 002594.SZ, 300059.SZ, 002415.SZ, 000725.SZ, 002475.SZ, 002230.SZ, 600196.SS, 002241.SZ]
+  Brazil:
+    exchange: B3
+    currency: BRL
+    benchmark: ^BVSP
+    execution_cost_bps: 15
+    tickers: [WEGE3.SA, RENT3.SA, RADL3.SA, RAIL3.SA, EQTL3.SA, LREN3.SA, TOTS3.SA, SUZB3.SA, VALE3.SA, PETR4.SA, ITUB4.SA, B3SA3.SA, FLRY3.SA, MGLU3.SA, CIEL3.SA, JBSS3.SA, EMBR3.SA, KLBN11.SA]
+  France:
+    exchange: Euronext_Paris
+    currency: EUR
+    benchmark: ^FCHI
+    execution_cost_bps: 20
+    tickers: [MC.PA, OR.PA, RMS.PA, AIR.PA, SU.PA, SAF.PA, CAP.PA, EL.PA, DSY.PA, STM.PA, TEP.PA, WLN.PA, LR.PA, DG.PA, AI.PA, RI.PA, ML.PA, DIM.PA]
+  UK:
+    exchange: LSE
+    currency: GBP
+    benchmark: ^FTSE
+    execution_cost_bps: 25
+    tickers: [AZN.L, REL.L, LSEG.L, EXPN.L, CPG.L, PRU.L, DGE.L, HLMA.L, SPX.L, AHT.L, CRDA.L, RMV.L, SGE.L, AUTO.L, JD.L, OCDO.L, RTO.L, BA.L]

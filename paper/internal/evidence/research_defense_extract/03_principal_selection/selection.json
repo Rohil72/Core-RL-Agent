@@ -1,0 +1,11 @@
+{
+  "status": "rejected",
+  "selected_candidate": null,
+  "best_observed_candidate": "global_global__coverage_025",
+  "best_observed_pooled_sharpe": 1.503026457290097,
+  "pbo": 0.0,
+  "candidate_count": 12,
+  "development_split_only": true,
+  "transformer_retrained": false,
+  "rl_used": false
+}
