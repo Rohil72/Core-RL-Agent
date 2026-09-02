@@ -226,6 +226,20 @@ for m, tickers in TICKERS_BY_MARKET.items():
     market_data[m] = {}
     for tkr in tickers:
         p_path = CACHE_DIR / f"{m}_{tkr}.parquet"
+        if not p_path.exists():
+            try:
+                import yfinance as yf
+                CACHE_DIR.mkdir(parents=True, exist_ok=True)
+                yf_sym = tkr.replace("/", "-")
+                df_yf = yf.download(yf_sym, start="2013-01-01", end="2025-12-31", progress=False)
+                if isinstance(df_yf.columns, pd.MultiIndex):
+                    df_yf.columns = [c[0].lower() for c in df_yf.columns]
+                else:
+                    df_yf.columns = [c.lower() for c in df_yf.columns]
+                if not df_yf.empty:
+                    df_yf.to_parquet(p_path)
+            except Exception:
+                pass
         if p_path.exists():
             df_raw = pd.read_parquet(p_path)
             df_feat = compute_23_technical_features(df_raw)
@@ -354,7 +368,13 @@ for s in SEEDS:
             
     model.eval()
     encoders[s] = model
-    print(f"  [+] Trained Global Transformer for Seed {s} (Final Train MSE: {loss.item():.5f})")
+    models_dir = RAW_DIR / "models"
+    models_dir.mkdir(parents=True, exist_ok=True)
+    exports_models_dir = EXPORTS_DIR / "models"
+    exports_models_dir.mkdir(parents=True, exist_ok=True)
+    torch.save(model.state_dict(), models_dir / f"global_transformer_seed_{s}.pt")
+    torch.save(model.state_dict(), exports_models_dir / f"global_transformer_seed_{s}.pt")
+    print(f"  [+] Trained & saved Global Transformer for Seed {s} (Final Train MSE: {loss.item():.5f})")
 
 # ----------------------------------------------------------------------
 # 5. HISTORICAL MEMORY BANK CONSTRUCTION (STRICT CAUSAL ISOLATION)

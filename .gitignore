@@ -23,6 +23,7 @@ test_output.txt
 htmlcov/
 .*-pytest-temp*/
 temp_*.yaml
+*.tar.gz
 
 # Generated research data and model artifacts. Keep only the small, canonical
 # CSV fixture and provenance manifests needed for a clean-clone reproduction.
@@ -31,16 +32,22 @@ data/**
 !data/examples/sample_prices.csv
 !data/manifests/
 !data/manifests/**
+!data/cache/
+!data/cache/ohlcv/
+!data/cache/ohlcv/*.parquet
 
 # Training and evaluation outputs
 /models/
 reports/
 .experiment_state/
 *.pt
+!exports/research_defense_bundle/models/*.pt
+!paper/internal/evidence/research_defense_extract/raw_experimental_evidence/models/*.pt
 *.pth
 *.ckpt
 *.d3
 *.parquet
+!data/cache/ohlcv/*.parquet
 *.npz
 *.npy
 *.pkl
