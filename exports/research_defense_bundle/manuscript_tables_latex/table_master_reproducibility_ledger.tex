@@ -9,11 +9,11 @@
 \addlinespace
 \textbf{Target Horizon Isolation} & Static schema \& training targets & \textbf{Verified} & \textbf{Established}: 252-session target mathematically barred from external memory payload. \\
 \addlinespace
-\textbf{Representation Utility (H1)} & Latents, raw 23-d, 14-d PCA & \textbf{Verified} & \textbf{Established}: High cross-seed stability ($\text{CKA} \ge 0.990$); outcome prediction order confirmed. \\
+\textbf{Representation Utility (H1)} & Latents, raw 23-d, 14-d PCA & \textbf{Verified} & \textbf{Established}: Neighbour outcome prediction order confirmed ($\text{MAE}_{\text{Learned}} < \text{MAE}_{\text{Raw}} < \text{MAE}_{\text{PCA}}$). \\
 \addlinespace
-\textbf{External Memory Utility (H2)} & Matched P0 vs P1 panel ($N=18$) & \textbf{Verified} & \textbf{Established}: Statistically significant ($\Delta\text{Sharpe} = +1.009$, 95\% CI $[+0.407, +1.617]$, $p_{\text{Holm}} = 0.005$). \\
+\textbf{External Memory Utility (H2)} & Matched P0 vs P1 panel ($N=18$) & \textbf{Verified} & \textbf{Negative Validation}: External memory yields no statistically significant advantage ($\Delta\text{Sharpe} = +0.014$, 95\% CI $[-0.245, +0.213]$, $p_{\text{Holm}} = 1.000$). \\
 \addlinespace
-\textbf{Distributional Evidence (H3)} & Matched P0 vs P2 panel ($N=18$) & \textbf{Verified} & \textbf{Established}: Statistically significant ($\Delta\text{Sharpe} = +0.767$, 95\% CI $[+0.087, +1.298]$, $p_{\text{Holm}} = 0.014$). \\
+\textbf{Distributional Evidence (H3)} & Matched P0 vs P2 panel ($N=18$) & \textbf{Verified} & \textbf{Negative Validation}: Distributional conditioning shows no significant gain over mean-only ($\Delta\text{Sharpe} = -0.006$, 95\% CI $[-0.274, +0.171]$, $p_{\text{Holm}} = 1.000$). \\
 \addlinespace
 \textbf{Feature Data Contract} & 23-d price-volume features & \textbf{Verified} & \textbf{Established}: Zero fundamental channels; 100\% auditable point-in-time technical metrics. \\
 \addlinespace
