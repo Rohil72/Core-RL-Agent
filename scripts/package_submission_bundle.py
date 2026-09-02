@@ -92,7 +92,13 @@ for doc in ["EDITORIAL_CRITICISM_FACT_CHECK_REGISTER_RESOLVED.md", "RESEARCH_LEV
     if p.exists():
         shutil.copy2(p, dossiers_dir / doc)
 
-# 12. Environment Lock
+# 12. Audit Defense Clarifications Sub-directory
+clarif_dir = pkg_dir / "audit_defense_clarifications"
+clarif_dir.mkdir(parents=True, exist_ok=True)
+for f in (root / "audit_defense_clarifications").glob("*.md"):
+    shutil.copy2(f, clarif_dir / f.name)
+
+# 13. Environment Lock
 env_content = f"""# EXECUTION ENVIRONMENT & DEPENDENCY LOCK
 Platform: {platform.platform()}
 Python Version: {platform.python_version()}
