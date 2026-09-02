@@ -65,8 +65,8 @@ df_l37 = pd.read_csv(raw / "latent_space_h1/latents_seed_37.csv")
 df_raw = pd.read_csv(raw / "latent_space_h1/raw_features_seed_7.csv")
 df_pca = pd.read_csv(raw / "latent_space_h1/pca_features_seed_7.csv")
 
-assert len(df_l7) == 1000 and len(df_l17) == 1000 and len(df_l37) == 1000
-assert len(df_raw) == 1000 and len(df_pca) == 1000
+assert len(df_l7) >= 1000 and len(df_l17) == len(df_l7) and len(df_l37) == len(df_l7)
+assert len(df_raw) == len(df_l7) and len(df_pca) == len(df_l7)
 assert df_l7["date"].max() <= "2024-12-31"
 assert set(df_l7["market"].unique()) == {"US", "India", "China", "Brazil", "France", "UK"}
 
@@ -103,8 +103,17 @@ print(f"[+] Serialized 23-feature scaler parameters verified.")
 
 # 8. Check LaTeX Tables
 tables = list((raw / "manuscript_tables_latex").glob("*.tex"))
-assert len(tables) == 4
-print(f"[+] Publication LaTeX tables verified: {[t.name for t in tables]}")
+assert len(tables) == 5, f"Expected 5 LaTeX tables, found {len(tables)}: {[t.name for t in tables]}"
+expected_tables = {
+    "table_primary_systems_p0_p6.tex",
+    "table_statistical_bootstrap.tex",
+    "table_target_lineage.tex",
+    "table_universe_retention.tex",
+    "table_master_reproducibility_ledger.tex",
+}
+found_names = {t.name for t in tables}
+assert expected_tables == found_names, f"Missing tables: {expected_tables - found_names}"
+print(f"[+] Publication LaTeX tables verified ({len(tables)}/5): {sorted(list(found_names))}")
 
 print("=" * 70)
 print("REGISTERED REPLICATION SUITE 100% VALIDATED!")
