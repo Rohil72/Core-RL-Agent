@@ -14,6 +14,8 @@ if args.dir:
     raw = base / "paper" / "internal" / "evidence" / "research_defense_extract" / "raw_experimental_evidence"
     if not raw.exists():
         raw = base / "raw_experimental_evidence"
+    if not raw.exists():
+        raw = base
 else:
     raw = Path("paper/internal/evidence/research_defense_extract/raw_experimental_evidence")
 

@@ -24,6 +24,8 @@ htmlcov/
 .*-pytest-temp*/
 temp_*.yaml
 *.tar.gz
+*.zip
+FINAL_SUBMISSION_PACKAGE/
 
 # Generated research data and model artifacts. Keep only the small, canonical
 # CSV fixture and provenance manifests needed for a clean-clone reproduction.
