@@ -81,11 +81,11 @@ print(f"[+] H1 PyTorch evidence verified: 23 raw features, 14 PCA controls, 128-
 # 4. Check Machine-Verifiable Causality Log (0 Separation Violations)
 df_rep = pd.read_csv(raw / "causality_replay/historical_query_level_causality_replay.csv")
 assert len(df_rep) == 250 * 25
-assert (df_rep["same_ticker_check"] == True).all()
-assert (df_rep["session_separation_ge_21"] == True).all()
-assert (df_rep["outcome_available_before_query"] == True).all()
-assert (df_rep["split_boundary_observed"] == True).all()
-print(f"[+] Machine-verifiable causality log verified: {len(df_rep)} records (k=25, 126d maturity, ZERO violations).")
+assert (df_rep["query_ticker"] != df_rep["retrieved_ticker"]).all(), "Cross-ticker violation found!"
+assert (df_rep["calendar_separation_days"] >= 21).all(), "Temporal separation violation (<21 days)!"
+assert (pd.to_datetime(df_rep["outcome_availability_timestamp"]) <= pd.to_datetime(df_rep["query_timestamp"])).all(), "Lookahead violation: outcome unsealed!"
+assert (pd.to_datetime(df_rep["memory_event_timestamp"]) <= pd.Timestamp("2020-12-31 23:59:59")).all(), "Split boundary violation!"
+print(f"[+] Machine-verifiable causality log recomputed from raw data: {len(df_rep)} records (k=25, ZERO violations).")
 
 # 5. Check Split Boundary Audit (Full 4,830 rows)
 df_split = pd.read_csv(raw / "split_boundary_audit/split_boundary_sample_level_audit.csv")

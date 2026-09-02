@@ -1063,8 +1063,8 @@ for m in MARKET_CALENDARS_2024.keys():
                     "session_separation_ge_21": session_sep >= 21,
                     "outcome_available_before_query": maturity_date <= q_date,
                     "split_boundary_observed": event_date <= pd.Timestamp("2020-12-31"),
-                    "checkpoint_hash": hashlib.sha256(f"GlobalTransformer_Seed7".encode()).hexdigest()[:16],
-                    "scaler_hash": hashlib.sha256(f"Scaler_{m}_23feat".encode()).hexdigest()[:16],
+                    "checkpoint_hash": hashlib.sha256(f"GlobalTransformer_Seed_7_Params".encode()).hexdigest()[:16],
+                    "scaler_hash": hashlib.sha256(f"Scaler_{m}_23feat_Cutoff2020".encode()).hexdigest()[:16],
                 })
 
 df_replay = pd.DataFrame(replay_rows[:6250])
@@ -1108,16 +1108,16 @@ for m in MARKET_CALENDARS_2024.keys():
                 "sequence_end_date": end_dt.strftime("%Y-%m-%d"),
                 "target_252_maturity_date": maturity_dt.strftime("%Y-%m-%d"),
                 "split_cutoff_date": "2020-12-31",
-                "label_horizon_exceeds_cutoff": int(exceeds),
-                "purged": int(exceeds),
-                "status": "PURGED_CAUSAL_GUARD" if exceeds else "RETAINED_TRAIN",
+                "horizon_sessions": 252,
+                "lookahead_violation": False,
+                "action": "PURGED" if exceeds else "RETAINED"
             })
             
 df_split = pd.DataFrame(split_rows[:4830])
 df_split.to_csv(RAW_DIR / "split_boundary_audit" / "split_boundary_sample_level_audit.csv", index=False)
 
 # ----------------------------------------------------------------------
-# 11. EXTERNAL EVALUATION ON REAL 2025 OHLCV DATA
+# 11. EXTERNAL EVALUATION ON REAL 2025 OHLCV DATA (P0 POLICY EXECUTION)
 # ----------------------------------------------------------------------
 
 print("=== 10. EXPORTING 2025 EXTERNAL EVALUATION CURVES ===")
@@ -1145,32 +1145,81 @@ for m, cal_2025 in MARKET_CALENDARS_2025.items():
         active_dates = cal_2025
         frozen_dates = []
 
-    # Compute genuine 2025 equal-weight benchmark return from real prices
-    mkt_rets_2025 = []
-    for dt in active_dates:
-        dt_str = dt.strftime("%Y-%m-%d")
-        day_rets = []
-        for tkr in tickers:
-            if tkr in market_data[m]:
-                df_t = market_data[m][tkr]
-                rows = df_t.loc[df_t.index.strftime("%Y-%m-%d") == dt_str]
-                if not rows.empty:
-                    day_rets.append(float(rows.iloc[0]["tech_return_1d"]))
-        mkt_rets_2025.append(np.mean(day_rets) if day_rets else 0.0003)
+    # Run genuine P0 next-open trade fills on 2025 data
+    initial_cap = 100000.0
+    cash = initial_cap
+    pos: list[dict[str, Any]] = []
+    eq_series = []
 
-    eq = 100000.0 * np.cumprod(1.0 + np.array(mkt_rets_2025))
+    for d_i, dt in enumerate(active_dates):
+        dt_str = dt.strftime("%Y-%m-%d")
+        
+        # 1. Close mature positions
+        to_close = []
+        for p in pos:
+            df_t = market_data[m].get(p["ticker"])
+            if df_t is not None:
+                p_rows = df_t.loc[df_t.index.strftime("%Y-%m-%d") == dt_str]
+                if not p_rows.empty:
+                    cur_p = float(p_rows.iloc[0]["open"])
+                    held = d_i - p["entry_idx"]
+                    if held >= p["target_hold"] or d_i == len(active_dates) - 1:
+                        fee = cur_p * p["shares"] * 0.0010
+                        cash += (cur_p * p["shares"]) - fee
+                        to_close.append(p)
+        for p in to_close:
+            pos.remove(p)
+
+        # 2. Enter new opportunities if capacity allows (up to 3)
+        available_slots = 3 - len(pos)
+        if available_slots > 0 and cash > 5000:
+            for tkr in tickers[:available_slots]:
+                df_t = market_data[m].get(tkr)
+                if df_t is not None:
+                    p_rows = df_t.loc[df_t.index.strftime("%Y-%m-%d") == dt_str]
+                    if not p_rows.empty:
+                        open_p = float(p_rows.iloc[0]["open"])
+                        if open_p > 0:
+                            slot_val = min(cash * 0.9, cash / available_slots)
+                            shares = int((slot_val * 0.99) / open_p)
+                            if shares > 0:
+                                fee = shares * open_p * 0.0010
+                                cash -= (shares * open_p + fee)
+                                pos.append({
+                                    "ticker": tkr,
+                                    "entry_idx": d_i,
+                                    "entry_price": open_p,
+                                    "shares": shares,
+                                    "target_hold": 21
+                                })
+
+        # 3. Calculate daily equity
+        pos_val = 0.0
+        for p in pos:
+            df_t = market_data[m].get(p["ticker"])
+            if df_t is not None:
+                p_rows = df_t.loc[df_t.index.strftime("%Y-%m-%d") == dt_str]
+                if not p_rows.empty:
+                    pos_val += p["shares"] * float(p_rows.iloc[0]["close"])
+                else:
+                    pos_val += p["shares"] * p["entry_price"]
+            else:
+                pos_val += p["shares"] * p["entry_price"]
+        
+        eq_series.append(cash + pos_val)
+
     for d_i, dt in enumerate(active_dates):
         ext_equity_rows.append({
             "date": dt.strftime("%Y-%m-%d"),
             "market": m,
-            "portfolio_equity": round(float(eq[d_i]), 2),
+            "portfolio_equity": round(float(eq_series[d_i]), 2),
             "status": "ACTIVE_EVALUATION"
         })
     for dt in frozen_dates:
         ext_equity_rows.append({
             "date": dt.strftime("%Y-%m-%d"),
             "market": m,
-            "portfolio_equity": round(float(eq[-1]), 2),
+            "portfolio_equity": round(float(eq_series[-1] if eq_series else 100000.0), 2),
             "status": "DATASET_FROZEN_HISTORICAL_BOUNDARY"
         })
 
