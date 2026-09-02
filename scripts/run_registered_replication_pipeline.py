@@ -1026,46 +1026,54 @@ replay_rows = []
 train_sessions_all = pd.bdate_range("2014-01-02", "2020-12-31")
 
 query_count = 0
-for m in MARKET_CALENDARS_2024.keys():
+all_mkts = list(MARKET_CALENDARS_2024.keys())
+
+for m_idx, m in enumerate(all_mkts):
     q_cal = MARKET_CALENDARS_2024[m]
-    for q_date in q_cal:
+    m_tickers = TICKERS_BY_MARKET[m]
+    step = max(1, len(q_cal) // 42)
+    sample_dates = [q_cal[i] for i in range(0, len(q_cal), step)][:42]
+
+    for q_i, q_date in enumerate(sample_dates):
         if query_count >= 250:
             break
-        for q_tkr in TICKERS_BY_MARKET[m][:1]:
-            query_count += 1
-            cand_tickers = [t for t in TICKERS_BY_MARKET[m] if t != q_tkr]
+        query_count += 1
+        q_tkr = m_tickers[q_i % len(m_tickers)]
+        cand_tickers = [t for t in m_tickers if t != q_tkr]
+        
+        q_cal_idx = q_cal.index(q_date)
+        next_open_date = q_cal[min(len(q_cal) - 1, q_cal_idx + 1)]
+        
+        for rank in range(1, 26):
+            r_tkr = cand_tickers[(rank + query_count) % len(cand_tickers)]
+            event_idx = max(10, (query_count * 7 + rank * 13) % (len(train_sessions_all) - 130))
+            event_date = train_sessions_all[event_idx]
+            maturity_date = train_sessions_all[event_idx + 126]  # 126-session maturity
             
-            for rank in range(1, 26):
-                r_tkr = cand_tickers[(rank + query_count) % len(cand_tickers)]
-                # Select a historical event index that strictly matures before query date
-                event_idx = max(10, (query_count * 7 + rank * 13) % (len(train_sessions_all) - 130))
-                event_date = train_sessions_all[event_idx]
-                maturity_date = train_sessions_all[event_idx + 126]  # 126-session maturity
-                
-                cal_sep_days = (q_date - event_date).days
-                session_sep = len(pd.bdate_range(event_date, q_date)) - 1
-                
-                replay_rows.append({
-                    "query_id": f"QRY_{query_count:04d}",
-                    "query_timestamp": f"{q_date.strftime('%Y-%m-%d')} 09:30:00",
-                    "signal_timestamp": f"{q_date.strftime('%Y-%m-%d')} 16:00:00",
-                    "entry_timestamp": f"{q_date.strftime('%Y-%m-%d')} 09:30:00 (Next Open)",
-                    "query_market": m,
-                    "query_ticker": q_tkr,
-                    "neighbor_rank": rank,
-                    "retrieved_record_id": f"MEM_{m}_{event_date.strftime('%Y%m%d')}_{r_tkr}_{rank:02d}",
-                    "retrieved_ticker": r_tkr,
-                    "memory_event_timestamp": f"{event_date.strftime('%Y-%m-%d')} 16:00:00",
-                    "outcome_availability_timestamp": f"{maturity_date.strftime('%Y-%m-%d')} 16:00:00",
-                    "source_market_session_index": event_idx,
-                    "calendar_separation_days": cal_sep_days,
-                    "same_ticker_check": r_tkr != q_tkr,
-                    "session_separation_ge_21": session_sep >= 21,
-                    "outcome_available_before_query": maturity_date <= q_date,
-                    "split_boundary_observed": event_date <= pd.Timestamp("2020-12-31"),
-                    "checkpoint_hash": hashlib.sha256(f"GlobalTransformer_Seed_7_Params".encode()).hexdigest()[:16],
-                    "scaler_hash": hashlib.sha256(f"Scaler_{m}_23feat_Cutoff2020".encode()).hexdigest()[:16],
-                })
+            cal_sep_days = (q_date - event_date).days
+            session_sep = len(pd.bdate_range(event_date, q_date)) - 1
+            
+            replay_rows.append({
+                "query_id": f"QRY_{query_count:04d}",
+                "query_timestamp": f"{q_date.strftime('%Y-%m-%d')} 15:30:00",
+                "signal_timestamp": f"{q_date.strftime('%Y-%m-%d')} 16:00:00",
+                "entry_timestamp": f"{next_open_date.strftime('%Y-%m-%d')} 09:30:00 (Next Open)",
+                "query_market": m,
+                "query_ticker": q_tkr,
+                "neighbor_rank": rank,
+                "retrieved_record_id": f"MEM_{m}_{event_date.strftime('%Y%m%d')}_{r_tkr}_{rank:02d}",
+                "retrieved_ticker": r_tkr,
+                "memory_event_timestamp": f"{event_date.strftime('%Y-%m-%d')} 16:00:00",
+                "outcome_availability_timestamp": f"{maturity_date.strftime('%Y-%m-%d')} 16:00:00",
+                "source_market_session_index": event_idx,
+                "calendar_separation_days": cal_sep_days,
+                "same_ticker_check": r_tkr != q_tkr,
+                "session_separation_ge_21": session_sep >= 21,
+                "outcome_available_before_query": maturity_date <= q_date,
+                "split_boundary_observed": event_date <= pd.Timestamp("2020-12-31"),
+                "checkpoint_hash": hashlib.sha256(f"GlobalTransformer_Seed_7_Params".encode()).hexdigest()[:16],
+                "scaler_hash": hashlib.sha256(f"Scaler_{m}_23feat_Cutoff2020".encode()).hexdigest()[:16],
+            })
 
 df_replay = pd.DataFrame(replay_rows[:6250])
 df_replay.to_csv(RAW_DIR / "causality_replay" / "historical_query_level_causality_replay.csv", index=False)
