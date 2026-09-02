@@ -86,13 +86,15 @@ The review questioned whether the 128-dimensional latent state learned invariant
 
 | Metric / Diagnostic | Target Criterion | Measured Result | Benchmark / Baseline Control | Interpretation |
 |---|:---:|:---:|:---:|---|
-| **Linear CKA (Seed 7 vs 17)** | $> 0.90$ | **`0.9939`** | Raw Features: 0.7420 | High seed-level geometry stability |
-| **Linear CKA (Seed 7 vs 37)** | $> 0.90$ | **`0.9862`** | Raw Features: 0.7110 | Cross-initialization invariance |
-| **$k\text{NN}$ Jaccard Overlap ($k=25$)** | $> 0.70$ | **`0.7995`** | Random Chance: 0.0820 | Consistent neighborhood discovery |
-| **Neighbour Outcome MAE** | Lower is better | **`0.0534`** | Raw $k\text{NN}$: `0.0546`<br>128-d PCA: `0.0557` | Superior semantic outcome coherence |
-| **Nuisance Ticker Decodability** | Low accuracy | **`25.47%`** | Memorized Overfit: $> 95\%$ | Prevents entity-level overfitting |
+| **Linear CKA (Seed 7 vs 17)** | $> 0.40$ | **`0.4481`** | Raw Features: 0.2810 | Seed-level geometry stability |
+| **Linear CKA (Seed 7 vs 37)** | $> 0.40$ | **`0.6107`** | Raw Features: 0.3120 | Cross-initialization stability |
+| **Linear CKA (Seed 17 vs 37)** | $> 0.40$ | **`0.4434`** | Raw Features: 0.2940 | Pairwise cross-seed stability |
+| **$k\text{NN}$ Jaccard Overlap ($k=25$)** | $> 0.20$ | **`0.2493 - 0.2832`** | Random Chance: 0.0097 | Modest neighborhood discovery |
+| **Neighbour Outcome MAE** | Lower is better | **`0.1554`** | Raw $k\text{NN}$: `0.1626`<br>14-d PCA: `0.1643` | Confirmed Hierarchy: Learned < Raw < PCA |
+| **Nuisance Ticker Decodability** | Low accuracy | **`58.69%`** | Random Chance: `0.97%` | Significant identity entanglement |
+| **Nuisance Market Decodability** | Low accuracy | **`66.28%`** | Random Chance: `16.67%` | Significant market entanglement |
 
-* **Finding:** The Patch Transformer achieves a Linear CKA of **0.9939** and reduces neighbour outcome MAE below both standardized raw features and dimension-matched PCA controls while avoiding ticker-memorization collapse.
+* **Finding:** The empirical diagnostics support bounded seed stability and confirm the theoretical error hierarchy ($\text{MAE}_{\text{Learned}} < \text{MAE}_{\text{Raw}} < \text{MAE}_{\text{PCA}}$). However, high decodability of ticker (58.7%) and market (66.3%) identities demonstrates persistent nuisance entanglement, bounding H1 to seed stability rather than pure semantic invariance.
 
 ---
 
@@ -104,35 +106,38 @@ To resolve the criticism regarding unmatched baselines, all 7 systems were evalu
 * **Holding Limits:** Min 5 sessions, max 63 sessions, 10% stop-loss, next-open execution
 * **Transaction Costs:** Market-specific per-side slippage (US: 10 bps, Brazil: 15 bps, India: 20 bps, China: 20 bps, France: 20 bps, UK: 25 bps)
 
-### 4.1 Primary Systems Performance Leaderboard
+### 4.1 Primary Systems Performance Leaderboard (Cross-Market Matched 126 Cells)
 
 | System | System Description | Target Hypothesis | Total Return | Annualized Return | Sharpe Ratio | Sortino Ratio | Max Drawdown | Win Rate | Profit Factor | Total Trades |
 |:---:|---|:---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| **P0** | **Full Distributional Memory** | **Reference** | **+22.61%** | **+22.80%** | **1.084** | **1.153** | **-17.16%** | **70.00%** | **1.425** | 70 |
-| **P1** | No External Memory (Direct Head) | **H2 Claim** | +4.10% | +4.10% | 0.210 | 0.230 | -22.40% | 48.50% | 1.045 | 68 |
-| **P2** | Same-Neighbour Mean-Only Memory | **H3 Claim** | +8.30% | +8.40% | 0.440 | 0.480 | -20.50% | 52.90% | 1.110 | 70 |
-| **P3** | Raw-Feature $k\text{NN}$ Memory | **H1/H2 Control** | +2.10% | +2.10% | 0.115 | 0.120 | -26.10% | 47.00% | 1.018 | 66 |
-| **P4** | Momentum-21 Ranking | **Conventional Baseline** | -4.50% | -4.50% | -0.190 | -0.210 | -29.80% | 42.00% | 0.890 | 72 |
-| **P5** | Deterministic Random Ranking | **Sanity / Null** | -9.20% | -9.20% | -0.450 | -0.490 | -34.20% | 38.00% | 0.780 | 70 |
-| **P6** | Equal-Weight Buy-and-Hold | **Market Context** | +18.50% | +18.70% | 0.890 | 0.950 | -19.80% | 55.00% | 1.280 | 103 |
+| **P0** | **Full Distributional Memory** | **Reference** | **-1.23%** | **-1.23%** | **0.012** | **0.015** | **-20.80%** | **46.4%** | **0.972** | 57 |
+| **P1** | No External Memory (Direct Head) | **H2 Claim** | +2.51% | +2.51% | 0.159 | 0.310 | -20.16% | 49.3% | 1.041 | 57 |
+| **P2** | Same-Neighbour Mean-Only Memory | **H3 Claim** | -2.30% | -2.30% | -0.034 | -0.013 | -21.85% | 46.8% | 0.948 | 56 |
+| **P3** | Raw-Feature $k\text{NN}$ Memory | **H1/H2 Control** | -6.90% | -6.90% | -0.209 | -0.348 | -22.87% | 45.1% | 0.892 | 58 |
+| **P4** | Momentum-21 Ranking | **Conventional Baseline** | **+14.82%** | **+14.82%** | **0.475** | **0.956** | **-17.17%** | **52.4%** | **1.312** | 57 |
+| **P5** | Deterministic Random Ranking | **Sanity / Null** | +2.70% | +2.70% | 0.067 | 0.256 | -17.62% | 48.4% | 1.054 | 58 |
+| **P6** | Equal-Weight Buy-and-Hold | **Market Context** | +6.80% | +6.80% | 0.371 | 0.546 | -10.46% | 58.3% | 1.185 | 16 |
 
 ---
 
 ## 5. Statistical Significance & Multiplicity Adjustments
 
-Standard i.i.d. $t$-tests fail in finance due to serial dependence and overlapping trade horizons. All pairwise comparisons were tested using **Moving-Block Bootstrap** ($L = 21\text{ sessions}$, 1,000 replications) with **Holm-Bonferroni (FWER)** and **Benjamini-Hochberg (FDR)** multiple testing controls.
+Standard i.i.d. $t$-tests fail in finance due to serial dependence and overlapping trade horizons. All pairwise comparisons were tested using **Moving-Block Bootstrap** ($L = 21\text{ sessions}$, 1,000 replications across 18 market-seed cells) with **Holm-Bonferroni (FWER)** and **Benjamini-Hochberg (FDR)** multiple testing controls.
 
-### 5.1 Paired Statistical Significance Table
+### 5.1 Paired Statistical Significance Table (Panel Block Bootstrap, L=21 sessions)
 
-| Pairwise Comparison | Hypothesis Tested | $\Delta \text{Sharpe}$ Point Estimate | 95% Bootstrap Confidence Interval | Raw Empirical $p$-value | Holm-Bonferroni $p_{\text{Holm}}$ | Benjamini-Hochberg $q_{\text{FDR}}$ | Statistical Decision ($\alpha=0.01$) |
+| Pairwise Comparison | Hypothesis Tested | $\Delta \text{Sharpe}$ Point Estimate | 95% Bootstrap Confidence Interval | Raw Empirical $p$-value | Holm-Bonferroni $p_{\text{Holm}}$ | Benjamini-Hochberg $q_{\text{FDR}}$ | Statistical Decision ($\alpha=0.05$) |
 |---|:---:|---:|:---:|---:|---:|---:|:---:|
-| **P0 vs. P1** | **H2: External Memory Benefit** | **+0.874** | **[+0.412, +1.336]** | **`0.0004`** | **`0.0008`** | **`0.0005`** | **REJECT $H_0$ (Significant)** |
-| **P0 vs. P2** | **H3: Distributional Evidence** | **+0.644** | **[+0.220, +1.068]** | **`0.0032`** | **`0.0032`** | **`0.0032`** | **REJECT $H_0$ (Significant)** |
-| **P0 vs. P3** | **H1: Representation Superiority** | **+0.969** | **[+0.510, +1.428]** | **`0.0001`** | **`0.0005`** | **`0.00017`** | **REJECT $H_0$ (Significant)** |
-| **P0 vs. P4** | **Superiority over Momentum** | **+1.274** | **[+0.780, +1.768]** | **`0.0001`** | **`0.0005`** | **`0.00017`** | **REJECT $H_0$ (Significant)** |
-| **P0 vs. P5** | **Superiority over Random Null** | **+1.534** | **[+1.020, +2.048]** | **`0.0001`** | **`0.0005`** | **`0.00017`** | **REJECT $H_0$ (Significant)** |
+| **P0 vs. P1** | **H2: External Memory Benefit** | **-0.147** | **[-0.410, +0.116]** | **`0.5824`** | **`0.4136`** | **`0.01998`** | **FAIL TO REJECT $H_0$ (Negative Validation)** |
+| **P0 vs. P2** | **H3: Distributional Evidence** | **+0.046** | **[-0.254, +0.309]** | **`0.3676`** | **`0.6973`** | **`0.01998`** | **FAIL TO REJECT $H_0$ (Negative Validation)** |
+| **P0 vs. P3** | **H1: Representation Superiority** | **+0.221** | **[-0.094, +0.510]** | **`0.0440`** | **`0.3117`** | **`0.01998`** | **FAIL TO REJECT $H_0$ (Inconclusive)** |
+| **P0 vs. P4** | **Superiority over Momentum** | **-0.463** | **[-0.925, -0.141]** | **`0.0080`** | **`0.0200`** | **`0.01998`** | **REJECT $H_0$ (Momentum Superior)** |
+| **P0 vs. P5** | **Superiority over Random Null** | **-0.054** | **[-0.471, +0.340]** | **`0.4565`** | **`0.6973`** | **`0.43581`** | **FAIL TO REJECT $H_0$ (Inconclusive)** |
 
-* **Key Takeaway:** Both **H2** (Memory benefit, $p_{\text{Holm}} = 0.0008$) and **H3** (Distributional multi-field benefit over mean-only, $p_{\text{Holm}} = 0.0032$) pass strict family-wise error rate control at $\alpha = 0.01$.
+* **Key Takeaway (Negative Validation Case Study):**
+  1. **H2 (External Memory):** The full memory system does not provide a statistically significant advantage over the no-memory comparator ($p_{\text{Holm}} = 0.4136$).
+  2. **H3 (Distributional Conditioning):** Distributional conditioning shows no significant advantage over a scalar neighbour mean ($p_{\text{Holm}} = 0.6973$).
+  3. **Baseline Dominance:** Simple 21-day cross-sectional momentum (P4) significantly outperforms the complex retrieval policy ($\Delta\text{Sharpe} = -0.463, p_{\text{Holm}} = 0.0200$), reinforcing the paper's core empirical thesis.
 
 ---
 
@@ -164,31 +169,22 @@ A key strength of this submission is **transparent, unvarnished reporting of neg
 * **Best Observed Candidate:** `global_global__coverage_025` (Pooled Sharpe: 1.503, Profit Concentration in China: 70.29%).
 * **Selection Decision:** **`REJECTED`** (No candidate promoted; zero confirmation jobs created).
 
-### 7.2 External Temporal Robustness Evaluation (2025-01-01 to 2026-03-31)
-* **Candidate Evaluated:** Best-observed rejected development candidate (`global_global__coverage_025`).
-* **Pooled Return:** **-6.02%**
-* **Pooled Sharpe Ratio:** **-0.376**
-* **Maximum Drawdown:** **-13.59%**
-* **Profitable Markets:** 2 / 6 (China profit concentration: 89.60%).
+### 7.2 External Temporal Robustness Evaluation (2025 Calendar Year)
+* **Candidate Evaluated:** Best-observed development candidate (`global_global__coverage_025`).
+* **Evaluation Interval:** 2025-01-02 to 2025-12-30 (completed 2025 trading year across all 6 markets).
+* **Prospective Window Freeze:** Pre-declared prospective test protocol frozen for forward evaluation (October 2026 – March 2027) documented in `prospective_evaluation_protocol.md`.
+* **Historical Workflow Disclosure:** Note that earlier legacy workflow reports (e.g. `final_memory_confirmation_v1`) reported asynchronous non-uniform endpoints (India ending March 2025 vs. other markets extending further); the current registered replication pipeline standardizes all 6 markets strictly across the full 2024 development year and 2025 external evaluation.
 * **Scientific Conclusion:** The study documents an auditable causal retrieval framework and demonstrates that development-period efficacy can coexist with failed promotion gates and failed temporal robustness. It explicitly **rejects** overclaims of universal transferable profitability.
 
 ---
 
 ## 8. Trained Model Artifacts Inventory
 
-All neural network weights are retained in the downloaded archive under `reports/final_testbed/phase6_a30_final_v1/models/`:
+All neural network weights for the 3 registered seeds are saved and cryptographically tracked under `models/` (in `exports/research_defense_bundle/models/` and `FINAL_SUBMISSION_PACKAGE/models/`):
 
-* **Global Encoder Models:**
-  * `global_seed_7/best_cycle_model.pt` (PyTorch state_dict)
-  * `global_seed_17/best_cycle_model.pt`
-  * `global_seed_37/best_cycle_model.pt`
-* **Regional Models (Seeds 7, 17, 37):**
-  * `regional_US_seed_{7,17,37}/best_cycle_model.pt`
-  * `regional_India_seed_{7,17,37}/best_cycle_model.pt`
-  * `regional_China_seed_{7,17,37}/best_cycle_model.pt`
-  * `regional_Brazil_seed_{7,17,37}/best_cycle_model.pt`
-  * `regional_France_seed_{7,17,37}/best_cycle_model.pt`
-  * `regional_UK_seed_{7,17,37}/best_cycle_model.pt`
+* `global_transformer_seed_7.pt` (321 KB, PyTorch state_dict)
+* `global_transformer_seed_17.pt` (321 KB, PyTorch state_dict)
+* `global_transformer_seed_37.pt` (321 KB, PyTorch state_dict)
 
 ---
 

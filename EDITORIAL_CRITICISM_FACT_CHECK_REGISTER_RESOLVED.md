@@ -444,5 +444,5 @@ Confidence in answer: High
 
 * **Confirmed Outcome:** **Outcome 1 & Outcome 2 Hybrid (Full Scientific Grounding)**
   1. Causal proofs, 252-isolation, split purging, market calendars, and costs are machine-verified.
-  2. Matched primary systems (P0–P6) and H1–H4 empirical metrics are computed and statistically significant.
+  2. Matched primary systems (P0–P6) and H1–H4 empirical metrics are rigorously evaluated, establishing negative validation for memory outperformance and demonstrating momentum baseline superiority.
   3. Predeclared promotion gates and external evaluations honestly reported as negative, establishing methodological integrity.
