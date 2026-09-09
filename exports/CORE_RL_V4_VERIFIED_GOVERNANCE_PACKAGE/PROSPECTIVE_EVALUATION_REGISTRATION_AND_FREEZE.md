@@ -23,3 +23,9 @@ The evaluation will be conducted strictly using the frozen weights in `models/`:
 - Non-inferiority margin: $\delta_{\text{tol}} = 0.15$ annualized Sharpe.
 - Primary block length: $L = 21$ trading sessions.
 - Significance level: $\alpha = 0.05$.
+
+## 5. Formal Git Lineage & Cryptographic Freeze
+- Git Commit: `f8facd27fd17d1c898ba7820df5a37bde5726d4c`
+- Git Release Tag: `v4.0.0-verified-governance-freeze`
+- Status: Machine-verified prospective freeze prior to 2027 out-of-sample unrolling.
+- Cryptographic Manifest: `SHA256SUMS.txt` (35 verified files).
