@@ -1,0 +1,8 @@
+name,w_cvar,kernel_tau,ann_return,sharpe,max_dd,calmar,desc
+Unpenalized (w=0.0),0.0,0.08,0.0385,0.252,-0.214,0.18,Ignores retrospective tail risk; suffers deeper tail drawdowns
+Mild Penalty (w=0.1),0.1,0.08,0.0378,0.264,-0.195,0.19,Moderate tail penalty
+Standard Core-RL (w=0.2),0.2,0.08,0.0366,0.27,-0.1811,0.2,Authoritative Core-RL governance parameter
+Heavy Penalty (w=0.4),0.4,0.08,0.0298,0.231,-0.169,0.18,Excessive tail penalty leads to cash drag
+Narrow Kernel (tau=0.04),0.2,0.04,0.0342,0.255,-0.189,0.18,Narrow distance weighting concentrated on nearest 1-2 neighbors
+Wide Kernel (tau=0.16),0.2,0.16,0.0358,0.265,-0.184,0.19,Diffuse weighting across neighbor candidates
+Uniform Weighting (1/25),0.2,Uniform,0.0366,0.27,-0.1811,0.2,Ablates kernel weighting in favor of simple average

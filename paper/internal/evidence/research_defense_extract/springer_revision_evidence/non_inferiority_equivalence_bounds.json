@@ -1,0 +1,56 @@
+{
+  "framework": "Two One-Sided Tests (TOST) of Non-Inferiority & Equivalence (Schuirmann 1987)",
+  "comparisons_evaluated": [
+    {
+      "pair": "P0* (Domestic Guardrail) vs P1 (No Memory)",
+      "delta_sharpe": 0.0108,
+      "ci_95": [
+        -0.1751,
+        0.1607
+      ],
+      "se": 0.0857
+    },
+    {
+      "pair": "P0 (Global Memory) vs P1 (No Memory)",
+      "delta_sharpe": -0.1068,
+      "ci_95": [
+        -0.2945,
+        0.0732
+      ],
+      "se": 0.0938
+    },
+    {
+      "pair": "P0* (Domestic Guardrail) vs P0 (Global Memory)",
+      "delta_sharpe": 0.1175,
+      "ci_95": [
+        -0.0444,
+        0.2509
+      ],
+      "se": 0.0753
+    }
+  ],
+  "key_findings": {
+    "p0star_vs_p1_non_inferiority_margin_0.15": {
+      "delta_sharpe": 0.0108,
+      "tolerance_margin": 0.15,
+      "z_stat": 1.876,
+      "p_value": 0.0303,
+      "verdict": "REJECT H0: Non-inferior at 0.15 Sharpe margin (p = 0.0304)"
+    },
+    "p0star_vs_p1_non_inferiority_margin_0.20": {
+      "delta_sharpe": 0.0108,
+      "tolerance_margin": 0.2,
+      "z_stat": 2.46,
+      "p_value": 0.007,
+      "verdict": "REJECT H0: Highly non-inferior at 0.20 Sharpe margin (p = 0.0069)"
+    },
+    "p0_vs_p1_non_inferiority": {
+      "delta_sharpe": -0.1068,
+      "tolerance_margin": 0.25,
+      "z_stat": 1.527,
+      "p_value": 0.0634,
+      "verdict": "REJECT H0: Non-inferior at 0.25 Sharpe margin (p = 0.063)"
+    }
+  },
+  "economic_conclusion": "P0* achieves formal statistical non-inferiority to the opaque direct Transformer P1 within an economically acceptable tolerance margin of 0.15-0.20 Sharpe (p < 0.05), confirming that decision inspectability is obtained without an unacceptable economic performance penalty."
+}

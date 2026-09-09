@@ -1,0 +1,4 @@
+exit_reason,count,win_rate,mean_return,median_hold
+atr_chandelier_stop,174,18.4%,-5.9%,29.5
+calendar_end,52,59.6%,3.97%,25.0
+max_horizon,104,79.8%,9.83%,63.0

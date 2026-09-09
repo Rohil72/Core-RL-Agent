@@ -1,0 +1,46 @@
+[
+  {
+    "Variant":"Variant A (Baseline Soft Attn)",
+    "IC (Alpha Signal)":0.0231,
+    "IC p-value":"9.12e-04",
+    "Entropy H":1.887,
+    "Active Slots":"8\/8",
+    "Slot Usage Std":0.0706,
+    "Cond Return Spread":"+21.05%",
+    "Best Slot Return":"+19.86%",
+    "Worst Slot Return":"-1.18%"
+  },
+  {
+    "Variant":"Variant B (Pruned Redundancy + Tau=0.1)",
+    "IC (Alpha Signal)":0.0096,
+    "IC p-value":"1.70e-01",
+    "Entropy H":0.052,
+    "Active Slots":"3\/8",
+    "Slot Usage Std":0.1933,
+    "Cond Return Spread":"+1.72%",
+    "Best Slot Return":"+2.87%",
+    "Worst Slot Return":"+1.15%"
+  },
+  {
+    "Variant":"Variant C (MoE Top-2 + Load Balancing)",
+    "IC (Alpha Signal)":-0.0202,
+    "IC p-value":"3.80e-03",
+    "Entropy H":0.48,
+    "Active Slots":"8\/8",
+    "Slot Usage Std":0.0457,
+    "Cond Return Spread":"+3.71%",
+    "Best Slot Return":"+3.30%",
+    "Worst Slot Return":"-0.41%"
+  },
+  {
+    "Variant":"Variant D (VQ Codebook Memory)",
+    "IC (Alpha Signal)":0.0381,
+    "IC p-value":"4.68e-08",
+    "Entropy H":0.0,
+    "Active Slots":"1\/8",
+    "Slot Usage Std":0.3307,
+    "Cond Return Spread":"+0.00%",
+    "Best Slot Return":"+2.08%",
+    "Worst Slot Return":"+2.08%"
+  }
+]

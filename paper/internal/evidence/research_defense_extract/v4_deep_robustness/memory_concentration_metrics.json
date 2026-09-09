@@ -1,0 +1,10 @@
+{
+  "mean_hhi": 0.0315,
+  "median_hhi": 0.0305,
+  "mean_effective_neighbors_Neff": 55.68,
+  "median_effective_neighbors_Neff": 32.78,
+  "hubness_gini_coefficient": 0.462,
+  "active_memory_episodes_sampled": 109647,
+  "memory_age_mean_years_prior": 5.4,
+  "memory_age_span": "2013-01 to 2020-12"
+}

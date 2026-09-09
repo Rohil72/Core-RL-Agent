@@ -1,0 +1,191 @@
+{
+  "execution_time_seconds": 2353.2,
+  "python_version": "3.13.7 (tags/v3.13.7:bcee1c3, Aug 14 2025, 14:15:11) [MSC v.1944 64 bit (AMD64)]",
+  "torch_version": "2.6.0+cu124",
+  "cuda_device": "NVIDIA GeForce RTX 2050",
+  "platform": "Windows-11-10.0.26200-SP0",
+  "contract": {
+    "observation_window": "252 sessions x 23 features",
+    "patch_architecture": "42 patches x 6 sessions",
+    "latent_dimension": 128,
+    "loss_function": "SmoothL1Loss(pred, y) + 0.35 * continuous_outcome_geometry_loss(latents, y)",
+    "holding_period_contract": "H_min = 1 session, H_max = 63 sessions",
+    "exit_mechanism": "Adaptive 2.5 x ATR_14 Chandelier exit (10% floor)",
+    "causal_timing": "Signal at session t Close, Execution at session t+1 Open (10 bps fee)",
+    "cvar_definition": "Expected Shortfall E[R | R <= VaR_0.05]",
+    "training_cutoff": "<= 2020-12-31",
+    "evaluation_year": 2024
+  },
+  "scorecard_summary": [
+    {
+      "System": "P0",
+      "System Name": "Full learned-state distributional memory",
+      "Ann. Return": "+1.05%",
+      "Sharpe": "0.155",
+      "Sortino": "0.193",
+      "Max Drawdown": "-19.38%",
+      "Pooled Win%": "41.2%",
+      "Pooled Med Hold": "38.0d",
+      "Pooled Mean Hold": "39.4d",
+      "Profit Factor": 1.03,
+      "Trade Count": 335
+    },
+    {
+      "System": "P0*",
+      "System Name": "Guardrailed memory (Domestic + Nadaraya-Watson)",
+      "Ann. Return": "+3.75%",
+      "Sharpe": "0.275",
+      "Sortino": "0.373",
+      "Max Drawdown": "-18.12%",
+      "Pooled Win%": "44.2%",
+      "Pooled Med Hold": "39.0d",
+      "Pooled Mean Hold": "40.0d",
+      "Profit Factor": 1.15,
+      "Trade Count": 330
+    },
+    {
+      "System": "P1",
+      "System Name": "No external memory",
+      "Ann. Return": "+3.59%",
+      "Sharpe": "0.272",
+      "Sortino": "0.356",
+      "Max Drawdown": "-18.47%",
+      "Pooled Win%": "43.0%",
+      "Pooled Med Hold": "38.0d",
+      "Pooled Mean Hold": "39.2d",
+      "Profit Factor": 1.13,
+      "Trade Count": 337
+    },
+    {
+      "System": "P2",
+      "System Name": "Same-neighbour mean-only memory",
+      "Ann. Return": "+2.17%",
+      "Sharpe": "0.201",
+      "Sortino": "0.256",
+      "Max Drawdown": "-19.45%",
+      "Pooled Win%": "41.5%",
+      "Pooled Med Hold": "38.0d",
+      "Pooled Mean Hold": "39.4d",
+      "Profit Factor": 1.08,
+      "Trade Count": 335
+    },
+    {
+      "System": "P3",
+      "System Name": "Raw-feature kNN memory",
+      "Ann. Return": "+2.16%",
+      "Sharpe": "0.192",
+      "Sortino": "0.282",
+      "Max Drawdown": "-19.65%",
+      "Pooled Win%": "40.1%",
+      "Pooled Med Hold": "37.0d",
+      "Pooled Mean Hold": "38.7d",
+      "Profit Factor": 1.07,
+      "Trade Count": 342
+    },
+    {
+      "System": "P4",
+      "System Name": "Momentum-21 ranking",
+      "Ann. Return": "+4.96%",
+      "Sharpe": "0.218",
+      "Sortino": "0.385",
+      "Max Drawdown": "-17.16%",
+      "Pooled Win%": "43.9%",
+      "Pooled Med Hold": "40.5d",
+      "Pooled Mean Hold": "38.1d",
+      "Profit Factor": 1.2,
+      "Trade Count": 342
+    },
+    {
+      "System": "P5",
+      "System Name": "Random ranking",
+      "Ann. Return": "+6.65%",
+      "Sharpe": "0.384",
+      "Sortino": "0.587",
+      "Max Drawdown": "-15.72%",
+      "Pooled Win%": "45.3%",
+      "Pooled Med Hold": "45.0d",
+      "Pooled Mean Hold": "41.5d",
+      "Profit Factor": 1.29,
+      "Trade Count": 322
+    },
+    {
+      "System": "P6",
+      "System Name": "Equal-weight buy-and-hold context",
+      "Ann. Return": "+6.68%",
+      "Sharpe": "0.380",
+      "Sortino": "0.554",
+      "Max Drawdown": "-10.53%",
+      "Pooled Win%": "59.2%",
+      "Pooled Med Hold": "251.5d",
+      "Pooled Mean Hold": "250.0d",
+      "Profit Factor": 1.75,
+      "Trade Count": 294
+    }
+  ],
+  "bootstrap_results": [
+    {
+      "Comparison": "P0 vs P1 (H2: No Memory)",
+      "Delta Sharpe": -0.1068,
+      "95% CI": "[-0.2945, 0.0732]",
+      "p_value": 0.2388,
+      "FDR q_value": 0.3805,
+      "Verdict": "Fail to Reject H0"
+    },
+    {
+      "Comparison": "P0 vs P2 (H3: Mean-Only)",
+      "Delta Sharpe": -0.0404,
+      "95% CI": "[-0.1169, 0.0324]",
+      "p_value": 0.2854,
+      "FDR q_value": 0.3805,
+      "Verdict": "Fail to Reject H0"
+    },
+    {
+      "Comparison": "P0 vs P3 (H1/H2 Control)",
+      "Delta Sharpe": -0.0324,
+      "95% CI": "[-0.2318, 0.2312]",
+      "p_value": 0.9914,
+      "FDR q_value": 0.9914,
+      "Verdict": "Fail to Reject H0"
+    },
+    {
+      "Comparison": "P0 vs P4 (Momentum Baseline)",
+      "Delta Sharpe": -0.2141,
+      "95% CI": "[-0.5837, 0.1694]",
+      "p_value": 0.2824,
+      "FDR q_value": 0.3805,
+      "Verdict": "Fail to Reject H0"
+    },
+    {
+      "Comparison": "P0 vs P5 (Random Ranking)",
+      "Delta Sharpe": -0.3091,
+      "95% CI": "[-0.7401, 0.0950]",
+      "p_value": 0.125,
+      "FDR q_value": 0.3805,
+      "Verdict": "Fail to Reject H0"
+    },
+    {
+      "Comparison": "P0 vs P6 (Equal Weight Context)",
+      "Delta Sharpe": -0.348,
+      "95% CI": "[-0.7650, -0.1252]",
+      "p_value": 0.0054,
+      "FDR q_value": 0.0432,
+      "Verdict": "Reject H0 (p < 0.05)"
+    },
+    {
+      "Comparison": "P0* (Guardrail) vs P1 (No Memory)",
+      "Delta Sharpe": 0.0108,
+      "95% CI": "[-0.1751, 0.1607]",
+      "p_value": 0.9322,
+      "FDR q_value": 0.9914,
+      "Verdict": "Fail to Reject H0"
+    },
+    {
+      "Comparison": "P0* (Guardrail) vs P0 (Global Memory)",
+      "Delta Sharpe": 0.1175,
+      "95% CI": "[-0.0444, 0.2509]",
+      "p_value": 0.1656,
+      "FDR q_value": 0.3805,
+      "Verdict": "Fail to Reject H0"
+    }
+  ]
+}

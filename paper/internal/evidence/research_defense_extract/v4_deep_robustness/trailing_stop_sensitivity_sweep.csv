@@ -1,0 +1,7 @@
+stop_config,ann_return,sharpe,max_dd,win_rate,median_hold,trades
+1.5 x ATR_14 (Tight Stop),+0.85%,0.095,-16.50%,38.2%,18.0,480
+2.0 x ATR_14 (Moderate Stop),+2.90%,0.22,-17.20%,42.0%,28.0,395
+2.5 x ATR_14 (Contract Baseline),+3.75%,0.275,-18.12%,44.2%,39.0,330
+3.0 x ATR_14 (Wide Stop),+3.10%,0.235,-19.80%,45.0%,48.0,285
+Static 10% Trailing Stop,+2.45%,0.185,-18.60%,41.5%,35.0,350
+Static 12% Trailing Stop,+2.10%,0.165,-19.40%,42.1%,41.0,315

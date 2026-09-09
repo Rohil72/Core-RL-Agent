@@ -1,0 +1,38 @@
+{
+  "seed_7": {
+    "matrix_shape": [
+      128,
+      64
+    ],
+    "effective_rank": 53.55,
+    "theoretical_max_rank": 64,
+    "effective_rank_ratio": 0.837,
+    "top1_singular_value_pct": 22.86,
+    "top5_singular_value_pct": 44.01,
+    "top10_singular_value_pct": 56.05
+  },
+  "seed_17": {
+    "matrix_shape": [
+      128,
+      64
+    ],
+    "effective_rank": 52.16,
+    "theoretical_max_rank": 64,
+    "effective_rank_ratio": 0.815,
+    "top1_singular_value_pct": 24.49,
+    "top5_singular_value_pct": 48.72,
+    "top10_singular_value_pct": 59.77
+  },
+  "seed_37": {
+    "matrix_shape": [
+      128,
+      64
+    ],
+    "effective_rank": 53.39,
+    "theoretical_max_rank": 64,
+    "effective_rank_ratio": 0.834,
+    "top1_singular_value_pct": 21.23,
+    "top5_singular_value_pct": 43.36,
+    "top10_singular_value_pct": 55.7
+  }
+}

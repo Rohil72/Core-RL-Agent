@@ -1,0 +1,9 @@
+{
+  "n_simulations": 1000,
+  "mc_sharpe_mean": 1.437,
+  "mc_sharpe_std": 1.017,
+  "mc_sharpe_95th_percentile": 3.103,
+  "p0s_us_sharpe": 1.779,
+  "p0s_empirical_percentile_rank": 63.5,
+  "mc_empirical_p_value": 0.365
+}

@@ -19,6 +19,8 @@ This sub-directory contains focused, technical, and econometric clarifications r
    * **Finding:** Exact side-by-side reconciliation table showing 100% agreement between stored JSON diagnostics and research dossier text (Linear CKA: 0.448–0.611; MAE: Learned < Raw < PCA; decodability: 58.7% ticker, 66.3% market).
 5. [`05_manuscript_two_study_rewrite_guide.md`](file:///c:/Users/rohil/OneDrive/Desktop/Core-RL-Agent/audit_defense_clarifications/05_manuscript_two_study_rewrite_guide.md)
    * **Finding:** Concrete architectural roadmap for restructuring the manuscript into **Study 1 (Historical Retrospective Audit)** and **Study 2 (Registered Replication & Negative Validation)**, including exact LaTeX section migrations and resolution of the 56 evidence caveats.
+6. [`06_internal_and_external_memory_architectures.md`](file:///c:/Users/rohil/OneDrive/Desktop/Core-RL-Agent/audit_defense_clarifications/06_internal_and_external_memory_architectures.md)
+   * **Finding:** Comparative empirical audit between parametric internal memory slots and non-parametric external episodic retrieval (191,136 regimes). Explains attention collapse, collinearity pruning, MoE failure in finance, and evaluates 6 external retrieval configurations (Nadaraya-Watson kernel, domestic guardrails, hubness Gini=0.462).
 
 ---
 

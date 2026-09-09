@@ -1,0 +1,50 @@
+[
+  {
+    "Variant":"Exp 1: Pruned + Orthogonal Reg",
+    "IC (Alpha)":0.0374,
+    "IC p-val":"7.95e-08",
+    "Entropy H":0.119,
+    "Active Slots":"1\/8",
+    "Slot Std":0.3178,
+    "Cond Spread":"+19.62%",
+    "Best Slot":"+9.41%",
+    "Worst Slot":"-10.21%",
+    "Gate g":"N\/A"
+  },
+  {
+    "Variant":"Exp 2: Centroid-Anchored Slots",
+    "IC (Alpha)":-0.0149,
+    "IC p-val":"3.28e-02",
+    "Entropy H":1.683,
+    "Active Slots":"8\/8",
+    "Slot Std":0.1086,
+    "Cond Spread":"+4.72%",
+    "Best Slot":"+2.15%",
+    "Worst Slot":"-2.57%",
+    "Gate g":"N\/A"
+  },
+  {
+    "Variant":"Exp 3: Gated FiLM Modulation",
+    "IC (Alpha)":0.0146,
+    "IC p-val":"3.64e-02",
+    "Entropy H":1.064,
+    "Active Slots":"8\/8",
+    "Slot Std":0.1617,
+    "Cond Spread":"+13.20%",
+    "Best Slot":"+5.41%",
+    "Worst Slot":"-7.79%",
+    "Gate g":"0.492"
+  },
+  {
+    "Variant":"Exp 4: Combined Champion (All 4)",
+    "IC (Alpha)":0.0038,
+    "IC p-val":"5.88e-01",
+    "Entropy H":1.821,
+    "Active Slots":"8\/8",
+    "Slot Std":0.0305,
+    "Cond Spread":"+8.77%",
+    "Best Slot":"+5.69%",
+    "Worst Slot":"-3.08%",
+    "Gate g":"0.559"
+  }
+]

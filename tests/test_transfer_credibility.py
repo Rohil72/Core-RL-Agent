@@ -27,6 +27,7 @@ def test_retrieval_hard_age_window_is_causal():
         k=2,
         minimum_neighbor_separation_sessions=0,
         maximum_memory_age_days=1461,
+        require_outcome_availability=False,
     )
     index = build_retrieval_index(memory, matrix, config)
 

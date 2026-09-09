@@ -1,0 +1,42 @@
+{
+  "P0 vs P1 (No Memory)": {
+    "observed_mean_diff": -0.1172,
+    "positive_markets": "1/6",
+    "exact_sign_flip_p": 0.1562,
+    "clustered_se": 0.0709,
+    "clustered_t_stat": -1.652,
+    "clustered_t_p": 0.1594
+  },
+  "P0* vs P0 (Topology Sensitivity)": {
+    "observed_mean_diff": 0.1197,
+    "positive_markets": "5/6",
+    "exact_sign_flip_p": 0.125,
+    "clustered_se": 0.0634,
+    "clustered_t_stat": 1.886,
+    "clustered_t_p": 0.1179
+  },
+  "P0* vs P1 (Same-Market Memory vs Direct Head)": {
+    "observed_mean_diff": 0.0025,
+    "positive_markets": "2/6",
+    "exact_sign_flip_p": 1.0,
+    "clustered_se": 0.0856,
+    "clustered_t_stat": 0.029,
+    "clustered_t_p": 0.9778
+  },
+  "P0 vs P4 (Momentum Baseline)": {
+    "observed_mean_diff": -0.0635,
+    "positive_markets": "4/6",
+    "exact_sign_flip_p": 0.875,
+    "clustered_se": 0.3188,
+    "clustered_t_stat": -0.199,
+    "clustered_t_p": 0.85
+  },
+  "P0 vs P6 (Passive Context)": {
+    "observed_mean_diff": -0.2225,
+    "positive_markets": "1/6",
+    "exact_sign_flip_p": 0.0625,
+    "clustered_se": 0.1082,
+    "clustered_t_stat": -2.057,
+    "clustered_t_p": 0.0948
+  }
+}

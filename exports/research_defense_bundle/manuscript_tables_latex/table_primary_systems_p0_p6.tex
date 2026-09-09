@@ -5,15 +5,15 @@
 \toprule
 \textbf{Sys} & \textbf{System Name} & \textbf{Claim} & \textbf{Return} & \textbf{Sharpe} & \textbf{Sortino} & \textbf{MaxDD} & \textbf{Win\%} & \textbf{Trades} \\
 \midrule
-P0 & Full learned-state distributional memory & Reference & -0.76% & 0.014 & -0.006 & -19.34% & 47.2% & 57 \\
-P1 & No external memory & H2 (No Memory) & +1.87% & -0.000 & 0.072 & -20.32% & 48.0% & 57 \\
-P2 & Same-neighbour mean-only memory & H3 (Mean-Only) & -0.60% & 0.020 & -0.002 & -20.34% & 45.2% & 57 \\
-P3 & Raw-feature kNN memory & H1/H2 Control & -4.84% & -0.226 & -0.297 & -23.07% & 44.4% & 58 \\
-P4 & Momentum-21 ranking & Momentum Baseline & +13.52% & 0.431 & 0.856 & -17.16% & 53.5% & 57 \\
-P5 & Random ranking & Random Baseline & +1.95% & 0.006 & 0.198 & -18.86% & 48.3% & 58 \\
-P6 & Equal-weight buy-and-hold context & Equal Weight Context & +6.80% & 0.371 & 0.546 & -10.46% & 58.3% & 16 \\
+P0 & Full learned-state distributional memory & Reference & +4.96% & 0.290 & 0.511 & -17.80% & 50.3% & 36 \\
+P1 & No external memory & H2 (No Memory) & +2.45% & 0.163 & 0.323 & -17.43% & 50.0% & 36 \\
+P2 & Same-neighbour mean-only memory & H3 (Mean-Only) & +6.65% & 0.380 & 0.646 & -16.14% & 51.2% & 36 \\
+P3 & Raw-feature kNN memory & H1/H2 Control & +4.24% & 0.286 & 0.467 & -17.62% & 49.4% & 36 \\
+P4 & Momentum-21 ranking & Momentum Baseline & -0.88% & -0.163 & -0.172 & -19.20% & 50.9% & 36 \\
+P5 & Random ranking & Random Baseline & +8.78% & 0.362 & 0.652 & -16.02% & 51.1% & 36 \\
+P6 & Equal-weight buy-and-hold context & Equal Weight Context & +6.80% & 0.371 & 0.539 & -10.46% & 58.3% & 16 \\
 \bottomrule
 \end{tabular}
-\caption{Cross-Market Primary Systems Comparison (P0--P6) across 6 markets $\times$ 3 seeds (126 cells) using official 2024 exchange calendars.}
+\caption{Cross-Market Primary Systems Comparison (P0--P6) across 6 markets $\times$ 3 seeds (126 cells) using official 2024 exchange calendars and $T=12$ weekly patch encoders.}
 \label{tab:primary_systems_p0_p6}
 \end{table}

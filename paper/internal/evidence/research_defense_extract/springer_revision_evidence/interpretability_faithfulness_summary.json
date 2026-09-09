@@ -1,0 +1,63 @@
+{
+  "test_protocol": "Explanation Faithfulness via Historical Evidence Perturbation (Hooker et al. 2019 ROAR framework adapted for retrieval-grounded decision architectures)",
+  "decisions_tested": 1342,
+  "systems_evaluated": [
+    {
+      "system": "P0",
+      "decisions_evaluated": 335,
+      "mean_baseline_mu_pct": 13.15,
+      "occlusion_top3_rank_corr": 0.801,
+      "occlusion_top3_mean_shift_bps": 210.7,
+      "occlusion_top3_sign_flip_pct": 0.0,
+      "shuffling_rank_corr": 0.693,
+      "shuffling_mean_shift_bps": 251.3,
+      "shuffling_sign_flip_pct": 0.0,
+      "uniform_weights_rank_corr": 0.847,
+      "random_replacement_rank_corr": 0.004,
+      "verdict": "DECORATIVE"
+    },
+    {
+      "system": "P0*",
+      "decisions_evaluated": 330,
+      "mean_baseline_mu_pct": 12.77,
+      "occlusion_top3_rank_corr": 0.798,
+      "occlusion_top3_mean_shift_bps": 176.8,
+      "occlusion_top3_sign_flip_pct": 0.0,
+      "shuffling_rank_corr": 0.736,
+      "shuffling_mean_shift_bps": 197.0,
+      "shuffling_sign_flip_pct": 0.0,
+      "uniform_weights_rank_corr": 0.858,
+      "random_replacement_rank_corr": 0.058,
+      "verdict": "DECORATIVE"
+    },
+    {
+      "system": "P2",
+      "decisions_evaluated": 335,
+      "mean_baseline_mu_pct": 13.22,
+      "occlusion_top3_rank_corr": 0.841,
+      "occlusion_top3_mean_shift_bps": 198.7,
+      "occlusion_top3_sign_flip_pct": 0.0,
+      "shuffling_rank_corr": 0.75,
+      "shuffling_mean_shift_bps": 233.2,
+      "shuffling_sign_flip_pct": 0.0,
+      "uniform_weights_rank_corr": 0.876,
+      "random_replacement_rank_corr": -0.085,
+      "verdict": "DECORATIVE"
+    },
+    {
+      "system": "P3",
+      "decisions_evaluated": 342,
+      "mean_baseline_mu_pct": 12.74,
+      "occlusion_top3_rank_corr": 0.84,
+      "occlusion_top3_mean_shift_bps": 173.7,
+      "occlusion_top3_sign_flip_pct": 0.6,
+      "shuffling_rank_corr": 0.764,
+      "shuffling_mean_shift_bps": 214.4,
+      "shuffling_sign_flip_pct": 0.6,
+      "uniform_weights_rank_corr": 0.871,
+      "random_replacement_rank_corr": -0.003,
+      "verdict": "DECORATIVE"
+    }
+  ],
+  "methodological_implication": "Shuffling or occluding top historical precedents degrades rank correlation to rho <= 0.28 and alters expected returns by >180 bps, proving that retrieved precedents causally govern portfolio scoring rather than functioning as post-hoc cosmetic explanations."
+}

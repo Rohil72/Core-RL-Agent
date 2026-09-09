@@ -1,0 +1,4 @@
+friction_bps,ann_return_p0,sharpe_p0,ann_return_p0star,sharpe_p0star
+10,+0.96%,0.15,+3.66%,0.27
+20,+0.18%,0.082,+2.84%,0.208
+30,-0.59%,0.015,+2.02%,0.146

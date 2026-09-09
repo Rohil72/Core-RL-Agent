@@ -1,0 +1,16 @@
+{
+  "market_clustered": {
+    "n_clusters": 6,
+    "mean_diff_daily_bp": 0.06,
+    "cluster_se_bp": 0.77,
+    "t_statistic": 0.076,
+    "p_value": 0.9422
+  },
+  "date_clustered": {
+    "n_clusters": 262,
+    "mean_diff_daily_bp": 0.03,
+    "cluster_se_bp": 0.81,
+    "t_statistic": 0.034,
+    "p_value": 0.9726
+  }
+}

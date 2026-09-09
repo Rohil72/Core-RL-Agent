@@ -1,0 +1,24 @@
+{
+  "definition": "Per-decision Herfindahl-Hirschman Index and Effective Neighbors Neff = 1 / sum(w_i^2)",
+  "k_neighbors_retrieved": 25,
+  "theoretical_bounds": "[1.0, 25.0]",
+  "mean_hhi": 0.0573,
+  "median_hhi": 0.0569,
+  "mean_effective_neighbors_Neff": 17.78,
+  "median_effective_neighbors_Neff": 17.59,
+  "p10_effective_neighbors_Neff": 16.16,
+  "p90_effective_neighbors_Neff": 20.02,
+  "total_decisions_evaluated": 1342,
+  "total_neighbor_records": 33550,
+  "retrieval_systems_included": [
+    "P0",
+    "P0*",
+    "P2",
+    "P3"
+  ],
+  "non_retrieval_systems_excluded": [
+    "P1 (No Memory)",
+    "P4 (Momentum)",
+    "P5 (Random)"
+  ]
+}

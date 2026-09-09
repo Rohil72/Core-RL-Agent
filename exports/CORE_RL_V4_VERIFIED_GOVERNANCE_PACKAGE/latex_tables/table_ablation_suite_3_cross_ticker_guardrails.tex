@@ -1,0 +1,16 @@
+\begin{table}[ht]
+\centering
+\small
+\begin{tabular}{lccccc}
+\toprule
+\textbf{Retrieval Scope \& Guardrail} & \textbf{Self-Match\%} & \textbf{Hub Gini} & \textbf{Return} & \textbf{Sharpe} & \textbf{MaxDD} \\
+\midrule
+Self-Retrieval Allowed (Unmasked) & 38.4\% & 0.703 & +2.15\% & 0.178 & -19.40\% \\
+Global Unconstrained ($P_0$) & 0.0\% & 0.612 & +0.96\% & 0.150 & -19.39\% \\
+\textbf{Domestic Universe Guardrail ($P_0^*$)} & 0.0\% & 0.448 & \textbf{+3.66\%} & \textbf{0.270} & \textbf{-18.11\%} \\
+Pure Parametric Backbone ($P_1$, No Memory) & 0.0\% & 0.000 & +3.54\% & 0.271 & -18.48\% \\
+\bottomrule
+\end{tabular}
+\caption{Ablation Suite 3: Cross-Ticker Debiasing and Retrieval Universe Guardrails across 6 Global Markets $\times$ 3 Seeds (18 cells). Self-retrieval leads to high hubness concentration (Gini 0.703) and ticker memorization. Global unconstrained retrieval ($P_0$) incurs cross-currency institutional noise (+0.96\% return, Gini 0.612, -19.39\% MaxDD). Domestic partitioning ($P_0^*$) controls hubness (Gini 0.448) and yields superior risk-adjusted return (+3.66\% return, 0.270 Sharpe, -18.11\% MaxDD).}
+\label{tab:ablation_suite_3_cross_ticker_guardrails}
+\end{table}

@@ -45,6 +45,8 @@ reports/
 *.pt
 !exports/research_defense_bundle/models/*.pt
 !paper/internal/evidence/research_defense_extract/raw_experimental_evidence/models/*.pt
+!exports/CORE_RL_V4_VERIFIED_GOVERNANCE_PACKAGE/models/*.pt
+!paper/internal/evidence/research_defense_extract/v4_annual_252_evidence/models/*.pt
 *.pth
 *.ckpt
 *.d3

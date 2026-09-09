@@ -1,0 +1,74 @@
+[
+  {
+    "Configuration":"Config 1: Baseline P0 (Global k=25 Quasi-Uniform)",
+    "Holdout IC":0.0174,
+    "p-value":"1.24e-02",
+    "Q5-Q1 Return Spread":"+1.05%",
+    "Top-Q Mean Return":"+2.61%",
+    "Tail CVaR_95":"-7.72%",
+    "Mean Neighbors k":25.0,
+    "Hubness Gini":0.462,
+    "Unique Nodes Used":"109,647",
+    "Eval Time":"270.2s"
+  },
+  {
+    "Configuration":"Config 2: Nadaraya-Watson Kernel (Softmax tau=0.08)",
+    "Holdout IC":0.0158,
+    "p-value":"2.34e-02",
+    "Q5-Q1 Return Spread":"+1.31%",
+    "Top-Q Mean Return":"+2.81%",
+    "Tail CVaR_95":"-7.72%",
+    "Mean Neighbors k":25.0,
+    "Hubness Gini":0.462,
+    "Unique Nodes Used":"109,647",
+    "Eval Time":"267.5s"
+  },
+  {
+    "Configuration":"Config 3: Temporal Recency Decay (Half-Life 7y)",
+    "Holdout IC":0.013,
+    "p-value":"6.22e-02",
+    "Q5-Q1 Return Spread":"+1.16%",
+    "Top-Q Mean Return":"+2.74%",
+    "Tail CVaR_95":"-7.72%",
+    "Mean Neighbors k":25.0,
+    "Hubness Gini":0.462,
+    "Unique Nodes Used":"109,647",
+    "Eval Time":"271.2s"
+  },
+  {
+    "Configuration":"Config 4: Market-Constrained Guardrail (Domestic)",
+    "Holdout IC":0.015,
+    "p-value":"3.16e-02",
+    "Q5-Q1 Return Spread":"+1.42%",
+    "Top-Q Mean Return":"+2.94%",
+    "Tail CVaR_95":"-6.30%",
+    "Mean Neighbors k":25.0,
+    "Hubness Gini":0.483,
+    "Unique Nodes Used":"95,649",
+    "Eval Time":"249.9s"
+  },
+  {
+    "Configuration":"Config 5: Adaptive Radius Filtering (Delta=0.08)",
+    "Holdout IC":0.0134,
+    "p-value":"5.52e-02",
+    "Q5-Q1 Return Spread":"+1.46%",
+    "Top-Q Mean Return":"+2.80%",
+    "Tail CVaR_95":"-10.72%",
+    "Mean Neighbors k":50.0,
+    "Hubness Gini":0.482,
+    "Unique Nodes Used":"138,853",
+    "Eval Time":"2397.9s"
+  },
+  {
+    "Configuration":"Config 6: Unified Aligned Bank (Market + Kernel + Decay)",
+    "Holdout IC":0.013,
+    "p-value":"6.22e-02",
+    "Q5-Q1 Return Spread":"+1.28%",
+    "Top-Q Mean Return":"+2.85%",
+    "Tail CVaR_95":"-6.30%",
+    "Mean Neighbors k":25.0,
+    "Hubness Gini":0.483,
+    "Unique Nodes Used":"95,649",
+    "Eval Time":"739.9s"
+  }
+]

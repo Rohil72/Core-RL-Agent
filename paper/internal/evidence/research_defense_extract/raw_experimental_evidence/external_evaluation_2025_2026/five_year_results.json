@@ -1,0 +1,226 @@
+{
+  "P0": {
+    "annual_breakdown": {
+      "2021": {
+        "ann_ret": 0.231,
+        "sharpe": 1.782,
+        "max_dd": -0.098
+      },
+      "2022": {
+        "ann_ret": 0.142,
+        "sharpe": 1.25,
+        "max_dd": -0.114
+      },
+      "2023": {
+        "ann_ret": 0.285,
+        "sharpe": 2.15,
+        "max_dd": -0.082
+      },
+      "2024": {
+        "ann_ret": 0.050050000000000004,
+        "sharpe": 0.28966666666666663,
+        "max_dd": -0.17795555555555553
+      },
+      "2025": {
+        "ann_ret": 0.218,
+        "sharpe": 1.81,
+        "max_dd": -0.091
+      }
+    },
+    "pooled_annualized_return": 0.1852,
+    "pooled_sharpe": 1.456,
+    "worst_drawdown": -0.178
+  },
+  "P1": {
+    "annual_breakdown": {
+      "2021": {
+        "ann_ret": 0.165,
+        "sharpe": 1.15,
+        "max_dd": -0.162
+      },
+      "2022": {
+        "ann_ret": 0.041,
+        "sharpe": 0.32,
+        "max_dd": -0.215
+      },
+      "2023": {
+        "ann_ret": 0.201,
+        "sharpe": 1.41,
+        "max_dd": -0.141
+      },
+      "2024": {
+        "ann_ret": 0.02511666666666667,
+        "sharpe": 0.16327777777777777,
+        "max_dd": -0.17425555555555555
+      },
+      "2025": {
+        "ann_ret": 0.152,
+        "sharpe": 1.18,
+        "max_dd": -0.158
+      }
+    },
+    "pooled_annualized_return": 0.1168,
+    "pooled_sharpe": 0.845,
+    "worst_drawdown": -0.215
+  },
+  "P2": {
+    "annual_breakdown": {
+      "2021": {
+        "ann_ret": 0.198,
+        "sharpe": 1.48,
+        "max_dd": -0.125
+      },
+      "2022": {
+        "ann_ret": 0.089,
+        "sharpe": 0.76,
+        "max_dd": -0.178
+      },
+      "2023": {
+        "ann_ret": 0.245,
+        "sharpe": 1.82,
+        "max_dd": -0.108
+      },
+      "2024": {
+        "ann_ret": 0.06683888888888888,
+        "sharpe": 0.37977777777777777,
+        "max_dd": -0.16142222222222222
+      },
+      "2025": {
+        "ann_ret": 0.187,
+        "sharpe": 1.51,
+        "max_dd": -0.121
+      }
+    },
+    "pooled_annualized_return": 0.1572,
+    "pooled_sharpe": 1.19,
+    "worst_drawdown": -0.178
+  },
+  "P3": {
+    "annual_breakdown": {
+      "2021": {
+        "ann_ret": 0.172,
+        "sharpe": 1.22,
+        "max_dd": -0.154
+      },
+      "2022": {
+        "ann_ret": 0.052,
+        "sharpe": 0.41,
+        "max_dd": -0.204
+      },
+      "2023": {
+        "ann_ret": 0.212,
+        "sharpe": 1.49,
+        "max_dd": -0.138
+      },
+      "2024": {
+        "ann_ret": 0.04282222222222223,
+        "sharpe": 0.286,
+        "max_dd": -0.17622222222222222
+      },
+      "2025": {
+        "ann_ret": 0.161,
+        "sharpe": 1.25,
+        "max_dd": -0.149
+      }
+    },
+    "pooled_annualized_return": 0.128,
+    "pooled_sharpe": 0.931,
+    "worst_drawdown": -0.204
+  },
+  "P4": {
+    "annual_breakdown": {
+      "2021": {
+        "ann_ret": 0.185,
+        "sharpe": 1.31,
+        "max_dd": -0.182
+      },
+      "2022": {
+        "ann_ret": -0.058,
+        "sharpe": -0.38,
+        "max_dd": -0.285
+      },
+      "2023": {
+        "ann_ret": 0.228,
+        "sharpe": 1.62,
+        "max_dd": -0.152
+      },
+      "2024": {
+        "ann_ret": -0.007950000000000002,
+        "sharpe": -0.16283333333333333,
+        "max_dd": -0.1919833333333333
+      },
+      "2025": {
+        "ann_ret": 0.174,
+        "sharpe": 1.34,
+        "max_dd": -0.175
+      }
+    },
+    "pooled_annualized_return": 0.1042,
+    "pooled_sharpe": 0.745,
+    "worst_drawdown": -0.285
+  },
+  "P5": {
+    "annual_breakdown": {
+      "2021": {
+        "ann_ret": 0.042,
+        "sharpe": 0.28,
+        "max_dd": -0.225
+      },
+      "2022": {
+        "ann_ret": -0.124,
+        "sharpe": -0.85,
+        "max_dd": -0.312
+      },
+      "2023": {
+        "ann_ret": 0.068,
+        "sharpe": 0.45,
+        "max_dd": -0.218
+      },
+      "2024": {
+        "ann_ret": 0.08831666666666667,
+        "sharpe": 0.3620555555555556,
+        "max_dd": -0.1602111111111111
+      },
+      "2025": {
+        "ann_ret": 0.038,
+        "sharpe": 0.25,
+        "max_dd": -0.231
+      }
+    },
+    "pooled_annualized_return": 0.0225,
+    "pooled_sharpe": 0.098,
+    "worst_drawdown": -0.312
+  },
+  "P6": {
+    "annual_breakdown": {
+      "2021": {
+        "ann_ret": 0.158,
+        "sharpe": 1.12,
+        "max_dd": -0.165
+      },
+      "2022": {
+        "ann_ret": -0.118,
+        "sharpe": -0.78,
+        "max_dd": -0.274
+      },
+      "2023": {
+        "ann_ret": 0.192,
+        "sharpe": 1.38,
+        "max_dd": -0.142
+      },
+      "2024": {
+        "ann_ret": 0.06861666666666667,
+        "sharpe": 0.37116666666666664,
+        "max_dd": -0.10458333333333333
+      },
+      "2025": {
+        "ann_ret": 0.148,
+        "sharpe": 1.15,
+        "max_dd": -0.161
+      }
+    },
+    "pooled_annualized_return": 0.0897,
+    "pooled_sharpe": 0.648,
+    "worst_drawdown": -0.274
+  }
+}

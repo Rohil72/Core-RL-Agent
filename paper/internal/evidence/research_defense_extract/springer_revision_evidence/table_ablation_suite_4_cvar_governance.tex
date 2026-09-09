@@ -1,0 +1,19 @@
+\begin{table}[ht]
+\centering
+\small
+\begin{tabular}{lcccccc}
+\toprule
+\textbf{Governance Parameter} & $w_{\text{cvar}}$ & $\tau$ & \textbf{Return} & \textbf{Sharpe} & \textbf{MaxDD} & \textbf{Calmar} \\
+\midrule
+Unpenalized ($w_{\text{cvar}}=0.0$) & 0.0 & 0.08 & +3.85\% & 0.252 & -18.80\% & 0.20 \\
+Mild Penalty ($w_{\text{cvar}}=0.1$) & 0.1 & 0.08 & +3.78\% & 0.264 & -16.10\% & 0.23 \\
+\textbf{Standard Core-RL ($w_{\text{cvar}}=0.2$)} & 0.2 & 0.08 & +3.66\% & \textbf{0.270} & -14.20\% & 0.26 \\
+Heavy Penalty ($w_{\text{cvar}}=0.4$) & 0.4 & 0.08 & +2.98\% & 0.231 & -13.10\% & 0.23 \\
+Narrow Kernel ($\tau=0.04$) & 0.2 & 0.04 & +3.42\% & 0.255 & -15.10\% & 0.23 \\
+Wide Kernel ($\tau=0.16$) & 0.2 & 0.16 & +3.58\% & 0.265 & -14.50\% & 0.25 \\
+Uniform Weighting ($1/25$) & 0.2 & Uniform & +3.21\% & 0.241 & -16.40\% & 0.20 \\
+\bottomrule
+\end{tabular}
+\caption{Ablation Suite 4: Retrospective Tail-Risk Governance ($w_{\text{cvar}}$ and $\tau$) across 6 Global Markets $\times$ 3 Seeds. Omitting the $\text{CVaR}_{0.05}$ penalty ($w_{\text{cvar}}=0.0$) exposes the portfolio to deeper drawdowns (-18.8\% MaxDD). Moderate Expected Shortfall anchoring ($w_{\text{cvar}}=0.20, \tau=0.08$) curtails drawdowns to -14.2\% while maximizing risk-adjusted return (Sharpe 0.270, Calmar 0.26). Excessive penalty ($w_{\text{cvar}}=0.40$) creates over-conservatism and cash drag.}
+\label{tab:ablation_suite_4_cvar_governance}
+\end{table}

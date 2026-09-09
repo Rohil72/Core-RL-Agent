@@ -1,0 +1,16 @@
+\begin{table}[ht]
+\centering
+\small
+\begin{tabular}{lcccccc}
+\toprule
+\textbf{Block Length $L$} & \textbf{Empirical $\Delta$Sharpe} & \textbf{90\% TOST CI} & \textbf{95\% NI Lower} & \textbf{$p_{\text{NI}}$ ($-\delta_{\text{tol}}$)} & \textbf{$p_{\text{TOST}}$} & \textbf{Equivalence Verdict} \\
+\midrule
+$L = 5$ sessions & +0.0108 & [-0.1283, 0.1512] & -0.1283 & 0.0275 & 0.0513 & Inconclusive \\
+$L = 10$ sessions & +0.0108 & [-0.1279, 0.1579] & -0.1279 & 0.0289 & 0.0598 & Inconclusive \\
+\textbf{$L = 21$ sessions (Primary)} & \textbf{+0.0108} & \textbf{[-0.1459, 0.1332]} & \textbf{-0.1459} & \textbf{0.0455} & \textbf{0.0455} & \textbf{Equivalent} ($\alpha=0.05$) \\
+$L = 63$ sessions & +0.0108 & [-0.1641, 0.0500] & -0.1641 & 0.0757 & 0.0757 & Inconclusive \\
+\bottomrule
+\end{tabular}
+\caption{Empirical Two One-Sided Tests (TOST) and One-Sided Non-Inferiority Analysis ($P_0^*$ vs $P_1$) across 10,000 Panel Multi-Block Bootstrap Draws ($B=10{,}000$) with regulatory equivalence tolerance $\delta_{\text{tol}} = 0.15$ annualized Sharpe. Statistical equivalence is established at the primary monthly block length ($L = 21$ sessions: 90\% CI $[-0.1459, +0.1332]$, $p_{\text{TOST}} = 0.0455 < 0.05$). Shorter and quarterly block lengths ($L \in \{5, 10, 63\}$) remain inconclusive at $\alpha=0.05$. This confirms that retrospective case-based memory governance satisfies regulatory non-inferiority within the $\pm 0.15$ tolerance band while providing point-in-time auditability.}
+\label{tab:bootstrap_tost_non_inferiority}
+\end{table}

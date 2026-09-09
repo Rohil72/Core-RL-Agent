@@ -1,0 +1,33 @@
+{
+  "total_session_observations": 4536,
+  "independent_block_units_L21": 216.0,
+  "significance_level_alpha": 0.05,
+  "target_power": 0.8,
+  "minimum_detectable_effect_size_Sharpe": 0.191,
+  "power_curve": [
+    {
+      "delta_sharpe_effect": 0.05,
+      "statistical_power": 0.11
+    },
+    {
+      "delta_sharpe_effect": 0.1,
+      "statistical_power": 0.312
+    },
+    {
+      "delta_sharpe_effect": 0.15,
+      "statistical_power": 0.597
+    },
+    {
+      "delta_sharpe_effect": 0.2,
+      "statistical_power": 0.836
+    },
+    {
+      "delta_sharpe_effect": 0.25,
+      "statistical_power": 0.957
+    },
+    {
+      "delta_sharpe_effect": 0.3,
+      "statistical_power": 0.993
+    }
+  ]
+}

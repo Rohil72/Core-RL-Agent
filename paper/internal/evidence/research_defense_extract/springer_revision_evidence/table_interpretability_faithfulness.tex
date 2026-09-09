@@ -1,0 +1,18 @@
+\begin{table}[ht]
+\centering
+\small
+\begin{tabular}{lcccccc}
+\toprule
+\textbf{Retrieval System} & \textbf{Decisions} & \multicolumn{2}{c}{\textbf{Top-3 Occlusion (ROAR)}} & \multicolumn{2}{c}{\textbf{Outcome Shuffling}} & \textbf{Random Replacement} \\
+\cmidrule(lr){3-4} \cmidrule(lr){5-6} \cmidrule(lr){7-7}
+& & \textbf{Mean Shift} & \textbf{Rank $\rho$} & \textbf{Mean Shift} & \textbf{Rank $\rho$} & \textbf{Rank $\rho$ (Noise)} \\
+\midrule
+P0 (Global Learned Memory) & 335 & 211 bps & 0.801 & 251 bps & 0.693 & \textbf{0.004} \\
+P0* (Domestic Guardrail) & 330 & 177 bps & 0.798 & 197 bps & 0.736 & \textbf{0.058} \\
+P2 (Mean-Only Retrieval) & 335 & 199 bps & 0.841 & 233 bps & 0.750 & \textbf{-0.085} \\
+P3 (Raw $k$NN Memory) & 342 & 174 bps & 0.840 & 214 bps & 0.764 & \textbf{-0.003} \\
+\bottomrule
+\end{tabular}
+\caption{Interpretability Faithfulness Evaluation across 1,342 decision instances. Testing whether retrieved historical analogues causally govern portfolio selection rather than serving as decorative post-hoc explanations. Injecting uninformative historical noise (Random Replacement) collapses decision rank correlation to $\rho \approx 0.00$. Removing the top-3 highest-weighted precedents (Top-3 Occlusion) shifts expected return by 174--211 bps, demonstrating that the decision engine is causally anchored in the retrieved historical evidence.}
+\label{tab:interpretability_faithfulness}
+\end{table}

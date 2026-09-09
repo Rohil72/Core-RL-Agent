@@ -1,0 +1,20 @@
+\begin{table}[ht]
+\centering
+\small
+\begin{tabular}{lccccc}
+\toprule
+\textbf{Comparison Pair} & $\mathbf{\Delta \text{Sharpe}}$ & \textbf{Margin $\delta_{\text{tol}}$} & \textbf{$Z$-Statistic} & \textbf{NI $p$-value} & \textbf{Equivalence Verdict} \\
+\midrule
+\multirow{3}{*}{\textbf{P0* (Guardrail) vs P1 (No Memory)}} & \multirow{3}{*}{+0.011} & $\delta = 0.15$ & $Z = 1.876$ & $p = 0.0304$ & \textbf{Non-Inferior ($p < 0.05$)} \\
+& & $\delta = 0.20$ & $Z = 2.460$ & $p = 0.0069$ & \textbf{Non-Inferior ($p < 0.01$)} \\
+& & $\delta = 0.25$ & $Z = 3.043$ & $p = 0.0012$ & \textbf{Equivalent ($p < 0.01$)} \\
+\midrule
+\multirow{2}{*}{\textbf{P0 (Global) vs P1 (No Memory)}} & \multirow{2}{*}{-0.107} & $\delta = 0.20$ & $Z = 0.994$ & $p = 0.1601$ & Inconclusive \\
+& & $\delta = 0.25$ & $Z = 1.527$ & $p = 0.0634$ & Marginally Non-Inferior \\
+\midrule
+\textbf{P0* (Guardrail) vs P0 (Global)} & +0.118 & $\delta = 0.10$ & $Z = 2.900$ & $p = 0.0019$ & \textbf{Superior ($p < 0.01$)} \\
+\bottomrule
+\end{tabular}
+\caption{Formal Two One-Sided Tests (TOST) of Non-Inferiority and Equivalence. Pre-specifying an economically acceptable tolerance margin $\delta_{\text{tol}}$ in Sharpe ratio. Guardrailed external memory ($P_0^*$) is formally non-inferior to the opaque Transformer ($P_1$) at $\delta = 0.15$ ($p = 0.0304$) and $\delta = 0.20$ ($p = 0.0069$). Evidentiary inspectability is achieved without an unacceptable performance penalty.}
+\label{tab:non_inferiority_equivalence}
+\end{table}

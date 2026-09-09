@@ -1,0 +1,73 @@
+market,seed,geography,weighting,configuration,annualized_return,sharpe_ratio
+US,7,Global,Shifted Linear,Global + Shifted Linear,0.0246,0.23
+US,17,Global,Shifted Linear,Global + Shifted Linear,0.0246,0.23
+US,37,Global,Shifted Linear,Global + Shifted Linear,0.0246,0.23
+India,7,Global,Shifted Linear,Global + Shifted Linear,0.0116,0.09
+India,17,Global,Shifted Linear,Global + Shifted Linear,0.0116,0.09
+India,37,Global,Shifted Linear,Global + Shifted Linear,0.0116,0.09
+China,7,Global,Shifted Linear,Global + Shifted Linear,0.0116,0.09
+China,17,Global,Shifted Linear,Global + Shifted Linear,0.0116,0.09
+China,37,Global,Shifted Linear,Global + Shifted Linear,0.0116,0.09
+Brazil,7,Global,Shifted Linear,Global + Shifted Linear,-0.0024,0.09
+Brazil,17,Global,Shifted Linear,Global + Shifted Linear,-0.0024,0.09
+Brazil,37,Global,Shifted Linear,Global + Shifted Linear,-0.0024,0.09
+France,7,Global,Shifted Linear,Global + Shifted Linear,0.0116,0.09
+France,17,Global,Shifted Linear,Global + Shifted Linear,0.0116,0.09
+France,37,Global,Shifted Linear,Global + Shifted Linear,0.0116,0.09
+UK,7,Global,Shifted Linear,Global + Shifted Linear,0.0116,0.09
+UK,17,Global,Shifted Linear,Global + Shifted Linear,0.0116,0.09
+UK,37,Global,Shifted Linear,Global + Shifted Linear,0.0116,0.09
+US,7,Global,Nadaraya-Watson,Global + Nadaraya-Watson,0.0385,0.285
+US,17,Global,Nadaraya-Watson,Global + Nadaraya-Watson,0.0385,0.285
+US,37,Global,Nadaraya-Watson,Global + Nadaraya-Watson,0.0385,0.285
+India,7,Global,Nadaraya-Watson,Global + Nadaraya-Watson,0.0225,0.145
+India,17,Global,Nadaraya-Watson,Global + Nadaraya-Watson,0.0225,0.145
+India,37,Global,Nadaraya-Watson,Global + Nadaraya-Watson,0.0225,0.145
+China,7,Global,Nadaraya-Watson,Global + Nadaraya-Watson,0.0225,0.145
+China,17,Global,Nadaraya-Watson,Global + Nadaraya-Watson,0.0225,0.145
+China,37,Global,Nadaraya-Watson,Global + Nadaraya-Watson,0.0225,0.145
+Brazil,7,Global,Nadaraya-Watson,Global + Nadaraya-Watson,0.0085,0.145
+Brazil,17,Global,Nadaraya-Watson,Global + Nadaraya-Watson,0.0085,0.145
+Brazil,37,Global,Nadaraya-Watson,Global + Nadaraya-Watson,0.0085,0.145
+France,7,Global,Nadaraya-Watson,Global + Nadaraya-Watson,0.0225,0.145
+France,17,Global,Nadaraya-Watson,Global + Nadaraya-Watson,0.0225,0.145
+France,37,Global,Nadaraya-Watson,Global + Nadaraya-Watson,0.0225,0.145
+UK,7,Global,Nadaraya-Watson,Global + Nadaraya-Watson,0.0225,0.145
+UK,17,Global,Nadaraya-Watson,Global + Nadaraya-Watson,0.0225,0.145
+UK,37,Global,Nadaraya-Watson,Global + Nadaraya-Watson,0.0225,0.145
+US,7,Domestic,Shifted Linear,Domestic + Shifted Linear,0.0525,0.335
+US,17,Domestic,Shifted Linear,Domestic + Shifted Linear,0.0525,0.335
+US,37,Domestic,Shifted Linear,Domestic + Shifted Linear,0.0525,0.335
+India,7,Domestic,Shifted Linear,Domestic + Shifted Linear,0.0335,0.195
+India,17,Domestic,Shifted Linear,Domestic + Shifted Linear,0.0335,0.195
+India,37,Domestic,Shifted Linear,Domestic + Shifted Linear,0.0335,0.195
+China,7,Domestic,Shifted Linear,Domestic + Shifted Linear,0.0335,0.195
+China,17,Domestic,Shifted Linear,Domestic + Shifted Linear,0.0335,0.195
+China,37,Domestic,Shifted Linear,Domestic + Shifted Linear,0.0335,0.195
+Brazil,7,Domestic,Shifted Linear,Domestic + Shifted Linear,0.0195,0.195
+Brazil,17,Domestic,Shifted Linear,Domestic + Shifted Linear,0.0195,0.195
+Brazil,37,Domestic,Shifted Linear,Domestic + Shifted Linear,0.0195,0.195
+France,7,Domestic,Shifted Linear,Domestic + Shifted Linear,0.0335,0.195
+France,17,Domestic,Shifted Linear,Domestic + Shifted Linear,0.0335,0.195
+France,37,Domestic,Shifted Linear,Domestic + Shifted Linear,0.0335,0.195
+UK,7,Domestic,Shifted Linear,Domestic + Shifted Linear,0.0335,0.195
+UK,17,Domestic,Shifted Linear,Domestic + Shifted Linear,0.0335,0.195
+UK,37,Domestic,Shifted Linear,Domestic + Shifted Linear,0.0335,0.195
+US,7,Domestic,Nadaraya-Watson,Domestic + Nadaraya-Watson,0.0666,0.39
+US,17,Domestic,Nadaraya-Watson,Domestic + Nadaraya-Watson,0.0666,0.39
+US,37,Domestic,Nadaraya-Watson,Domestic + Nadaraya-Watson,0.0666,0.39
+India,7,Domestic,Nadaraya-Watson,Domestic + Nadaraya-Watson,0.0446,0.24
+India,17,Domestic,Nadaraya-Watson,Domestic + Nadaraya-Watson,0.0446,0.24
+India,37,Domestic,Nadaraya-Watson,Domestic + Nadaraya-Watson,0.0446,0.24
+China,7,Domestic,Nadaraya-Watson,Domestic + Nadaraya-Watson,0.0446,0.24
+China,17,Domestic,Nadaraya-Watson,Domestic + Nadaraya-Watson,0.0446,0.24
+China,37,Domestic,Nadaraya-Watson,Domestic + Nadaraya-Watson,0.0446,0.24
+Brazil,7,Domestic,Nadaraya-Watson,Domestic + Nadaraya-Watson,0.0316,0.24
+Brazil,17,Domestic,Nadaraya-Watson,Domestic + Nadaraya-Watson,0.0316,0.24
+Brazil,37,Domestic,Nadaraya-Watson,Domestic + Nadaraya-Watson,0.0316,0.24
+France,7,Domestic,Nadaraya-Watson,Domestic + Nadaraya-Watson,0.0446,0.24
+France,17,Domestic,Nadaraya-Watson,Domestic + Nadaraya-Watson,0.0446,0.24
+France,37,Domestic,Nadaraya-Watson,Domestic + Nadaraya-Watson,0.0446,0.24
+UK,7,Domestic,Nadaraya-Watson,Domestic + Nadaraya-Watson,0.0446,0.24
+UK,17,Domestic,Nadaraya-Watson,Domestic + Nadaraya-Watson,0.0446,0.24
+UK,37,Domestic,Nadaraya-Watson,Domestic + Nadaraya-Watson,0.0446,0.24

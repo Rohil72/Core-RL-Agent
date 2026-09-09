@@ -1,871 +1,566 @@
 {
-  "feature_count": 23,
-  "feature_names": [
-    "tech_return_1d",
-    "tech_momentum_3d",
-    "tech_momentum_10d",
-    "tech_momentum_21d",
-    "tech_volatility_21d",
-    "tech_volume_sma_21d",
-    "tech_volume_ratio_21d",
-    "tech_volume_change_1d",
-    "tech_intraday_range_hl",
-    "tech_drawdown_from_peak_21d",
-    "tech_trend_slope_21d",
-    "tech_close_vs_sma_50",
-    "tech_close_vs_sma_150",
-    "tech_close_vs_sma_200",
-    "tech_sma_200_trend_20",
-    "tech_pct_above_52w_low",
-    "tech_pct_from_52w_high",
-    "tech_up_down_volume_ratio_50",
-    "tech_rsi_14",
-    "tech_atr_ratio_14",
-    "tech_macd_signal_diff",
-    "tech_bollinger_bandwidth_20",
-    "tech_historical_vol_ratio_63_21"
-  ],
-  "fit_cutoff_date": "2020-12-31",
-  "market_scalers": {
-    "US": {
-      "tech_return_1d": {
-        "mean": 0.00121,
-        "std": 0.020292,
-        "median": 0.001068,
-        "iqr": 0.017402
-      },
-      "tech_momentum_3d": {
-        "mean": 0.003583,
-        "std": 0.033716,
-        "median": 0.00351,
-        "iqr": 0.031318
-      },
-      "tech_momentum_10d": {
-        "mean": 0.011767,
-        "std": 0.058938,
-        "median": 0.010734,
-        "iqr": 0.059089
-      },
-      "tech_momentum_21d": {
-        "mean": 0.024567,
-        "std": 0.084307,
-        "median": 0.022101,
-        "iqr": 0.086794
-      },
-      "tech_volatility_21d": {
-        "mean": 0.01753,
-        "std": 0.010446,
-        "median": 0.014874,
-        "iqr": 0.010229
-      },
-      "tech_volume_sma_21d": {
-        "mean": 52947709.28873,
-        "std": 117017358.956505,
-        "median": 11183723.809524,
-        "iqr": 38121829.761905
-      },
-      "tech_volume_ratio_21d": {
-        "mean": 1.009573,
-        "std": 0.483414,
-        "median": 0.903224,
-        "iqr": 0.419081
-      },
-      "tech_volume_change_1d": {
-        "mean": 0.080495,
-        "std": 0.919784,
-        "median": -0.017504,
-        "iqr": 0.439513
-      },
-      "tech_intraday_range_hl": {
-        "mean": 0.022337,
-        "std": 0.01502,
-        "median": 0.018256,
-        "iqr": 0.014089
-      },
-      "tech_drawdown_from_peak_21d": {
-        "mean": -0.077564,
-        "std": 0.090187,
-        "median": -0.048231,
-        "iqr": 0.094782
-      },
-      "tech_trend_slope_21d": {
-        "mean": 0.000834,
-        "std": 0.00425,
-        "median": 0.001089,
-        "iqr": 0.004221
-      },
-      "tech_close_vs_sma_50": {
-        "mean": 0.025664,
-        "std": 0.071136,
-        "median": 0.025668,
-        "iqr": 0.075053
-      },
-      "tech_close_vs_sma_150": {
-        "mean": 0.077788,
-        "std": 0.123457,
-        "median": 0.071642,
-        "iqr": 0.125342
-      },
-      "tech_close_vs_sma_200": {
-        "mean": 0.103128,
-        "std": 0.146585,
-        "median": 0.093339,
-        "iqr": 0.145862
-      },
-      "tech_sma_200_trend_20": {
-        "mean": 0.019105,
-        "std": 0.023987,
-        "median": 0.018008,
-        "iqr": 0.022633
-      },
-      "tech_pct_above_52w_low": {
-        "mean": 0.454098,
-        "std": 0.451476,
-        "median": 0.35872,
-        "iqr": 0.299634
-      },
-      "tech_pct_from_52w_high": {
-        "mean": -0.077564,
-        "std": 0.090187,
-        "median": -0.048231,
-        "iqr": 0.094782
-      },
-      "tech_up_down_volume_ratio_50": {
-        "mean": 1.188881,
-        "std": 0.358081,
-        "median": 1.14532,
-        "iqr": 0.468502
-      },
-      "tech_rsi_14": {
-        "mean": 0.553088,
-        "std": 0.162385,
-        "median": 0.554093,
-        "iqr": 0.232236
-      },
-      "tech_atr_ratio_14": {
-        "mean": 0.024106,
-        "std": 0.012369,
-        "median": 0.021061,
-        "iqr": 0.012543
-      },
-      "tech_macd_signal_diff": {
-        "mean": 2e-06,
-        "std": 0.006232,
-        "median": 0.00011,
-        "iqr": 0.006338
-      },
-      "tech_bollinger_bandwidth_20": {
-        "mean": 0.116175,
-        "std": 0.078348,
-        "median": 0.095462,
-        "iqr": 0.076177
-      },
-      "tech_historical_vol_ratio_63_21": {
-        "mean": 1.128718,
-        "std": 0.374065,
-        "median": 1.047453,
-        "iqr": 0.41391
-      }
+  "US": {
+    "tech_return_1d": {
+      "mean": 0.0012101741853122402,
+      "std": 0.02029224055187653
     },
-    "India": {
-      "tech_return_1d": {
-        "mean": 0.000966,
-        "std": 0.019226,
-        "median": 0.000438,
-        "iqr": 0.019515
-      },
-      "tech_momentum_3d": {
-        "mean": 0.002886,
-        "std": 0.03325,
-        "median": 0.00195,
-        "iqr": 0.035091
-      },
-      "tech_momentum_10d": {
-        "mean": 0.009493,
-        "std": 0.059572,
-        "median": 0.007568,
-        "iqr": 0.066412
-      },
-      "tech_momentum_21d": {
-        "mean": 0.019764,
-        "std": 0.085995,
-        "median": 0.01727,
-        "iqr": 0.101018
-      },
-      "tech_volatility_21d": {
-        "mean": 0.017686,
-        "std": 0.007578,
-        "median": 0.016218,
-        "iqr": 0.007397
-      },
-      "tech_volume_sma_21d": {
-        "mean": 6274701.639753,
-        "std": 9649697.684338,
-        "median": 3009136.928571,
-        "iqr": 6097069.25
-      },
-      "tech_volume_ratio_21d": {
-        "mean": 1.017861,
-        "std": 0.658183,
-        "median": 0.870889,
-        "iqr": 0.533003
-      },
-      "tech_volume_change_1d": {
-        "mean": 0.211585,
-        "std": 1.399933,
-        "median": -0.015562,
-        "iqr": 0.650503
-      },
-      "tech_intraday_range_hl": {
-        "mean": 0.026482,
-        "std": 0.015868,
-        "median": 0.022634,
-        "iqr": 0.014746
-      },
-      "tech_drawdown_from_peak_21d": {
-        "mean": -0.104349,
-        "std": 0.099714,
-        "median": -0.07547,
-        "iqr": 0.121402
-      },
-      "tech_trend_slope_21d": {
-        "mean": 0.000576,
-        "std": 0.00468,
-        "median": 0.00082,
-        "iqr": 0.005012
-      },
-      "tech_close_vs_sma_50": {
-        "mean": 0.019752,
-        "std": 0.074777,
-        "median": 0.020269,
-        "iqr": 0.088216
-      },
-      "tech_close_vs_sma_150": {
-        "mean": 0.056351,
-        "std": 0.126373,
-        "median": 0.047927,
-        "iqr": 0.151157
-      },
-      "tech_close_vs_sma_200": {
-        "mean": 0.07324,
-        "std": 0.146254,
-        "median": 0.06128,
-        "iqr": 0.172235
-      },
-      "tech_sma_200_trend_20": {
-        "mean": 0.013015,
-        "std": 0.023693,
-        "median": 0.011361,
-        "iqr": 0.028473
-      },
-      "tech_pct_above_52w_low": {
-        "mean": 0.394698,
-        "std": 0.345323,
-        "median": 0.302906,
-        "iqr": 0.365332
-      },
-      "tech_pct_from_52w_high": {
-        "mean": -0.104349,
-        "std": 0.099714,
-        "median": -0.07547,
-        "iqr": 0.121402
-      },
-      "tech_up_down_volume_ratio_50": {
-        "mean": 1.238627,
-        "std": 0.550005,
-        "median": 1.147288,
-        "iqr": 0.572774
-      },
-      "tech_rsi_14": {
-        "mean": 0.532505,
-        "std": 0.166546,
-        "median": 0.536038,
-        "iqr": 0.239443
-      },
-      "tech_atr_ratio_14": {
-        "mean": 0.02746,
-        "std": 0.011189,
-        "median": 0.025319,
-        "iqr": 0.010124
-      },
-      "tech_macd_signal_diff": {
-        "mean": 5e-05,
-        "std": 0.006525,
-        "median": 4.9e-05,
-        "iqr": 0.007277
-      },
-      "tech_bollinger_bandwidth_20": {
-        "mean": 0.122048,
-        "std": 0.073758,
-        "median": 0.104384,
-        "iqr": 0.073388
-      },
-      "tech_historical_vol_ratio_63_21": {
-        "mean": 1.083874,
-        "std": 0.290563,
-        "median": 1.027956,
-        "iqr": 0.312884
-      }
+    "tech_momentum_3d": {
+      "mean": 0.0035834083988036717,
+      "std": 0.03371563142847693
     },
-    "China": {
-      "tech_return_1d": {
-        "mean": 0.001575,
-        "std": 0.026337,
-        "median": 0.0,
-        "iqr": 0.025479
-      },
-      "tech_momentum_3d": {
-        "mean": 0.004672,
-        "std": 0.045987,
-        "median": 0.001777,
-        "iqr": 0.046973
-      },
-      "tech_momentum_10d": {
-        "mean": 0.015259,
-        "std": 0.084309,
-        "median": 0.008797,
-        "iqr": 0.085432
-      },
-      "tech_momentum_21d": {
-        "mean": 0.03213,
-        "std": 0.12808,
-        "median": 0.019888,
-        "iqr": 0.13028
-      },
-      "tech_volatility_21d": {
-        "mean": 0.02397,
-        "std": 0.010894,
-        "median": 0.022025,
-        "iqr": 0.012629
-      },
-      "tech_volume_sma_21d": {
-        "mean": 93678771.63853,
-        "std": 184923180.303851,
-        "median": 38192122.285714,
-        "iqr": 49436462.5
-      },
-      "tech_volume_ratio_21d": {
-        "mean": 1.016818,
-        "std": 0.474632,
-        "median": 0.918331,
-        "iqr": 0.48992
-      },
-      "tech_volume_change_1d": {
-        "mean": 0.09996,
-        "std": 0.692956,
-        "median": -0.019923,
-        "iqr": 0.518896
-      },
-      "tech_intraday_range_hl": {
-        "mean": 0.034161,
-        "std": 0.021513,
-        "median": 0.029058,
-        "iqr": 0.022498
-      },
-      "tech_drawdown_from_peak_21d": {
-        "mean": -0.157714,
-        "std": 0.141138,
-        "median": -0.120805,
-        "iqr": 0.191586
-      },
-      "tech_trend_slope_21d": {
-        "mean": 0.00085,
-        "std": 0.006027,
-        "median": 0.000946,
-        "iqr": 0.006365
-      },
-      "tech_close_vs_sma_50": {
-        "mean": 0.031311,
-        "std": 0.108891,
-        "median": 0.020989,
-        "iqr": 0.113834
-      },
-      "tech_close_vs_sma_150": {
-        "mean": 0.093041,
-        "std": 0.202261,
-        "median": 0.06668,
-        "iqr": 0.218191
-      },
-      "tech_close_vs_sma_200": {
-        "mean": 0.121479,
-        "std": 0.238387,
-        "median": 0.09014,
-        "iqr": 0.251502
-      },
-      "tech_sma_200_trend_20": {
-        "mean": 0.02163,
-        "std": 0.037587,
-        "median": 0.019342,
-        "iqr": 0.042873
-      },
-      "tech_pct_above_52w_low": {
-        "mean": 0.607433,
-        "std": 0.682627,
-        "median": 0.453433,
-        "iqr": 0.55745
-      },
-      "tech_pct_from_52w_high": {
-        "mean": -0.157714,
-        "std": 0.141138,
-        "median": -0.120805,
-        "iqr": 0.191586
-      },
-      "tech_up_down_volume_ratio_50": {
-        "mean": 188856261636594.75,
-        "std": 1.4157626957931878e+16,
-        "median": 1.200936,
-        "iqr": 0.479374
-      },
-      "tech_rsi_14": {
-        "mean": 0.529863,
-        "std": 0.169271,
-        "median": 0.533899,
-        "iqr": 0.239247
-      },
-      "tech_atr_ratio_14": {
-        "mean": 0.035475,
-        "std": 0.016116,
-        "median": 0.032662,
-        "iqr": 0.017487
-      },
-      "tech_macd_signal_diff": {
-        "mean": 5.7e-05,
-        "std": 0.008593,
-        "median": 0.000362,
-        "iqr": 0.009302
-      },
-      "tech_bollinger_bandwidth_20": {
-        "mean": 0.16251,
-        "std": 0.106998,
-        "median": 0.13722,
-        "iqr": 0.105983
-      },
-      "tech_historical_vol_ratio_63_21": {
-        "mean": 100002.844619,
-        "std": 1738996.943082,
-        "median": 1.024335,
-        "iqr": 0.311291
-      }
+    "tech_momentum_10d": {
+      "mean": 0.011767193782058623,
+      "std": 0.058938275488555215
     },
-    "Brazil": {
-      "tech_return_1d": {
-        "mean": 0.001084,
-        "std": 0.025076,
-        "median": 0.0,
-        "iqr": 0.02397
-      },
-      "tech_momentum_3d": {
-        "mean": 0.003215,
-        "std": 0.042838,
-        "median": 0.00045,
-        "iqr": 0.041457
-      },
-      "tech_momentum_10d": {
-        "mean": 0.010696,
-        "std": 0.077549,
-        "median": 0.005668,
-        "iqr": 0.07646
-      },
-      "tech_momentum_21d": {
-        "mean": 0.022786,
-        "std": 0.11602,
-        "median": 0.013043,
-        "iqr": 0.117406
-      },
-      "tech_volatility_21d": {
-        "mean": 0.021462,
-        "std": 0.012986,
-        "median": 0.01895,
-        "iqr": 0.009903
-      },
-      "tech_volume_sma_21d": {
-        "mean": 12184606.548663,
-        "std": 16377384.257824,
-        "median": 5490203.333333,
-        "iqr": 9041114.857143
-      },
-      "tech_volume_ratio_21d": {
-        "mean": 1.017574,
-        "std": 0.593107,
-        "median": 0.929458,
-        "iqr": 0.492464
-      },
-      "tech_volume_change_1d": {
-        "mean": 77.812474,
-        "std": 12896.201908,
-        "median": 0.0,
-        "iqr": 0.605932
-      },
-      "tech_intraday_range_hl": {
-        "mean": 0.031405,
-        "std": 0.020815,
-        "median": 0.027778,
-        "iqr": 0.018243
-      },
-      "tech_drawdown_from_peak_21d": {
-        "mean": -0.133458,
-        "std": 0.141579,
-        "median": -0.092521,
-        "iqr": 0.169674
-      },
-      "tech_trend_slope_21d": {
-        "mean": 0.000417,
-        "std": 0.006657,
-        "median": 0.000578,
-        "iqr": 0.005819
-      },
-      "tech_close_vs_sma_50": {
-        "mean": 0.021199,
-        "std": 0.101228,
-        "median": 0.015033,
-        "iqr": 0.105665
-      },
-      "tech_close_vs_sma_150": {
-        "mean": 0.064099,
-        "std": 0.182643,
-        "median": 0.046843,
-        "iqr": 0.190239
-      },
-      "tech_close_vs_sma_200": {
-        "mean": 0.085196,
-        "std": 0.218139,
-        "median": 0.05938,
-        "iqr": 0.220862
-      },
-      "tech_sma_200_trend_20": {
-        "mean": 0.014203,
-        "std": 0.036687,
-        "median": 0.010387,
-        "iqr": 0.037312
-      },
-      "tech_pct_above_52w_low": {
-        "mean": 0.597714,
-        "std": 0.97749,
-        "median": 0.36961,
-        "iqr": 0.568367
-      },
-      "tech_pct_from_52w_high": {
-        "mean": -0.133458,
-        "std": 0.141579,
-        "median": -0.092521,
-        "iqr": 0.169674
-      },
-      "tech_up_down_volume_ratio_50": {
-        "mean": 75757314381.45387,
-        "std": 12895755401982.611,
-        "median": 1.05499,
-        "iqr": 0.540151
-      },
-      "tech_rsi_14": {
-        "mean": 0.510901,
-        "std": 0.192075,
-        "median": 0.520577,
-        "iqr": 0.243976
-      },
-      "tech_atr_ratio_14": {
-        "mean": 0.033193,
-        "std": 0.018456,
-        "median": 0.03022,
-        "iqr": 0.012895
-      },
-      "tech_macd_signal_diff": {
-        "mean": 6.6e-05,
-        "std": 0.008733,
-        "median": -0.0,
-        "iqr": 0.007984
-      },
-      "tech_bollinger_bandwidth_20": {
-        "mean": 0.145421,
-        "std": 0.113578,
-        "median": 0.118779,
-        "iqr": 0.085956
-      },
-      "tech_historical_vol_ratio_63_21": {
-        "mean": 11455.954766,
-        "std": 289989.187861,
-        "median": 1.010431,
-        "iqr": 0.310837
-      }
+    "tech_momentum_21d": {
+      "mean": 0.02456660556186462,
+      "std": 0.08430658015408542
     },
-    "France": {
-      "tech_return_1d": {
-        "mean": 0.000792,
-        "std": 0.016709,
-        "median": 0.000657,
-        "iqr": 0.015866
-      },
-      "tech_momentum_3d": {
-        "mean": 0.002384,
-        "std": 0.028704,
-        "median": 0.002661,
-        "iqr": 0.028431
-      },
-      "tech_momentum_10d": {
-        "mean": 0.007796,
-        "std": 0.049536,
-        "median": 0.008075,
-        "iqr": 0.053359
-      },
-      "tech_momentum_21d": {
-        "mean": 0.016121,
-        "std": 0.070202,
-        "median": 0.014322,
-        "iqr": 0.078207
-      },
-      "tech_volatility_21d": {
-        "mean": 0.014794,
-        "std": 0.007868,
-        "median": 0.013323,
-        "iqr": 0.006982
-      },
-      "tech_volume_sma_21d": {
-        "mean": 932900.439368,
-        "std": 803571.883769,
-        "median": 705259.380952,
-        "iqr": 970498.880952
-      },
-      "tech_volume_ratio_21d": {
-        "mean": 1.0085,
-        "std": 0.481054,
-        "median": 0.926282,
-        "iqr": 0.425148
-      },
-      "tech_volume_change_1d": {
-        "mean": 0.120968,
-        "std": 0.850063,
-        "median": -0.011639,
-        "iqr": 0.49103
-      },
-      "tech_intraday_range_hl": {
-        "mean": 0.019845,
-        "std": 0.013264,
-        "median": 0.01671,
-        "iqr": 0.011218
-      },
-      "tech_drawdown_from_peak_21d": {
-        "mean": -0.074275,
-        "std": 0.079626,
-        "median": -0.051723,
-        "iqr": 0.089865
-      },
-      "tech_trend_slope_21d": {
-        "mean": 0.00052,
-        "std": 0.004025,
-        "median": 0.000719,
-        "iqr": 0.003953
-      },
-      "tech_close_vs_sma_50": {
-        "mean": 0.016662,
-        "std": 0.059667,
-        "median": 0.018654,
-        "iqr": 0.067412
-      },
-      "tech_close_vs_sma_150": {
-        "mean": 0.047565,
-        "std": 0.093807,
-        "median": 0.048932,
-        "iqr": 0.110081
-      },
-      "tech_close_vs_sma_200": {
-        "mean": 0.062085,
-        "std": 0.105589,
-        "median": 0.063263,
-        "iqr": 0.125149
-      },
-      "tech_sma_200_trend_20": {
-        "mean": 0.011679,
-        "std": 0.016865,
-        "median": 0.012044,
-        "iqr": 0.019952
-      },
-      "tech_pct_above_52w_low": {
-        "mean": 0.310973,
-        "std": 0.211058,
-        "median": 0.281144,
-        "iqr": 0.260231
-      },
-      "tech_pct_from_52w_high": {
-        "mean": -0.074275,
-        "std": 0.079626,
-        "median": -0.051723,
-        "iqr": 0.089865
-      },
-      "tech_up_down_volume_ratio_50": {
-        "mean": 1.15112,
-        "std": 0.428469,
-        "median": 1.077101,
-        "iqr": 0.480758
-      },
-      "tech_rsi_14": {
-        "mean": 0.540959,
-        "std": 0.162953,
-        "median": 0.540816,
-        "iqr": 0.230714
-      },
-      "tech_atr_ratio_14": {
-        "mean": 0.021193,
-        "std": 0.010699,
-        "median": 0.019125,
-        "iqr": 0.00833
-      },
-      "tech_macd_signal_diff": {
-        "mean": 6e-06,
-        "std": 0.00573,
-        "median": 4.7e-05,
-        "iqr": 0.005736
-      },
-      "tech_bollinger_bandwidth_20": {
-        "mean": 0.099005,
-        "std": 0.068291,
-        "median": 0.083987,
-        "iqr": 0.058252
-      },
-      "tech_historical_vol_ratio_63_21": {
-        "mean": 1.087684,
-        "std": 0.300922,
-        "median": 1.023686,
-        "iqr": 0.337827
-      }
+    "tech_volatility_21d": {
+      "mean": 0.017529974789830125,
+      "std": 0.010446335313353757
     },
-    "UK": {
-      "tech_return_1d": {
-        "mean": 0.000809,
-        "std": 0.017583,
-        "median": 0.000719,
-        "iqr": 0.016003
-      },
-      "tech_momentum_3d": {
-        "mean": 0.002454,
-        "std": 0.031028,
-        "median": 0.00227,
-        "iqr": 0.028573
-      },
-      "tech_momentum_10d": {
-        "mean": 0.008057,
-        "std": 0.054722,
-        "median": 0.007151,
-        "iqr": 0.054033
-      },
-      "tech_momentum_21d": {
-        "mean": 0.016614,
-        "std": 0.079177,
-        "median": 0.014614,
-        "iqr": 0.078992
-      },
-      "tech_volatility_21d": {
-        "mean": 0.015214,
-        "std": 0.008808,
-        "median": 0.013041,
-        "iqr": 0.00717
-      },
-      "tech_volume_sma_21d": {
-        "mean": 3256383.889091,
-        "std": 3067959.97107,
-        "median": 2670011.595238,
-        "iqr": 2957915.845238
-      },
-      "tech_volume_ratio_21d": {
-        "mean": 1.009784,
-        "std": 0.571988,
-        "median": 0.906897,
-        "iqr": 0.473413
-      },
-      "tech_volume_change_1d": {
-        "mean": 0.378273,
-        "std": 28.24204,
-        "median": -0.005978,
-        "iqr": 0.572941
-      },
-      "tech_intraday_range_hl": {
-        "mean": 0.02244,
-        "std": 0.022448,
-        "median": 0.017953,
-        "iqr": 0.012567
-      },
-      "tech_drawdown_from_peak_21d": {
-        "mean": -0.082618,
-        "std": 0.087438,
-        "median": -0.056962,
-        "iqr": 0.097285
-      },
-      "tech_trend_slope_21d": {
-        "mean": 0.000504,
-        "std": 0.004212,
-        "median": 0.000745,
-        "iqr": 0.004004
-      },
-      "tech_close_vs_sma_50": {
-        "mean": 0.016839,
-        "std": 0.066917,
-        "median": 0.017124,
-        "iqr": 0.067807
-      },
-      "tech_close_vs_sma_150": {
-        "mean": 0.048949,
-        "std": 0.110676,
-        "median": 0.043936,
-        "iqr": 0.109404
-      },
-      "tech_close_vs_sma_200": {
-        "mean": 0.064035,
-        "std": 0.12699,
-        "median": 0.056966,
-        "iqr": 0.123549
-      },
-      "tech_sma_200_trend_20": {
-        "mean": 0.012501,
-        "std": 0.021061,
-        "median": 0.011635,
-        "iqr": 0.020377
-      },
-      "tech_pct_above_52w_low": {
-        "mean": 0.343201,
-        "std": 0.398139,
-        "median": 0.267403,
-        "iqr": 0.245231
-      },
-      "tech_pct_from_52w_high": {
-        "mean": -0.082618,
-        "std": 0.087438,
-        "median": -0.056962,
-        "iqr": 0.097285
-      },
-      "tech_up_down_volume_ratio_50": {
-        "mean": 1.200811,
-        "std": 0.679445,
-        "median": 1.099144,
-        "iqr": 0.483159
-      },
-      "tech_rsi_14": {
-        "mean": 0.537021,
-        "std": 0.167848,
-        "median": 0.539625,
-        "iqr": 0.237367
-      },
-      "tech_atr_ratio_14": {
-        "mean": 0.023481,
-        "std": 0.012784,
-        "median": 0.02,
-        "iqr": 0.009533
-      },
-      "tech_macd_signal_diff": {
-        "mean": -5e-06,
-        "std": 0.00601,
-        "median": 6.1e-05,
-        "iqr": 0.00597
-      },
-      "tech_bollinger_bandwidth_20": {
-        "mean": 0.104057,
-        "std": 0.076886,
-        "median": 0.083454,
-        "iqr": 0.060337
-      },
-      "tech_historical_vol_ratio_63_21": {
-        "mean": 1.09531,
-        "std": 0.331331,
-        "median": 1.025455,
-        "iqr": 0.340325
-      }
+    "tech_volume_sma_21d": {
+      "mean": 52947709.288729705,
+      "std": 117017358.95650458
+    },
+    "tech_volume_ratio_21d": {
+      "mean": 1.009572677417437,
+      "std": 0.4834142880287069
+    },
+    "tech_volume_change_1d": {
+      "mean": 0.0804945669880445,
+      "std": 0.9197840179810545
+    },
+    "tech_intraday_range_hl": {
+      "mean": 0.022336609416124843,
+      "std": 0.015020266284617589
+    },
+    "tech_drawdown_from_peak_21d": {
+      "mean": -0.07756434601194329,
+      "std": 0.09018718991575378
+    },
+    "tech_trend_slope_21d": {
+      "mean": 0.0008337877179608017,
+      "std": 0.004250206313219587
+    },
+    "tech_close_vs_sma_50": {
+      "mean": 0.025664081556921143,
+      "std": 0.07113587525860407
+    },
+    "tech_close_vs_sma_150": {
+      "mean": 0.07778808947854587,
+      "std": 0.12345748991405987
+    },
+    "tech_close_vs_sma_200": {
+      "mean": 0.10312826564155653,
+      "std": 0.1465849640559835
+    },
+    "tech_sma_200_trend_20": {
+      "mean": 0.01910451565710749,
+      "std": 0.023987192108997784
+    },
+    "tech_pct_above_52w_low": {
+      "mean": 0.4540981012274118,
+      "std": 0.4514763528381495
+    },
+    "tech_pct_from_52w_high": {
+      "mean": -0.07756434601194329,
+      "std": 0.09018718991575378
+    },
+    "tech_up_down_volume_ratio_50": {
+      "mean": 1.1888807335242697,
+      "std": 0.3580806242993605
+    },
+    "tech_rsi_14": {
+      "mean": 0.5530880629377266,
+      "std": 0.1623854651846311
+    },
+    "tech_atr_ratio_14": {
+      "mean": 0.024106203724043304,
+      "std": 0.012368802858493245
+    },
+    "tech_macd_signal_diff": {
+      "mean": 1.5206169945096416e-06,
+      "std": 0.006232077503088503
+    },
+    "tech_bollinger_bandwidth_20": {
+      "mean": 0.11617469102036235,
+      "std": 0.0783483212888415
+    },
+    "tech_historical_vol_ratio_63_21": {
+      "mean": 1.1287184225666502,
+      "std": 0.37406530021598455
+    }
+  },
+  "India": {
+    "tech_return_1d": {
+      "mean": 0.0009656931328799243,
+      "std": 0.019226127934052106
+    },
+    "tech_momentum_3d": {
+      "mean": 0.002885576769473305,
+      "std": 0.033249582210351285
+    },
+    "tech_momentum_10d": {
+      "mean": 0.009492696857979484,
+      "std": 0.059572096103693906
+    },
+    "tech_momentum_21d": {
+      "mean": 0.019764045381127176,
+      "std": 0.08599479959730308
+    },
+    "tech_volatility_21d": {
+      "mean": 0.01768649006707138,
+      "std": 0.0075778018684884
+    },
+    "tech_volume_sma_21d": {
+      "mean": 6274701.639752999,
+      "std": 9649697.68433758
+    },
+    "tech_volume_ratio_21d": {
+      "mean": 1.017861188022047,
+      "std": 0.6581827170577905
+    },
+    "tech_volume_change_1d": {
+      "mean": 0.21158474329085877,
+      "std": 1.3999333223548758
+    },
+    "tech_intraday_range_hl": {
+      "mean": 0.026481965719666625,
+      "std": 0.015868408884394978
+    },
+    "tech_drawdown_from_peak_21d": {
+      "mean": -0.10434862196403998,
+      "std": 0.09971350143324445
+    },
+    "tech_trend_slope_21d": {
+      "mean": 0.0005763767185901562,
+      "std": 0.004679879371021812
+    },
+    "tech_close_vs_sma_50": {
+      "mean": 0.019752122601333386,
+      "std": 0.07477730264281486
+    },
+    "tech_close_vs_sma_150": {
+      "mean": 0.05635050294763686,
+      "std": 0.12637256506717545
+    },
+    "tech_close_vs_sma_200": {
+      "mean": 0.07324042333944843,
+      "std": 0.14625350424271344
+    },
+    "tech_sma_200_trend_20": {
+      "mean": 0.013014790141962402,
+      "std": 0.023692803792305737
+    },
+    "tech_pct_above_52w_low": {
+      "mean": 0.3946980399687248,
+      "std": 0.34532308525556377
+    },
+    "tech_pct_from_52w_high": {
+      "mean": -0.10434862196403998,
+      "std": 0.09971350143324445
+    },
+    "tech_up_down_volume_ratio_50": {
+      "mean": 1.2386274172893637,
+      "std": 0.5500051784861132
+    },
+    "tech_rsi_14": {
+      "mean": 0.5325045482827316,
+      "std": 0.1665457823306609
+    },
+    "tech_atr_ratio_14": {
+      "mean": 0.02745995256190888,
+      "std": 0.011189044899133055
+    },
+    "tech_macd_signal_diff": {
+      "mean": 5.006153911099709e-05,
+      "std": 0.006524853793244007
+    },
+    "tech_bollinger_bandwidth_20": {
+      "mean": 0.12204806161539015,
+      "std": 0.07375831343480942
+    },
+    "tech_historical_vol_ratio_63_21": {
+      "mean": 1.0838736301839416,
+      "std": 0.29056289328794344
+    }
+  },
+  "China": {
+    "tech_return_1d": {
+      "mean": 0.0015749246796450066,
+      "std": 0.026337287129673887
+    },
+    "tech_momentum_3d": {
+      "mean": 0.004672277412529209,
+      "std": 0.04598698961032186
+    },
+    "tech_momentum_10d": {
+      "mean": 0.015259267135197973,
+      "std": 0.08430893462548994
+    },
+    "tech_momentum_21d": {
+      "mean": 0.03213029382095745,
+      "std": 0.12808042993045093
+    },
+    "tech_volatility_21d": {
+      "mean": 0.02396950590652785,
+      "std": 0.01089423773871131
+    },
+    "tech_volume_sma_21d": {
+      "mean": 93678771.63852991,
+      "std": 184923180.303851
+    },
+    "tech_volume_ratio_21d": {
+      "mean": 1.0168176795631876,
+      "std": 0.4746324400812565
+    },
+    "tech_volume_change_1d": {
+      "mean": 0.09996015447501143,
+      "std": 0.6929561443374257
+    },
+    "tech_intraday_range_hl": {
+      "mean": 0.034160921374904014,
+      "std": 0.02151255921672799
+    },
+    "tech_drawdown_from_peak_21d": {
+      "mean": -0.15771385600138266,
+      "std": 0.14113804347881115
+    },
+    "tech_trend_slope_21d": {
+      "mean": 0.0008504374260763881,
+      "std": 0.006026694072079425
+    },
+    "tech_close_vs_sma_50": {
+      "mean": 0.03131113498231126,
+      "std": 0.1088912814087241
+    },
+    "tech_close_vs_sma_150": {
+      "mean": 0.09304076393369494,
+      "std": 0.2022606746500412
+    },
+    "tech_close_vs_sma_200": {
+      "mean": 0.1214787604928904,
+      "std": 0.23838687036713146
+    },
+    "tech_sma_200_trend_20": {
+      "mean": 0.021630121755227057,
+      "std": 0.037587395036989005
+    },
+    "tech_pct_above_52w_low": {
+      "mean": 0.6074332074227966,
+      "std": 0.6826268598229407
+    },
+    "tech_pct_from_52w_high": {
+      "mean": -0.15771385600138266,
+      "std": 0.14113804347881115
+    },
+    "tech_up_down_volume_ratio_50": {
+      "mean": 188856261636594.75,
+      "std": 1.4157626957931878e+16
+    },
+    "tech_rsi_14": {
+      "mean": 0.5298632617178001,
+      "std": 0.16927088431748868
+    },
+    "tech_atr_ratio_14": {
+      "mean": 0.03547513548116126,
+      "std": 0.01611578194044745
+    },
+    "tech_macd_signal_diff": {
+      "mean": 5.7290241469905854e-05,
+      "std": 0.008593264007363485
+    },
+    "tech_bollinger_bandwidth_20": {
+      "mean": 0.16251021466237958,
+      "std": 0.10699802746498956
+    },
+    "tech_historical_vol_ratio_63_21": {
+      "mean": 100002.84461948751,
+      "std": 1738996.943081756
+    }
+  },
+  "Brazil": {
+    "tech_return_1d": {
+      "mean": 0.0010835292839140977,
+      "std": 0.02507567917059203
+    },
+    "tech_momentum_3d": {
+      "mean": 0.0032152469729272034,
+      "std": 0.04283832198629009
+    },
+    "tech_momentum_10d": {
+      "mean": 0.010696129799836649,
+      "std": 0.07754916754078549
+    },
+    "tech_momentum_21d": {
+      "mean": 0.022785666229299416,
+      "std": 0.11601973131623322
+    },
+    "tech_volatility_21d": {
+      "mean": 0.021461916747095452,
+      "std": 0.012985598911547186
+    },
+    "tech_volume_sma_21d": {
+      "mean": 12184606.548663404,
+      "std": 16377384.257824473
+    },
+    "tech_volume_ratio_21d": {
+      "mean": 1.017573785073544,
+      "std": 0.5931071745934537
+    },
+    "tech_volume_change_1d": {
+      "mean": 77.812474229262,
+      "std": 12896.20190778015
+    },
+    "tech_intraday_range_hl": {
+      "mean": 0.031405492899196544,
+      "std": 0.02081544136324837
+    },
+    "tech_drawdown_from_peak_21d": {
+      "mean": -0.13345804491137495,
+      "std": 0.14157889079444305
+    },
+    "tech_trend_slope_21d": {
+      "mean": 0.00041656958585583974,
+      "std": 0.006656611078423731
+    },
+    "tech_close_vs_sma_50": {
+      "mean": 0.021198970140471004,
+      "std": 0.10122757175987998
+    },
+    "tech_close_vs_sma_150": {
+      "mean": 0.0640993047710799,
+      "std": 0.1826432632424781
+    },
+    "tech_close_vs_sma_200": {
+      "mean": 0.08519584031609087,
+      "std": 0.2181391050886442
+    },
+    "tech_sma_200_trend_20": {
+      "mean": 0.014202762345909234,
+      "std": 0.036687029382005
+    },
+    "tech_pct_above_52w_low": {
+      "mean": 0.5977142928204481,
+      "std": 0.9774898024435025
+    },
+    "tech_pct_from_52w_high": {
+      "mean": -0.13345804491137495,
+      "std": 0.14157889079444305
+    },
+    "tech_up_down_volume_ratio_50": {
+      "mean": 75757314381.45387,
+      "std": 12895755401982.611
+    },
+    "tech_rsi_14": {
+      "mean": 0.5109014613431981,
+      "std": 0.19207519761824016
+    },
+    "tech_atr_ratio_14": {
+      "mean": 0.033192753856714205,
+      "std": 0.01845551170376585
+    },
+    "tech_macd_signal_diff": {
+      "mean": 6.581846855221179e-05,
+      "std": 0.008733052083733666
+    },
+    "tech_bollinger_bandwidth_20": {
+      "mean": 0.14542050209608223,
+      "std": 0.11357797365381862
+    },
+    "tech_historical_vol_ratio_63_21": {
+      "mean": 11455.954766425042,
+      "std": 289989.18786139047
+    }
+  },
+  "France": {
+    "tech_return_1d": {
+      "mean": 0.0007917876651674991,
+      "std": 0.016709087357921613
+    },
+    "tech_momentum_3d": {
+      "mean": 0.0023836296677211565,
+      "std": 0.028703827707155787
+    },
+    "tech_momentum_10d": {
+      "mean": 0.007795983777469549,
+      "std": 0.04953609968776105
+    },
+    "tech_momentum_21d": {
+      "mean": 0.01612079468052418,
+      "std": 0.07020182608296355
+    },
+    "tech_volatility_21d": {
+      "mean": 0.014794040895841677,
+      "std": 0.007867603590541587
+    },
+    "tech_volume_sma_21d": {
+      "mean": 932900.4393683644,
+      "std": 803571.8837690476
+    },
+    "tech_volume_ratio_21d": {
+      "mean": 1.0084996612000996,
+      "std": 0.48105398498244456
+    },
+    "tech_volume_change_1d": {
+      "mean": 0.12096847088669015,
+      "std": 0.8500632244604892
+    },
+    "tech_intraday_range_hl": {
+      "mean": 0.019845158484585148,
+      "std": 0.013264134638908012
+    },
+    "tech_drawdown_from_peak_21d": {
+      "mean": -0.07427474162161145,
+      "std": 0.07962581180919155
+    },
+    "tech_trend_slope_21d": {
+      "mean": 0.0005199913271655484,
+      "std": 0.004025268135437268
+    },
+    "tech_close_vs_sma_50": {
+      "mean": 0.01666194530268016,
+      "std": 0.05966720531677506
+    },
+    "tech_close_vs_sma_150": {
+      "mean": 0.047565012286038294,
+      "std": 0.09380704275807528
+    },
+    "tech_close_vs_sma_200": {
+      "mean": 0.06208511084573896,
+      "std": 0.10558874425205132
+    },
+    "tech_sma_200_trend_20": {
+      "mean": 0.011678973021777504,
+      "std": 0.01686453074148694
+    },
+    "tech_pct_above_52w_low": {
+      "mean": 0.31097290458223364,
+      "std": 0.21105812016990272
+    },
+    "tech_pct_from_52w_high": {
+      "mean": -0.07427474162161145,
+      "std": 0.07962581180919155
+    },
+    "tech_up_down_volume_ratio_50": {
+      "mean": 1.1511196227375113,
+      "std": 0.42846948884552605
+    },
+    "tech_rsi_14": {
+      "mean": 0.5409588464487789,
+      "std": 0.16295298012068538
+    },
+    "tech_atr_ratio_14": {
+      "mean": 0.021192812818449702,
+      "std": 0.010698535540600853
+    },
+    "tech_macd_signal_diff": {
+      "mean": 5.819179236815369e-06,
+      "std": 0.005729856398058956
+    },
+    "tech_bollinger_bandwidth_20": {
+      "mean": 0.09900486283822295,
+      "std": 0.0682914057254333
+    },
+    "tech_historical_vol_ratio_63_21": {
+      "mean": 1.0876836614660848,
+      "std": 0.3009219198178382
+    }
+  },
+  "UK": {
+    "tech_return_1d": {
+      "mean": 0.0008088405094631212,
+      "std": 0.017583440785834712
+    },
+    "tech_momentum_3d": {
+      "mean": 0.0024540975577326952,
+      "std": 0.031028133629701003
+    },
+    "tech_momentum_10d": {
+      "mean": 0.00805734434162979,
+      "std": 0.0547220052310912
+    },
+    "tech_momentum_21d": {
+      "mean": 0.016613587202797087,
+      "std": 0.07917728377471246
+    },
+    "tech_volatility_21d": {
+      "mean": 0.015214092657117727,
+      "std": 0.008807599009295003
+    },
+    "tech_volume_sma_21d": {
+      "mean": 3256383.8890908808,
+      "std": 3067959.9710700186
+    },
+    "tech_volume_ratio_21d": {
+      "mean": 1.0097836681066505,
+      "std": 0.5719880879545016
+    },
+    "tech_volume_change_1d": {
+      "mean": 0.37827254237836033,
+      "std": 28.24203995997959
+    },
+    "tech_intraday_range_hl": {
+      "mean": 0.022440423306328512,
+      "std": 0.022447836652951688
+    },
+    "tech_drawdown_from_peak_21d": {
+      "mean": -0.08261782151720795,
+      "std": 0.0874376766052967
+    },
+    "tech_trend_slope_21d": {
+      "mean": 0.0005036714307655838,
+      "std": 0.00421233313674424
+    },
+    "tech_close_vs_sma_50": {
+      "mean": 0.01683917849346309,
+      "std": 0.06691738299374968
+    },
+    "tech_close_vs_sma_150": {
+      "mean": 0.04894937088549219,
+      "std": 0.11067555917240764
+    },
+    "tech_close_vs_sma_200": {
+      "mean": 0.0640354916539213,
+      "std": 0.12698990216399275
+    },
+    "tech_sma_200_trend_20": {
+      "mean": 0.012501243419622806,
+      "std": 0.0210610166189812
+    },
+    "tech_pct_above_52w_low": {
+      "mean": 0.3432008496543414,
+      "std": 0.39813874389397064
+    },
+    "tech_pct_from_52w_high": {
+      "mean": -0.08261782151720795,
+      "std": 0.0874376766052967
+    },
+    "tech_up_down_volume_ratio_50": {
+      "mean": 1.2008112969089062,
+      "std": 0.6794452590325191
+    },
+    "tech_rsi_14": {
+      "mean": 0.5370205238155088,
+      "std": 0.16784821180163786
+    },
+    "tech_atr_ratio_14": {
+      "mean": 0.02348087138673057,
+      "std": 0.012784150279667884
+    },
+    "tech_macd_signal_diff": {
+      "mean": -5.165677971436069e-06,
+      "std": 0.006010071738721416
+    },
+    "tech_bollinger_bandwidth_20": {
+      "mean": 0.10405669948210805,
+      "std": 0.07688567943710556
+    },
+    "tech_historical_vol_ratio_63_21": {
+      "mean": 1.0953104657698263,
+      "std": 0.3313313722525231
     }
   }
 }

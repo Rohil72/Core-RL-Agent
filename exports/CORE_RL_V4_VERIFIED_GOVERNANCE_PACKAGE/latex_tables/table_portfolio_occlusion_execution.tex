@@ -1,0 +1,17 @@
+\begin{table}[ht]
+\centering
+\small
+\begin{tabular}{lcccccc}
+\toprule
+\textbf{Occlusion Condition} & \textbf{Return (\%)} & \textbf{$\Delta$Return} & \textbf{Sharpe} & \textbf{$\Delta$Sharpe} & \textbf{MaxDD (\%)} & \textbf{Jaccard Overlap} \\
+\midrule
+\textbf{Baseline ($P_0^*$ Guardrail)} & \textbf{+3.66\%} & \textbf{0.00\%} & \textbf{0.270} & \textbf{0.000} & \textbf{-18.11\%} & \textbf{1.000} \\
+Top-3 Precedent Occlusion (ROAR) & +3.10\% & -0.56\% & 0.238 & -0.032 & -18.67\% & 0.871 \\
+Outcome Shuffling Permutation & +1.85\% & -1.81\% & 0.142 & -0.128 & -19.53\% & 0.142 \\
+Uniform Precedent Weights ($1/25$) & +3.66\% & 0.00\% & 0.270 & 0.000 & -18.11\% & 1.000 \\
+Random Noise Replacement & +2.95\% & -0.71\% & 0.224 & -0.046 & -18.82\% & 0.465 \\
+\bottomrule
+\end{tabular}
+\caption{End-to-End Portfolio Occlusion and Intervention Analysis for Authoritative $P_0^*$ across 6 Sovereign Markets $\times$ 3 Model Seeds (18 Evaluation Cells). Shows performance resilience under precedent removal, outcome shuffling, and weight alterations while incorporating realistic execution frictions (10 bps transaction fees, ATR-14 stops, 3-slot allocation).}
+\label{tab:portfolio_occlusion_execution}
+\end{table}

@@ -1,0 +1,38 @@
+{
+  "seed_7": {
+    "diagnostic_scope": "Empirical forward-pass latent activations Z on 2024 test sequences",
+    "sample_size_N": 25753,
+    "latent_dimensions_d": 128,
+    "effective_rank": 28.57,
+    "theoretical_max_rank": 128,
+    "effective_rank_ratio": 0.223,
+    "top1_singular_variance_pct": 73.05,
+    "top5_singular_variance_pct": 91.26,
+    "top10_singular_variance_pct": 94.32,
+    "condition_number": 105625688.0
+  },
+  "seed_17": {
+    "diagnostic_scope": "Empirical forward-pass latent activations Z on 2024 test sequences",
+    "sample_size_N": 25753,
+    "latent_dimensions_d": 128,
+    "effective_rank": 29.53,
+    "theoretical_max_rank": 128,
+    "effective_rank_ratio": 0.231,
+    "top1_singular_variance_pct": 70.77,
+    "top5_singular_variance_pct": 90.56,
+    "top10_singular_variance_pct": 93.81,
+    "condition_number": 106327240.0
+  },
+  "seed_37": {
+    "diagnostic_scope": "Empirical forward-pass latent activations Z on 2024 test sequences",
+    "sample_size_N": 25753,
+    "latent_dimensions_d": 128,
+    "effective_rank": 31.54,
+    "theoretical_max_rank": 128,
+    "effective_rank_ratio": 0.246,
+    "top1_singular_variance_pct": 65.21,
+    "top5_singular_variance_pct": 88.7,
+    "top10_singular_variance_pct": 92.42,
+    "condition_number": 96687864.0
+  }
+}

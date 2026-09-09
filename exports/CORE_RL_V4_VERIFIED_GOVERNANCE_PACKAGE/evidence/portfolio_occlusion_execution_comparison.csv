@@ -1,0 +1,6 @@
+Condition,Ann_Return_Pct,Ann_Return_SE,Delta_Return_Pct,Sharpe,Sharpe_SE,Delta_Sharpe,Max_Drawdown_Pct,Annualized_Turnover,Median_Hold_Days,Average_Trades,Cross_Section_Rank_Rho,Selection_Jaccard_Overlap
+Baseline (P0* Guardrail),3.66,4.96,0.0,0.27,0.252,0.0,-18.11,10.85,43.0,18.3,1.0,1.0
+Top-3 Occlusion (ROAR),3.1,4.98,-0.56,0.238,0.252,-0.032,-18.67,10.76,42.8,18.3,0.997,0.871
+Outcome Shuffling,1.85,4.56,-1.81,0.142,0.241,-0.128,-19.53,10.32,47.9,16.8,0.686,0.142
+Uniform Weights (1/25),3.66,4.96,0.0,0.27,0.252,0.0,-18.11,10.85,43.0,18.3,1.0,1.0
+Random Noise Replacement,2.95,4.67,-0.71,0.224,0.231,-0.046,-18.82,10.67,43.2,18.1,0.946,0.465

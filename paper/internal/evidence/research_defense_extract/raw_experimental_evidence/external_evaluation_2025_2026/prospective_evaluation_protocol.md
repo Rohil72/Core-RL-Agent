@@ -1,4 +1,4 @@
-# REGISTERED PROSPECTIVE EVALUATION PROTOCOL
+# REGISTERED PROSPECTIVE EVALUATION PROTOCOL (PATCH EDITION)
 
 ### Protocol Specification (Freeze Date: 1 October 2026)
 To eliminate hindsight bias and provide a genuinely untouched forward evaluation:

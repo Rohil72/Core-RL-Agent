@@ -1,0 +1,5 @@
+mechanism,holding_contract,ann_return,sharpe,max_dd,trades
+Fixed 5-Session Exit,H = 5d fixed,-3.45%,-0.12,-19.80%,740
+Fixed 21-Session Exit,H = 21d fixed,+1.85%,0.145,-18.90%,410
+Fixed 63-Session Exit (No Stop),H = 63d fixed,+2.40%,0.18,-21.40%,220
+Adaptive 2.5x ATR Chandelier,"H_min=1d, H_max=63d",+3.75%,0.275,-18.12%,330

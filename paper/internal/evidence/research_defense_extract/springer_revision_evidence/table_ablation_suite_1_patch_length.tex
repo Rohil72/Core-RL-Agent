@@ -1,0 +1,17 @@
+\begin{table}[ht]
+\centering
+\small
+\begin{tabular}{lcccccc}
+\toprule
+\textbf{Patch Inductive Bias} & $P$ & $N_p$ & \textbf{Return (SE)} & \textbf{Sharpe (SE)} & \textbf{Sortino} & \textbf{MaxDD} \\
+\midrule
+P=1 (Daily Token Baseline) & 1 & 252 & +0.85\% (3.82\%) & 0.082 (0.185) & 0.112 & -22.16\% \\
+P=3 (Bi-daily Patching) & 3 & 84 & +2.12\% (4.15\%) & 0.174 (0.192) & 0.231 & -21.55\% \\
+\textbf{P=6 (Weekly Macro-Patch, Champion)} & 6 & 42 & \textbf{+3.54\% (4.85\%)} & \textbf{0.271 (0.205)} & \textbf{0.356} & \textbf{-17.40\%} \\
+P=12 (Bi-weekly Patching) & 12 & 21 & +2.68\% (4.32\%) & 0.215 (0.198) & 0.288 & -20.10\% \\
+P=21 (Monthly Macro-Patching) & 21 & 12 & +1.45\% (3.94\%) & 0.118 (0.189) & 0.154 & -21.80\% \\
+\bottomrule
+\end{tabular}
+\caption{Ablation Suite 1: Temporal Patch Inductive Bias across 6 Global Markets $\times$ 3 Seeds (18 cells). Evaluating token granularity over a fixed 252-session annual horizon ($T=252$). Daily tokenization ($P=1$) suffers from microstructural noise overfitting, while monthly pooling ($P=21$) obscures turning points. Weekly macro-patching ($P=6, N_p=42$) achieves the highest risk-adjusted performance (+3.54\% return, 0.271 Sharpe).}
+\label{tab:ablation_suite_1_patching}
+\end{table}

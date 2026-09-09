@@ -1,0 +1,18 @@
+\begin{table}[ht]
+\centering
+\small
+\begin{tabular}{lcccccc}
+\toprule
+\textbf{Benchmark / System} & \textbf{Mean Sharpe} & \textbf{Median Sharpe} & \textbf{5th \%-ile} & \textbf{95th \%-ile} & \textbf{Ann. Return} & \textbf{$P(\text{Random} > \text{System})$} \\
+\midrule
+P0 (Full Memory System) & 0.150 & 0.150 & -- & -- & +0.96\% & 0.7650 \\
+P0* (Domestic Topology) & 0.270 & 0.270 & -- & -- & +3.66\% & 0.6600 \\
+P1 (Direct Transformer Head) & 0.268 & 0.268 & -- & -- & +3.50\% & 0.6600 \\
+\midrule
+\textbf{P5 Monte Carlo Null (200 Draws)} & \textbf{0.356} & \textbf{0.381} & \textbf{-0.160} & \textbf{0.772} & \textbf{+7.46\%} & -- \\
+P5 Original 3-Path Sample & 0.379 & 0.379 & -- & -- & +6.55\% & -- \\
+\bottomrule
+\end{tabular}
+\caption{Empirical Monte Carlo Null Distribution from 200 independently generated six-market portfolio draws (1,200 market backtest paths; 200 per market across 6 markets) under identical capacity, trailing-stop, and cost contracts. Equal-market weighting aggregates idiosyncratic single-market noise into diversified portfolio performance. Under the true 200-draw null, $P_0$ sits at the 23.5th percentile ($p = 0.7650$), demonstrating that external memory underperforms 76.5\% of random selection trajectories.}
+\label{tab:random_null_1200_distribution}
+\end{table}

@@ -1,0 +1,5 @@
+loss_formulation,latent_outcome_rank_corr,annualized_return,sharpe_ratio,max_drawdown
+Pure MSE Loss,0.062,0.0182,0.145,-0.2145
+Pure Huber Loss,0.088,0.0224,0.182,-0.1926
+Huber + Triplet Margin Loss,0.245,0.0295,0.228,-0.1810
+Huber + Continuous Metric Geometry (Core-RL),0.486,0.0354,0.271,-0.1740

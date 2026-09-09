@@ -1,127 +1,127 @@
-market,seed,system,system_name,claim,initial_equity,final_equity,total_return,annualized_return,annualized_volatility,sharpe,sortino,max_drawdown,win_rate,trade_count
-US,7,P0,Full learned-state distributional memory,Reference,100000.0,149772.62,0.4977,0.4977,0.3026,1.486,2.448,-0.1858,0.558,52
-US,7,P1,No external memory,H2 (No Memory),100000.0,165357.87,0.6536,0.6536,0.3182,1.739,3.563,-0.1797,0.569,58
-US,7,P2,Same-neighbour mean-only memory,H3 (Mean-Only),100000.0,133456.71,0.3346,0.3346,0.2984,1.116,1.627,-0.1835,0.526,57
-US,7,P3,Raw-feature kNN memory,H1/H2 Control,100000.0,116684.4,0.1668,0.1668,0.3143,0.647,0.763,-0.199,0.463,54
-US,7,P4,Momentum-21 ranking,Momentum Baseline,100000.0,130289.77,0.3029,0.3029,0.2383,1.229,2.021,-0.1269,0.596,52
-US,7,P5,Random ranking,Random Baseline,100000.0,136005.33,0.3601,0.3601,0.2291,1.458,2.102,-0.1228,0.607,61
-US,7,P6,Equal-weight buy-and-hold context,Equal Weight Context,100000.0,133603.18,0.336,0.336,0.1793,1.706,2.722,-0.1028,0.778,18
-US,17,P0,Full learned-state distributional memory,Reference,100000.0,125814.49,0.2581,0.2581,0.2714,0.982,1.393,-0.1457,0.548,62
-US,17,P1,No external memory,H2 (No Memory),100000.0,114726.86,0.1473,0.1473,0.3016,0.606,0.662,-0.2173,0.537,54
-US,17,P2,Same-neighbour mean-only memory,H3 (Mean-Only),100000.0,100398.4,0.004,0.004,0.2782,0.153,0.02,-0.1824,0.475,61
-US,17,P3,Raw-feature kNN memory,H1/H2 Control,100000.0,126007.01,0.2601,0.2601,0.2851,0.953,1.379,-0.2064,0.508,59
-US,17,P4,Momentum-21 ranking,Momentum Baseline,100000.0,170204.26,0.702,0.702,0.2502,2.251,4.517,-0.081,0.639,61
-US,17,P5,Random ranking,Random Baseline,100000.0,130186.22,0.3019,0.3019,0.2315,1.255,1.893,-0.1338,0.586,58
-US,17,P6,Equal-weight buy-and-hold context,Equal Weight Context,100000.0,133603.18,0.336,0.336,0.1793,1.706,2.722,-0.1028,0.778,18
-US,37,P0,Full learned-state distributional memory,Reference,100000.0,111566.5,0.1157,0.1157,0.3081,0.509,0.572,-0.1958,0.531,64
-US,37,P1,No external memory,H2 (No Memory),100000.0,157176.47,0.5718,0.5718,0.3607,1.434,2.365,-0.211,0.6,55
-US,37,P2,Same-neighbour mean-only memory,H3 (Mean-Only),100000.0,134383.47,0.3438,0.3438,0.3073,1.116,1.643,-0.1892,0.537,54
-US,37,P3,Raw-feature kNN memory,H1/H2 Control,100000.0,138443.93,0.3844,0.3844,0.3435,1.119,1.513,-0.2317,0.525,61
-US,37,P4,Momentum-21 ranking,Momentum Baseline,100000.0,140167.48,0.4017,0.4017,0.2391,1.532,2.571,-0.147,0.65,60
-US,37,P5,Random ranking,Random Baseline,100000.0,90727.28,-0.0927,-0.0927,0.2201,-0.331,-0.543,-0.201,0.4,60
-US,37,P6,Equal-weight buy-and-hold context,Equal Weight Context,100000.0,133603.18,0.336,0.336,0.1793,1.706,2.722,-0.1028,0.778,18
-India,7,P0,Full learned-state distributional memory,Reference,100000.0,115522.73,0.1552,0.1566,0.1501,1.044,1.705,-0.0749,0.561,57
-India,7,P1,No external memory,H2 (No Memory),100000.0,101691.11,0.0169,0.017,0.142,0.19,0.184,-0.1174,0.55,60
-India,7,P2,Same-neighbour mean-only memory,H3 (Mean-Only),100000.0,116229.35,0.1623,0.1637,0.1685,0.984,1.391,-0.113,0.567,60
-India,7,P3,Raw-feature kNN memory,H1/H2 Control,100000.0,101620.79,0.0162,0.0163,0.152,0.182,0.176,-0.1036,0.5,52
-India,7,P4,Momentum-21 ranking,Momentum Baseline,100000.0,126933.13,0.2693,0.2718,0.1807,1.421,2.022,-0.1186,0.672,58
-India,7,P5,Random ranking,Random Baseline,100000.0,119362.21,0.1936,0.1953,0.1322,1.416,2.547,-0.0903,0.556,54
-India,7,P6,Equal-weight buy-and-hold context,Equal Weight Context,100000.0,114841.03,0.1484,0.1497,0.0976,1.478,2.258,-0.0629,0.75,16
-India,17,P0,Full learned-state distributional memory,Reference,100000.0,107857.11,0.0786,0.0792,0.1658,0.543,0.614,-0.1506,0.566,53
-India,17,P1,No external memory,H2 (No Memory),100000.0,114562.15,0.1456,0.1469,0.1652,0.912,1.233,-0.125,0.537,54
-India,17,P2,Same-neighbour mean-only memory,H3 (Mean-Only),100000.0,112505.17,0.1251,0.1261,0.1608,0.819,1.18,-0.1081,0.508,59
-India,17,P3,Raw-feature kNN memory,H1/H2 Control,100000.0,99731.17,-0.0027,-0.0027,0.1437,0.053,-0.029,-0.1455,0.517,60
-India,17,P4,Momentum-21 ranking,Momentum Baseline,100000.0,120550.94,0.2055,0.2073,0.1699,1.194,1.778,-0.1602,0.536,56
-India,17,P5,Random ranking,Random Baseline,100000.0,115955.94,0.1596,0.161,0.1703,0.962,1.34,-0.1171,0.611,54
-India,17,P6,Equal-weight buy-and-hold context,Equal Weight Context,100000.0,114841.03,0.1484,0.1497,0.0976,1.478,2.258,-0.0629,0.75,16
-India,37,P0,Full learned-state distributional memory,Reference,100000.0,97693.26,-0.0231,-0.0233,0.1646,-0.061,-0.204,-0.1069,0.517,58
-India,37,P1,No external memory,H2 (No Memory),100000.0,107631.48,0.0763,0.077,0.1559,0.553,0.779,-0.1195,0.552,58
-India,37,P2,Same-neighbour mean-only memory,H3 (Mean-Only),100000.0,99637.16,-0.0036,-0.0037,0.1477,0.049,-0.037,-0.1315,0.5,56
-India,37,P3,Raw-feature kNN memory,H1/H2 Control,100000.0,97827.43,-0.0217,-0.0219,0.1464,-0.078,-0.237,-0.1625,0.574,61
-India,37,P4,Momentum-21 ranking,Momentum Baseline,100000.0,125194.88,0.2519,0.2542,0.1611,1.487,2.228,-0.1109,0.564,55
-India,37,P5,Random ranking,Random Baseline,100000.0,110050.69,0.1005,0.1014,0.1497,0.719,1.081,-0.1454,0.541,61
-India,37,P6,Equal-weight buy-and-hold context,Equal Weight Context,100000.0,114841.03,0.1484,0.1497,0.0976,1.478,2.258,-0.0629,0.75,16
-China,7,P0,Full learned-state distributional memory,Reference,100000.0,98337.92,-0.0166,-0.0166,0.2474,0.056,-0.098,-0.1544,0.443,61
-China,7,P1,No external memory,H2 (No Memory),100000.0,124621.16,0.2462,0.2462,0.2792,0.927,1.268,-0.1763,0.579,57
-China,7,P2,Same-neighbour mean-only memory,H3 (Mean-Only),100000.0,115918.47,0.1592,0.1592,0.2749,0.674,0.876,-0.1702,0.466,58
-China,7,P3,Raw-feature kNN memory,H1/H2 Control,100000.0,117736.33,0.1774,0.1774,0.2915,0.705,0.938,-0.2007,0.538,52
-China,7,P4,Momentum-21 ranking,Momentum Baseline,100000.0,135408.06,0.3541,0.3541,0.3077,1.136,2.218,-0.1438,0.561,57
-China,7,P5,Random ranking,Random Baseline,100000.0,123863.32,0.2386,0.2386,0.298,0.864,1.526,-0.1815,0.448,58
-China,7,P6,Equal-weight buy-and-hold context,Equal Weight Context,100000.0,116913.08,0.1691,0.1691,0.2389,0.772,1.247,-0.1278,0.722,18
-China,17,P0,Full learned-state distributional memory,Reference,100000.0,106071.68,0.0607,0.0607,0.2627,0.355,0.345,-0.1893,0.415,53
-China,17,P1,No external memory,H2 (No Memory),100000.0,124012.86,0.2401,0.2401,0.2549,0.972,1.379,-0.12,0.561,57
-China,17,P2,Same-neighbour mean-only memory,H3 (Mean-Only),100000.0,103699.55,0.037,0.037,0.2679,0.268,0.206,-0.2216,0.481,52
-China,17,P3,Raw-feature kNN memory,H1/H2 Control,100000.0,109124.42,0.0912,0.0912,0.2509,0.473,0.53,-0.2201,0.509,57
-China,17,P4,Momentum-21 ranking,Momentum Baseline,100000.0,134991.47,0.3499,0.3499,0.2818,1.205,2.122,-0.1272,0.569,58
-China,17,P5,Random ranking,Random Baseline,100000.0,126309.04,0.2631,0.2631,0.2706,0.998,1.564,-0.1391,0.5,50
-China,17,P6,Equal-weight buy-and-hold context,Equal Weight Context,100000.0,116913.08,0.1691,0.1691,0.2389,0.772,1.247,-0.1278,0.722,18
-China,37,P0,Full learned-state distributional memory,Reference,100000.0,126737.11,0.2674,0.2674,0.275,0.998,1.648,-0.1624,0.525,59
-China,37,P1,No external memory,H2 (No Memory),100000.0,123755.95,0.2376,0.2376,0.2749,0.912,1.355,-0.1359,0.566,53
-China,37,P2,Same-neighbour mean-only memory,H3 (Mean-Only),100000.0,135465.32,0.3547,0.3547,0.2828,1.214,1.969,-0.1663,0.518,56
-China,37,P3,Raw-feature kNN memory,H1/H2 Control,100000.0,133537.13,0.3354,0.3354,0.2915,1.137,1.834,-0.1339,0.5,52
-China,37,P4,Momentum-21 ranking,Momentum Baseline,100000.0,176062.45,0.7606,0.7606,0.3417,1.823,4.53,-0.1432,0.593,54
-China,37,P5,Random ranking,Random Baseline,100000.0,118048.58,0.1805,0.1805,0.2826,0.724,1.339,-0.1547,0.419,62
-China,37,P6,Equal-weight buy-and-hold context,Equal Weight Context,100000.0,116913.08,0.1691,0.1691,0.2389,0.772,1.247,-0.1278,0.722,18
-Brazil,7,P0,Full learned-state distributional memory,Reference,100000.0,91724.28,-0.0828,-0.0815,0.2205,-0.275,-0.502,-0.1678,0.424,59
-Brazil,7,P1,No external memory,H2 (No Memory),100000.0,88266.52,-0.1173,-0.1156,0.196,-0.528,-0.854,-0.1652,0.417,60
-Brazil,7,P2,Same-neighbour mean-only memory,H3 (Mean-Only),100000.0,89047.4,-0.1095,-0.1079,0.2052,-0.453,-0.712,-0.1698,0.339,56
-Brazil,7,P3,Raw-feature kNN memory,H1/H2 Control,100000.0,85900.76,-0.141,-0.1389,0.2215,-0.565,-0.926,-0.179,0.345,58
-Brazil,7,P4,Momentum-21 ranking,Momentum Baseline,100000.0,85153.9,-0.1485,-0.1463,0.2002,-0.689,-0.928,-0.2534,0.527,55
-Brazil,7,P5,Random ranking,Random Baseline,100000.0,62410.22,-0.3759,-0.3712,0.1887,-2.362,-2.631,-0.3724,0.339,56
-Brazil,7,P6,Equal-weight buy-and-hold context,Equal Weight Context,100000.0,87254.12,-0.1275,-0.1256,0.1531,-0.8,-1.309,-0.1468,0.267,15
-Brazil,17,P0,Full learned-state distributional memory,Reference,100000.0,91070.15,-0.0893,-0.088,0.2136,-0.324,-0.596,-0.2135,0.482,56
-Brazil,17,P1,No external memory,H2 (No Memory),100000.0,84151.99,-0.1585,-0.1562,0.1762,-0.875,-1.288,-0.1738,0.383,60
-Brazil,17,P2,Same-neighbour mean-only memory,H3 (Mean-Only),100000.0,108862.64,0.0886,0.0872,0.2023,0.514,0.615,-0.1137,0.5,58
-Brazil,17,P3,Raw-feature kNN memory,H1/H2 Control,100000.0,94054.5,-0.0595,-0.0585,0.202,-0.198,-0.406,-0.1597,0.469,64
-Brazil,17,P4,Momentum-21 ranking,Momentum Baseline,100000.0,95849.01,-0.0415,-0.0409,0.1873,-0.13,-0.358,-0.1212,0.439,57
-Brazil,17,P5,Random ranking,Random Baseline,100000.0,72584.88,-0.2742,-0.2705,0.18,-1.66,-1.907,-0.2703,0.481,54
-Brazil,17,P6,Equal-weight buy-and-hold context,Equal Weight Context,100000.0,87254.12,-0.1275,-0.1256,0.1531,-0.8,-1.309,-0.1468,0.267,15
-Brazil,37,P0,Full learned-state distributional memory,Reference,100000.0,77182.36,-0.2282,-0.225,0.2091,-1.114,-1.475,-0.2344,0.362,58
-Brazil,37,P1,No external memory,H2 (No Memory),100000.0,78504.42,-0.215,-0.2119,0.2008,-1.085,-1.34,-0.223,0.379,58
-Brazil,37,P2,Same-neighbour mean-only memory,H3 (Mean-Only),100000.0,79692.66,-0.2031,-0.2002,0.2078,-0.971,-1.322,-0.2116,0.339,56
-Brazil,37,P3,Raw-feature kNN memory,H1/H2 Control,100000.0,80908.87,-0.1909,-0.1882,0.2195,-0.84,-1.198,-0.2038,0.389,54
-Brazil,37,P4,Momentum-21 ranking,Momentum Baseline,100000.0,107927.39,0.0793,0.078,0.1905,0.489,0.629,-0.0909,0.527,55
-Brazil,37,P5,Random ranking,Random Baseline,100000.0,69684.54,-0.3032,-0.2992,0.1968,-1.706,-2.129,-0.297,0.381,63
-Brazil,37,P6,Equal-weight buy-and-hold context,Equal Weight Context,100000.0,87254.12,-0.1275,-0.1256,0.1531,-0.8,-1.309,-0.1468,0.267,15
-France,7,P0,Full learned-state distributional memory,Reference,100000.0,84774.67,-0.1523,-0.1512,0.2707,-0.47,-0.782,-0.2129,0.418,55
-France,7,P1,No external memory,H2 (No Memory),100000.0,68042.69,-0.3196,-0.3175,0.2883,-1.179,-1.477,-0.3167,0.383,60
-France,7,P2,Same-neighbour mean-only memory,H3 (Mean-Only),100000.0,78617.03,-0.2138,-0.2124,0.2554,-0.807,-1.213,-0.2309,0.464,56
-France,7,P3,Raw-feature kNN memory,H1/H2 Control,100000.0,61496.41,-0.385,-0.3827,0.2728,-1.629,-1.87,-0.3825,0.397,68
-France,7,P4,Momentum-21 ranking,Momentum Baseline,100000.0,83366.72,-0.1663,-0.1651,0.2352,-0.65,-0.943,-0.2729,0.439,57
-France,7,P5,Random ranking,Random Baseline,100000.0,97401.11,-0.026,-0.0258,0.1687,-0.07,-0.209,-0.1629,0.444,63
-France,7,P6,Equal-weight buy-and-hold context,Equal Weight Context,100000.0,94156.29,-0.0584,-0.058,0.1423,-0.349,-0.627,-0.1308,0.412,17
-France,17,P0,Full learned-state distributional memory,Reference,100000.0,79224.4,-0.2078,-0.2063,0.2625,-0.748,-1.015,-0.2856,0.473,55
-France,17,P1,No external memory,H2 (No Memory),100000.0,78497.41,-0.215,-0.2135,0.2723,-0.746,-1.077,-0.3065,0.426,61
-France,17,P2,Same-neighbour mean-only memory,H3 (Mean-Only),100000.0,80950.31,-0.1905,-0.1892,0.2758,-0.622,-0.967,-0.2782,0.39,59
-France,17,P3,Raw-feature kNN memory,H1/H2 Control,100000.0,68077.71,-0.3192,-0.3172,0.289,-1.174,-1.351,-0.3719,0.375,56
-France,17,P4,Momentum-21 ranking,Momentum Baseline,100000.0,80370.53,-0.1963,-0.1949,0.2224,-0.863,-1.182,-0.2752,0.475,61
-France,17,P5,Random ranking,Random Baseline,100000.0,75830.48,-0.2417,-0.2401,0.2137,-1.177,-1.358,-0.2904,0.484,62
-France,17,P6,Equal-weight buy-and-hold context,Equal Weight Context,100000.0,94156.29,-0.0584,-0.058,0.1423,-0.349,-0.627,-0.1308,0.412,17
-France,37,P0,Full learned-state distributional memory,Reference,100000.0,70619.9,-0.2938,-0.2919,0.2796,-1.093,-1.335,-0.3559,0.417,60
-France,37,P1,No external memory,H2 (No Memory),100000.0,76312.66,-0.2369,-0.2353,0.2768,-0.83,-1.107,-0.3323,0.386,57
-France,37,P2,Same-neighbour mean-only memory,H3 (Mean-Only),100000.0,63391.09,-0.3661,-0.3638,0.2929,-1.395,-1.573,-0.4081,0.379,58
-France,37,P3,Raw-feature kNN memory,H1/H2 Control,100000.0,77657.04,-0.2234,-0.2219,0.2661,-0.809,-1.069,-0.2874,0.433,60
-France,37,P4,Momentum-21 ranking,Momentum Baseline,100000.0,86671.91,-0.1333,-0.1323,0.2183,-0.541,-0.834,-0.2738,0.548,62
-France,37,P5,Random ranking,Random Baseline,100000.0,79996.49,-0.2,-0.1986,0.2102,-0.948,-1.355,-0.2643,0.483,60
-France,37,P6,Equal-weight buy-and-hold context,Equal Weight Context,100000.0,94156.29,-0.0584,-0.058,0.1423,-0.349,-0.627,-0.1308,0.412,17
-UK,7,P0,Full learned-state distributional memory,Reference,100000.0,94791.87,-0.0521,-0.0519,0.2442,-0.097,-0.343,-0.1452,0.5,56
-UK,7,P1,No external memory,H2 (No Memory),100000.0,78526.98,-0.2147,-0.214,0.2465,-0.853,-1.25,-0.2515,0.367,60
-UK,7,P2,Same-neighbour mean-only memory,H3 (Mean-Only),100000.0,80722.67,-0.1928,-0.1921,0.2405,-0.767,-1.223,-0.2354,0.456,57
-UK,7,P3,Raw-feature kNN memory,H1/H2 Control,100000.0,66830.35,-0.3317,-0.3306,0.2538,-1.454,-1.872,-0.3429,0.316,57
-UK,7,P4,Momentum-21 ranking,Momentum Baseline,100000.0,71535.01,-0.2846,-0.2837,0.1757,-1.811,-2.723,-0.2679,0.381,63
-UK,7,P5,Random ranking,Random Baseline,100000.0,118510.07,0.1851,0.1843,0.1921,0.976,1.834,-0.0819,0.54,63
-UK,7,P6,Equal-weight buy-and-hold context,Equal Weight Context,100000.0,94030.45,-0.0597,-0.0595,0.0975,-0.58,-1.018,-0.0564,0.571,14
-UK,17,P0,Full learned-state distributional memory,Reference,100000.0,90774.42,-0.0923,-0.0919,0.2769,-0.211,-0.582,-0.1876,0.379,58
-UK,17,P1,No external memory,H2 (No Memory),100000.0,79216.95,-0.2078,-0.2071,0.2547,-0.784,-1.242,-0.1911,0.431,58
-UK,17,P2,Same-neighbour mean-only memory,H3 (Mean-Only),100000.0,85816.14,-0.1418,-0.1413,0.2721,-0.425,-0.844,-0.2,0.345,58
-UK,17,P3,Raw-feature kNN memory,H1/H2 Control,100000.0,67395.63,-0.326,-0.325,0.2579,-1.395,-1.826,-0.3118,0.365,63
-UK,17,P4,Momentum-21 ranking,Momentum Baseline,100000.0,85076.39,-0.1492,-0.1487,0.1891,-0.757,-1.26,-0.2029,0.444,63
-UK,17,P5,Random ranking,Random Baseline,100000.0,114017.24,0.1402,0.1396,0.2119,0.721,1.127,-0.1276,0.517,58
-UK,17,P6,Equal-weight buy-and-hold context,Equal Weight Context,100000.0,94030.45,-0.0597,-0.0595,0.0975,-0.58,-1.018,-0.0564,0.571,14
-UK,37,P0,Full learned-state distributional memory,Reference,100000.0,66741.61,-0.3326,-0.3315,0.274,-1.333,-1.897,-0.3128,0.383,60
-UK,37,P1,No external memory,H2 (No Memory),100000.0,68526.64,-0.3147,-0.3137,0.2519,-1.367,-1.861,-0.2962,0.421,57
-UK,37,P2,Same-neighbour mean-only memory,H3 (Mean-Only),100000.0,70372.32,-0.2963,-0.2953,0.2806,-1.107,-1.664,-0.3468,0.339,56
-UK,37,P3,Raw-feature kNN memory,H1/H2 Control,100000.0,69817.0,-0.3018,-0.3008,0.2709,-1.186,-1.695,-0.3099,0.276,58
-UK,37,P4,Momentum-21 ranking,Momentum Baseline,100000.0,87576.52,-0.1242,-0.1238,0.1988,-0.566,-1.007,-0.1717,0.463,54
-UK,37,P5,Random ranking,Random Baseline,100000.0,74107.29,-0.2589,-0.2581,0.1648,-1.729,-2.66,-0.2429,0.35,60
-UK,37,P6,Equal-weight buy-and-hold context,Equal Weight Context,100000.0,94030.45,-0.0597,-0.0595,0.0975,-0.58,-1.018,-0.0564,0.571,14
+market,seed,system,system_name,claim,total_return,annualized_return,sharpe,sortino,max_drawdown,win_rate,trade_count,final_equity
+US,7,P0,Full learned-state distributional memory,Reference,0.3428,0.3428,1.541,2.191,-0.1329,0.5833,36,134275.08
+US,7,P1,No external memory,H2 (No Memory),0.6399,0.6399,2.558,4.06,-0.0861,0.6389,36,163992.89
+US,7,P2,Same-neighbour mean-only memory,H3 (Mean-Only),0.294,0.294,1.407,1.978,-0.1469,0.5556,36,129395.7
+US,7,P3,Raw-feature kNN memory,H1/H2 Control,0.7419,0.7419,2.981,4.869,-0.0814,0.6667,36,174186.22
+US,7,P4,Momentum-21 ranking,Momentum Baseline,0.2434,0.2434,0.976,1.679,-0.1864,0.6111,36,124338.29
+US,7,P5,Random ranking,Random Baseline,-0.0165,-0.0165,0.002,0.003,-0.1744,0.5278,36,98347.87
+US,7,P6,Equal-weight buy-and-hold context,Equal Weight Context,0.336,0.336,1.706,2.478,-0.1028,0.7778,18,133603.18
+US,17,P0,Full learned-state distributional memory,Reference,0.264,0.264,1.558,2.194,-0.0809,0.6111,36,126396.35
+US,17,P1,No external memory,H2 (No Memory),0.1392,0.1392,0.983,1.457,-0.0998,0.6389,36,113924.62
+US,17,P2,Same-neighbour mean-only memory,H3 (Mean-Only),0.2182,0.2182,1.385,1.922,-0.0807,0.6111,36,121815.07
+US,17,P3,Raw-feature kNN memory,H1/H2 Control,0.1963,0.1963,1.233,1.588,-0.0931,0.6389,36,119633.2
+US,17,P4,Momentum-21 ranking,Momentum Baseline,0.2434,0.2434,0.976,1.679,-0.1864,0.6111,36,124338.29
+US,17,P5,Random ranking,Random Baseline,0.5704,0.5704,2.286,3.802,-0.0999,0.6111,36,157044.81
+US,17,P6,Equal-weight buy-and-hold context,Equal Weight Context,0.336,0.336,1.706,2.478,-0.1028,0.7778,18,133603.18
+US,37,P0,Full learned-state distributional memory,Reference,0.46,0.46,2.501,4.12,-0.0765,0.6944,36,146004.65
+US,37,P1,No external memory,H2 (No Memory),0.3945,0.3945,1.851,3.016,-0.0762,0.6389,36,139446.57
+US,37,P2,Same-neighbour mean-only memory,H3 (Mean-Only),0.5163,0.5163,2.718,4.476,-0.0765,0.7222,36,151629.96
+US,37,P3,Raw-feature kNN memory,H1/H2 Control,0.369,0.369,2.001,2.43,-0.1369,0.6944,36,136903.1
+US,37,P4,Momentum-21 ranking,Momentum Baseline,0.2434,0.2434,0.976,1.679,-0.1864,0.6111,36,124338.29
+US,37,P5,Random ranking,Random Baseline,0.7012,0.7012,2.551,4.481,-0.087,0.6667,36,170124.2
+US,37,P6,Equal-weight buy-and-hold context,Equal Weight Context,0.336,0.336,1.706,2.478,-0.1028,0.7778,18,133603.18
+India,7,P0,Full learned-state distributional memory,Reference,-0.0722,-0.0728,-0.447,-0.581,-0.155,0.4722,36,92778.15
+India,7,P1,No external memory,H2 (No Memory),-0.1484,-0.1495,-1.07,-1.384,-0.1617,0.4444,36,85156.28
+India,7,P2,Same-neighbour mean-only memory,H3 (Mean-Only),-0.0868,-0.0875,-0.559,-0.722,-0.1594,0.4722,36,91316.84
+India,7,P3,Raw-feature kNN memory,H1/H2 Control,-0.0999,-0.1007,-0.646,-0.825,-0.1571,0.3889,36,90006.03
+India,7,P4,Momentum-21 ranking,Momentum Baseline,0.0661,0.0666,0.498,0.748,-0.1347,0.5,36,106606.13
+India,7,P5,Random ranking,Random Baseline,0.133,0.1341,0.893,1.358,-0.1666,0.5278,36,113299.69
+India,7,P6,Equal-weight buy-and-hold context,Equal Weight Context,0.1484,0.1497,1.478,2.177,-0.0629,0.75,16,114841.03
+India,17,P0,Full learned-state distributional memory,Reference,0.0751,0.0758,0.572,0.898,-0.0788,0.5278,36,107512.92
+India,17,P1,No external memory,H2 (No Memory),0.1285,0.1296,0.901,1.38,-0.0815,0.5833,36,112853.57
+India,17,P2,Same-neighbour mean-only memory,H3 (Mean-Only),0.1343,0.1355,0.95,1.521,-0.0788,0.5833,36,113433.95
+India,17,P3,Raw-feature kNN memory,H1/H2 Control,0.131,0.1321,0.925,1.45,-0.101,0.5278,36,113096.54
+India,17,P4,Momentum-21 ranking,Momentum Baseline,0.0661,0.0666,0.498,0.748,-0.1347,0.5,36,106606.13
+India,17,P5,Random ranking,Random Baseline,0.0774,0.0781,0.599,0.839,-0.0722,0.5,36,107743.48
+India,17,P6,Equal-weight buy-and-hold context,Equal Weight Context,0.1484,0.1497,1.478,2.177,-0.0629,0.75,16,114841.03
+India,37,P0,Full learned-state distributional memory,Reference,0.0157,0.0158,0.181,0.286,-0.1278,0.5278,36,101570.43
+India,37,P1,No external memory,H2 (No Memory),0.0806,0.0812,0.627,0.879,-0.0759,0.5833,36,108056.48
+India,37,P2,Same-neighbour mean-only memory,H3 (Mean-Only),0.024,0.0242,0.239,0.371,-0.1268,0.5278,36,102395.85
+India,37,P3,Raw-feature kNN memory,H1/H2 Control,0.1256,0.1267,0.884,1.347,-0.0786,0.5556,36,112563.72
+India,37,P4,Momentum-21 ranking,Momentum Baseline,0.0661,0.0666,0.498,0.748,-0.1347,0.5,36,106606.13
+India,37,P5,Random ranking,Random Baseline,0.0482,0.0486,0.405,0.571,-0.0958,0.4444,36,104817.27
+India,37,P6,Equal-weight buy-and-hold context,Equal Weight Context,0.1484,0.1497,1.478,2.177,-0.0629,0.75,16,114841.03
+China,7,P0,Full learned-state distributional memory,Reference,0.3864,0.3864,1.41,2.28,-0.1238,0.6111,36,138635.21
+China,7,P1,No external memory,H2 (No Memory),0.2393,0.2393,0.972,1.54,-0.174,0.5833,36,123925.33
+China,7,P2,Same-neighbour mean-only memory,H3 (Mean-Only),0.411,0.411,1.479,2.381,-0.1238,0.6111,36,141102.64
+China,7,P3,Raw-feature kNN memory,H1/H2 Control,0.0471,0.0471,0.313,0.473,-0.2158,0.5278,36,104709.12
+China,7,P4,Momentum-21 ranking,Momentum Baseline,0.2402,0.2402,0.902,1.489,-0.1476,0.5833,36,124019.99
+China,7,P5,Random ranking,Random Baseline,0.1883,0.1883,0.798,1.263,-0.1633,0.5556,36,118825.47
+China,7,P6,Equal-weight buy-and-hold context,Equal Weight Context,0.1691,0.1691,0.772,1.36,-0.1278,0.7222,18,116913.08
+China,17,P0,Full learned-state distributional memory,Reference,0.1256,0.1256,0.622,0.967,-0.1669,0.5278,36,112558.25
+China,17,P1,No external memory,H2 (No Memory),-0.0371,-0.0371,-0.033,-0.052,-0.2631,0.4722,36,96290.75
+China,17,P2,Same-neighbour mean-only memory,H3 (Mean-Only),0.088,0.088,0.475,0.752,-0.174,0.5278,36,108798.99
+China,17,P3,Raw-feature kNN memory,H1/H2 Control,-0.0063,-0.0063,0.096,0.157,-0.2131,0.5,36,99371.81
+China,17,P4,Momentum-21 ranking,Momentum Baseline,0.2402,0.2402,0.902,1.489,-0.1476,0.5833,36,124019.99
+China,17,P5,Random ranking,Random Baseline,0.3627,0.3627,1.1,2.274,-0.2033,0.5278,36,136272.0
+China,17,P6,Equal-weight buy-and-hold context,Equal Weight Context,0.1691,0.1691,0.772,1.36,-0.1278,0.7222,18,116913.08
+China,37,P0,Full learned-state distributional memory,Reference,0.0956,0.0956,0.499,0.805,-0.1631,0.5556,36,109556.41
+China,37,P1,No external memory,H2 (No Memory),0.0949,0.0949,0.491,0.728,-0.1883,0.5556,36,109486.69
+China,37,P2,Same-neighbour mean-only memory,H3 (Mean-Only),0.0956,0.0956,0.499,0.805,-0.1631,0.5556,36,109556.41
+China,37,P3,Raw-feature kNN memory,H1/H2 Control,0.093,0.093,0.475,0.76,-0.193,0.5833,36,109297.84
+China,37,P4,Momentum-21 ranking,Momentum Baseline,0.2402,0.2402,0.902,1.489,-0.1476,0.5833,36,124019.99
+China,37,P5,Random ranking,Random Baseline,0.2394,0.2394,1.02,1.822,-0.1344,0.4722,36,123940.82
+China,37,P6,Equal-weight buy-and-hold context,Equal Weight Context,0.1691,0.1691,0.772,1.36,-0.1278,0.7222,18,116913.08
+Brazil,7,P0,Full learned-state distributional memory,Reference,-0.1067,-0.1051,-0.41,-0.673,-0.2927,0.3333,36,89329.9
+Brazil,7,P1,No external memory,H2 (No Memory),-0.1384,-0.1363,-0.483,-0.758,-0.2046,0.3056,36,86163.99
+Brazil,7,P2,Same-neighbour mean-only memory,H3 (Mean-Only),-0.0249,-0.0245,-0.019,-0.033,-0.2302,0.3611,36,97512.1
+Brazil,7,P3,Raw-feature kNN memory,H1/H2 Control,-0.0314,-0.0309,-0.053,-0.088,-0.1893,0.3611,36,96856.2
+Brazil,7,P4,Momentum-21 ranking,Momentum Baseline,-0.1911,-0.1884,-1.004,-1.557,-0.2324,0.3889,36,80889.0
+Brazil,7,P5,Random ranking,Random Baseline,-0.066,-0.065,-0.227,-0.36,-0.1426,0.3889,36,93402.66
+Brazil,7,P6,Equal-weight buy-and-hold context,Equal Weight Context,-0.1275,-0.1256,-0.8,-1.277,-0.1468,0.2667,15,87254.12
+Brazil,17,P0,Full learned-state distributional memory,Reference,-0.1963,-0.1935,-0.891,-1.164,-0.2727,0.3333,36,80372.85
+Brazil,17,P1,No external memory,H2 (No Memory),-0.1924,-0.1897,-0.825,-1.107,-0.2159,0.3333,36,80758.06
+Brazil,17,P2,Same-neighbour mean-only memory,H3 (Mean-Only),-0.11,-0.1083,-0.517,-0.678,-0.1974,0.3611,36,89001.14
+Brazil,17,P3,Raw-feature kNN memory,H1/H2 Control,-0.0413,-0.0406,-0.101,-0.147,-0.157,0.4167,36,95872.1
+Brazil,17,P4,Momentum-21 ranking,Momentum Baseline,-0.1911,-0.1884,-1.004,-1.557,-0.2324,0.3889,36,80889.0
+Brazil,17,P5,Random ranking,Random Baseline,-0.2667,-0.2631,-1.261,-1.781,-0.2849,0.3889,36,73326.57
+Brazil,17,P6,Equal-weight buy-and-hold context,Equal Weight Context,-0.1275,-0.1256,-0.8,-1.277,-0.1468,0.2667,15,87254.12
+Brazil,37,P0,Full learned-state distributional memory,Reference,-0.0464,-0.0457,-0.151,-0.239,-0.1889,0.4167,36,95363.08
+Brazil,37,P1,No external memory,H2 (No Memory),-0.0037,-0.0036,0.095,0.154,-0.1807,0.4167,36,99630.06
+Brazil,37,P2,Same-neighbour mean-only memory,H3 (Mean-Only),-0.0152,-0.015,0.018,0.028,-0.1512,0.4444,36,98478.26
+Brazil,37,P3,Raw-feature kNN memory,H1/H2 Control,0.0566,0.0557,0.355,0.619,-0.1552,0.4444,36,105657.77
+Brazil,37,P4,Momentum-21 ranking,Momentum Baseline,-0.1911,-0.1884,-1.004,-1.557,-0.2324,0.3889,36,80889.0
+Brazil,37,P5,Random ranking,Random Baseline,-0.1597,-0.1574,-0.819,-1.189,-0.2344,0.4167,36,84032.42
+Brazil,37,P6,Equal-weight buy-and-hold context,Equal Weight Context,-0.1275,-0.1256,-0.8,-1.277,-0.1468,0.2667,15,87254.12
+France,7,P0,Full learned-state distributional memory,Reference,-0.1595,-0.1583,-0.611,-0.763,-0.2382,0.5278,36,84053.97
+France,7,P1,No external memory,H2 (No Memory),-0.1951,-0.1937,-0.812,-1.069,-0.2307,0.5833,36,80488.92
+France,7,P2,Same-neighbour mean-only memory,H3 (Mean-Only),-0.1595,-0.1583,-0.611,-0.763,-0.2382,0.5278,36,84053.97
+France,7,P3,Raw-feature kNN memory,H1/H2 Control,-0.1912,-0.1898,-0.683,-0.856,-0.2725,0.4444,36,80882.16
+France,7,P4,Momentum-21 ranking,Momentum Baseline,-0.1908,-0.1895,-1.034,-1.397,-0.2006,0.4444,36,80918.55
+France,7,P5,Random ranking,Random Baseline,0.0979,0.0971,0.551,0.691,-0.1572,0.6389,36,109788.74
+France,7,P6,Equal-weight buy-and-hold context,Equal Weight Context,-0.0584,-0.058,-0.349,-0.537,-0.1308,0.4118,17,94156.29
+France,17,P0,Full learned-state distributional memory,Reference,-0.184,-0.1827,-0.768,-1.083,-0.2784,0.5,36,81598.49
+France,17,P1,No external memory,H2 (No Memory),-0.206,-0.2045,-0.922,-1.249,-0.2801,0.4167,36,79402.48
+France,17,P2,Same-neighbour mean-only memory,H3 (Mean-Only),-0.1913,-0.1899,-0.83,-1.151,-0.2787,0.5,36,80874.66
+France,17,P3,Raw-feature kNN memory,H1/H2 Control,-0.272,-0.2702,-1.242,-1.692,-0.3211,0.3611,36,72800.84
+France,17,P4,Momentum-21 ranking,Momentum Baseline,-0.1908,-0.1895,-1.034,-1.397,-0.2006,0.4444,36,80918.55
+France,17,P5,Random ranking,Random Baseline,0.0174,0.0172,0.184,0.262,-0.1278,0.5278,36,101735.9
+France,17,P6,Equal-weight buy-and-hold context,Equal Weight Context,-0.0584,-0.058,-0.349,-0.537,-0.1308,0.4118,17,94156.29
+France,37,P0,Full learned-state distributional memory,Reference,-0.2959,-0.294,-1.423,-1.847,-0.3613,0.3889,36,70410.25
+France,37,P1,No external memory,H2 (No Memory),-0.2411,-0.2394,-1.009,-1.324,-0.3252,0.4167,36,75893.75
+France,37,P2,Same-neighbour mean-only memory,H3 (Mean-Only),-0.1958,-0.1945,-0.903,-1.223,-0.284,0.4167,36,80417.72
+France,37,P3,Raw-feature kNN memory,H1/H2 Control,-0.3066,-0.3046,-1.394,-1.853,-0.3772,0.3333,36,69344.24
+France,37,P4,Momentum-21 ranking,Momentum Baseline,-0.1908,-0.1895,-1.034,-1.397,-0.2006,0.4444,36,80918.55
+France,37,P5,Random ranking,Random Baseline,0.0347,0.0344,0.275,0.357,-0.1848,0.6111,36,103470.33
+France,37,P6,Equal-weight buy-and-hold context,Equal Weight Context,-0.0584,-0.058,-0.349,-0.537,-0.1308,0.4118,17,94156.29
+UK,7,P0,Full learned-state distributional memory,Reference,0.2587,0.2576,1.149,2.001,-0.0814,0.5556,36,125871.54
+UK,7,P1,No external memory,H2 (No Memory),0.2207,0.2197,0.964,1.517,-0.1041,0.5833,36,122066.1
+UK,7,P2,Same-neighbour mean-only memory,H3 (Mean-Only),0.2587,0.2576,1.149,2.001,-0.0814,0.5556,36,125871.54
+UK,7,P3,Raw-feature kNN memory,H1/H2 Control,0.1914,0.1906,0.862,1.377,-0.1041,0.5833,36,119141.26
+UK,7,P4,Momentum-21 ranking,Momentum Baseline,-0.2207,-0.22,-1.315,-1.994,-0.2502,0.5278,36,77925.13
+UK,7,P5,Random ranking,Random Baseline,-0.0973,-0.0969,-0.482,-0.859,-0.1403,0.4444,36,90270.59
+UK,7,P6,Equal-weight buy-and-hold context,Equal Weight Context,-0.0597,-0.0595,-0.58,-0.969,-0.0564,0.5714,14,94030.45
+UK,17,P0,Full learned-state distributional memory,Reference,-0.0073,-0.0072,0.089,0.127,-0.1826,0.4444,36,99273.46
+UK,17,P1,No external memory,H2 (No Memory),-0.212,-0.2112,-0.866,-1.281,-0.2112,0.4167,36,78803.21
+UK,17,P2,Same-neighbour mean-only memory,H3 (Mean-Only),-0.0618,-0.0616,-0.156,-0.221,-0.156,0.4167,36,93819.66
+UK,17,P3,Raw-feature kNN memory,H1/H2 Control,-0.1374,-0.1369,-0.509,-0.725,-0.1756,0.4444,36,86261.97
+UK,17,P4,Momentum-21 ranking,Momentum Baseline,-0.2207,-0.22,-1.315,-1.994,-0.2502,0.5278,36,77925.13
+UK,17,P5,Random ranking,Random Baseline,-0.061,-0.0608,-0.24,-0.297,-0.1779,0.5556,36,93901.49
+UK,17,P6,Equal-weight buy-and-hold context,Equal Weight Context,-0.0597,-0.0595,-0.58,-0.969,-0.0564,0.5714,14,94030.45
+UK,37,P0,Full learned-state distributional memory,Reference,-0.0637,-0.0634,-0.207,-0.329,-0.2013,0.4444,36,93633.18
+UK,37,P1,No external memory,H2 (No Memory),-0.1216,-0.1212,-0.483,-0.701,-0.1775,0.3889,36,87835.81
+UK,37,P2,Same-neighbour mean-only memory,H3 (Mean-Only),0.0023,0.0023,0.112,0.187,-0.1585,0.4722,36,100232.35
+UK,37,P3,Raw-feature kNN memory,H1/H2 Control,-0.1019,-0.1016,-0.349,-0.48,-0.15,0.4167,36,89805.83
+UK,37,P4,Momentum-21 ranking,Momentum Baseline,-0.2207,-0.22,-1.315,-1.994,-0.2502,0.5278,36,77925.13
+UK,37,P5,Random ranking,Random Baseline,-0.2229,-0.2221,-1.118,-1.502,-0.237,0.3889,36,77711.27
+UK,37,P6,Equal-weight buy-and-hold context,Equal Weight Context,-0.0597,-0.0595,-0.58,-0.969,-0.0564,0.5714,14,94030.45

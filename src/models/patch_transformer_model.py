@@ -44,6 +44,8 @@ class HierarchicalPatchTransformerCycleModel(nn.Module):
         dropout: float = 0.1,
         memory_mode: str = "legacy_ema",
         memory_update_rate: float = 0.05,
+        prune_redundant_state: bool = False,
+        interaction_mode: str = "concat",
     ) -> None:
         super().__init__()
         self.input_dim = int(input_dim)
@@ -96,8 +98,12 @@ class HierarchicalPatchTransformerCycleModel(nn.Module):
         self.memory_attn = nn.MultiheadAttention(
             embed_dim=d_model, num_heads=max(1, nhead), batch_first=True
         )
+        self.prune_redundant_state = bool(prune_redundant_state)
+        self.interaction_mode = str(interaction_mode)
+
         # project the fused query into the memory embed dimension
-        self.memory_query_proj = nn.Linear((d_model * 3) + input_dim, d_model)
+        query_in_dim = (d_model * 2 + input_dim) if self.prune_redundant_state else ((d_model * 3) + input_dim)
+        self.memory_query_proj = nn.Linear(query_in_dim, d_model)
 
         # write network that maps (mem_read, latent) -> slot-wise update vector
         self.write_net = nn.Sequential(
@@ -109,7 +115,18 @@ class HierarchicalPatchTransformerCycleModel(nn.Module):
         self.memory_update_rate = float(memory_update_rate)
         self.enable_memory_update = memory_mode == "legacy_ema"
 
-        fused_dim = d_model * 3 + input_dim + d_model  # extra memory read
+        if self.interaction_mode == "gated_film":
+            self.gate_net = nn.Sequential(
+                nn.Linear(query_in_dim, d_model),
+                nn.Sigmoid()
+            )
+            self.mod_norm = nn.LayerNorm(d_model)
+            fused_dim = d_model * 2 + input_dim # modulated daily_context + patch_context + latest_features
+        elif self.prune_redundant_state:
+            fused_dim = d_model * 2 + input_dim + d_model # daily + patch + latest_features + mem_read
+        else:
+            fused_dim = d_model * 3 + input_dim + d_model  # legacy extra memory read
+
         self.context = nn.Sequential(
             nn.Linear(fused_dim, latent_dim),
             nn.GELU(),
@@ -178,10 +195,11 @@ class HierarchicalPatchTransformerCycleModel(nn.Module):
         patch_context = self.patch_pool(patch_states)
 
         # memory read: cross-attend from fused query to memory slots
-        # build a fused query per batch and project to d_model for memory attention
-        query_in = torch.cat(
-            [daily_context, patch_context, latest_state, latest_features], dim=1
-        )  # [B, Q]
+        if self.prune_redundant_state:
+            query_in = torch.cat([daily_context, patch_context, latest_features], dim=1)
+        else:
+            query_in = torch.cat([daily_context, patch_context, latest_state, latest_features], dim=1)
+
         query = self.memory_query_proj(query_in).unsqueeze(1)  # [B,1,d_model]
         # memory slots: [S, d_model] -> expand to [B, S, d_model]
         memory_source = (
@@ -194,12 +212,16 @@ class HierarchicalPatchTransformerCycleModel(nn.Module):
         mem_read, _ = self.memory_attn(query, mem, mem)
         mem_read = mem_read.squeeze(1)
 
-        latent = self.context(
-            torch.cat(
-                [daily_context, patch_context, latest_state, latest_features, mem_read],
-                dim=1,
-            )
-        )
+        if self.interaction_mode == "gated_film":
+            g = self.gate_net(query_in)
+            modulated_daily = self.mod_norm((1.0 - g) * daily_context + g * mem_read)
+            fused_in = torch.cat([modulated_daily, patch_context, latest_features], dim=1)
+        elif self.prune_redundant_state:
+            fused_in = torch.cat([daily_context, patch_context, latest_features, mem_read], dim=1)
+        else:
+            fused_in = torch.cat([daily_context, patch_context, latest_state, latest_features, mem_read], dim=1)
+
+        latent = self.context(fused_in)
         future_pred = self.future_head(latent)
         action_logits = self.action_head(torch.cat([latent, future_pred], dim=1))
 
@@ -246,3 +268,64 @@ class HierarchicalPatchTransformerCycleModel(nn.Module):
         """Copy a legacy checkpoint's runtime memory into trainable slots."""
         with torch.no_grad():
             self.memory_slots.copy_(self.memory_state)
+
+class GlobalTemporalTransformer(nn.Module):
+    """
+    Global Temporal Transformer supporting both multi-step sequence input [B, T, D]
+    and single-step screening input [B, D].
+
+    When given a true temporal sequence (T > 1), sinusoidal positional encodings
+    and cross-temporal self-attention are applied across time to capture dynamic regimes.
+    """
+
+    def __init__(
+        self,
+        input_dim: int = 23,
+        embed_dim: int = 64,
+        num_heads: int = 4,
+        latent_dim: int = 128,
+    ) -> None:
+        super().__init__()
+        self.input_dim = input_dim
+        self.embed_dim = embed_dim
+        self.input_proj = nn.Linear(input_dim, embed_dim)
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=embed_dim,
+            nhead=num_heads,
+            dim_feedforward=128,
+            batch_first=True,
+            dropout=0.1,
+        )
+        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=2)
+        self.latent_head = nn.Sequential(
+            nn.Linear(embed_dim, latent_dim),
+            nn.LayerNorm(latent_dim),
+        )
+        self.outcome_head = nn.Linear(latent_dim, 1)
+
+    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        if x.dim() == 2:
+            x = x.unsqueeze(1)  # [B, 1, D]
+        elif x.dim() != 3:
+            raise ValueError(f"Expected input tensor of dim 2 or 3, got shape {tuple(x.shape)}")
+
+        h = self.input_proj(x)  # [B, T, embed_dim]
+
+        # Add sinusoidal positional encoding when T > 1 to preserve temporal ordering
+        T = h.size(1)
+        if T > 1:
+            pos = torch.arange(T, device=h.device, dtype=torch.float32).unsqueeze(1)
+            div_term = torch.exp(
+                torch.arange(0, self.embed_dim, 2, device=h.device, dtype=torch.float32)
+                * (-2.302585092994046 * 4 / self.embed_dim)  # -ln(10000) / embed_dim
+            )
+            pe = torch.zeros(T, self.embed_dim, device=h.device)
+            pe[:, 0::2] = torch.sin(pos * div_term)
+            pe[:, 1::2] = torch.cos(pos * div_term)
+            h = h + pe.unsqueeze(0)
+
+        h_trans = self.transformer(h)  # [B, T, embed_dim]
+        h_pool = h_trans.mean(dim=1)  # Temporal pooling -> [B, embed_dim]
+        latent = self.latent_head(h_pool)  # [B, latent_dim]
+        pred_outcome = self.outcome_head(latent)  # [B, 1]
+        return latent, pred_outcome

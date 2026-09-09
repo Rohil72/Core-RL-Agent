@@ -85,3 +85,40 @@ def test_legacy_memory_rejects_nonfinite_runtime_updates():
     assert torch.isfinite(outputs["future_pred"]).all()
     assert torch.isfinite(model.memory_state).all()
     assert torch.equal(model.memory_state, memory_before)
+
+
+def test_pruned_redundancy_and_gated_film_modes():
+    # Test pruned redundancy mode
+    model_pruned = HierarchicalPatchTransformerCycleModel(
+        input_dim=6,
+        future_target_dim=4,
+        d_model=16,
+        nhead=4,
+        num_layers=1,
+        patch_size=5,
+        latent_dim=8,
+        num_memory_slots=4,
+        prune_redundant_state=True,
+        interaction_mode="concat",
+    )
+    x = torch.randn(3, 6, 21)
+    out_pruned = model_pruned(x)
+    assert out_pruned["action_logits"].shape == (3, 4)
+    assert torch.isfinite(out_pruned["action_logits"]).all()
+
+    # Test gated FiLM interaction mode
+    model_film = HierarchicalPatchTransformerCycleModel(
+        input_dim=6,
+        future_target_dim=4,
+        d_model=16,
+        nhead=4,
+        num_layers=1,
+        patch_size=5,
+        latent_dim=8,
+        num_memory_slots=4,
+        prune_redundant_state=True,
+        interaction_mode="gated_film",
+    )
+    out_film = model_film(x)
+    assert out_film["action_logits"].shape == (3, 4)
+    assert torch.isfinite(out_film["action_logits"]).all()
