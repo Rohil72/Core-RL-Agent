@@ -1,0 +1,18 @@
+\begin{table*}[t]
+\centering
+\small
+\begin{tabular}{lccccc}
+\toprule
+\textbf{Study / Framework Family} & \textbf{\shortstack{Reference Cases\\Enter Decision}} & \textbf{\shortstack{Outcome-Maturity\\Timing Gate}} & \textbf{\shortstack{Decision-Level\\Case Provenance}} & \textbf{\shortstack{Portfolio\\Execution}} & \textbf{\shortstack{Faithfulness /\\Cost Evaluation}} \\
+\midrule
+ProtoPNet (\textit{Chen et al., 2019}) & $\bullet$ & $-$ & $\circ$ & $-$ & $\circ$ \\
+Interpretable Forecasting (\textit{Oreshkin et al., 2020; Lim et al., 2021}) & $-$ & $-$ & $-$ & $-$ & $\circ$ \\
+Long-Context Architecture (\textit{Nie et al., 2023}) & $-$ & $-$ & $-$ & $-$ & $-$ \\
+Retrieval Forecasting (\textit{Han et al., 2025; Tire et al., 2026}) & $\bullet$ & $\circ$ & $-$ & $-$ & $\circ$ \\
+Asset Pricing ML (\textit{Gu et al., 2020, 2021; Chen et al., 2024}) & $-$ & $\circ$ & $\bullet$ & $\bullet$ & $-$ \\
+\textbf{Core-RL (This Study)} & $\bullet$ & $\bullet$ & $\bullet$ & $\bullet$ & $\bullet$ \\
+\bottomrule
+\end{tabular}
+\caption{Architectural and Methodological Comparison of Core-RL against Representative Benchmark Literatures. Symbols denote capability status: $\bullet$ Full capability or evaluated in this study; $\circ$ Partial, task-dependent, or post-hoc; $-$ Absent or outside model scope. \textit{Reference Cases Enter Decision}: historical or prototypical examples participate directly in score computation (ProtoPNet uses learned image prototypes; RAFT/RAF retrieve past series; Core-RL retrieves dated market precedents). \textit{Outcome-Maturity Timing Gate}: external episodes are causally constrained by forward realization horizons ($t_{\text{precedent}} + 63 \le t_{\text{decision}} \le 2020$). \textit{Decision-Level Case Provenance}: one-to-one deterministic lineage linking query states to retrieved precedents, scores, and executed trade records. \textit{Portfolio Execution}: end-to-end evaluation under multi-week holding paths, slot caps, and transaction drag. \textit{Faithfulness / Cost Evaluation}: empirical testing of evidence interventions (top-$k$ occlusion, derangements, negative controls) and economic non-inferiority against a direct temporal model.}
+\label{tab:novelty_positioning}
+\end{table*}

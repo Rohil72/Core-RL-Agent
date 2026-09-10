@@ -1,0 +1,11 @@
+system,system_label,condition,mean_abs_score_shift,rank_spearman_rho,rank_spearman_se,rank_kendall_tau,rank_kendall_se,top1_hit_agreement_pct,top3_set_overlap_pct
+P0,Primary P0 (Global Learned Memory),Baseline Replay,0.0,1.0,0.0,1.0,0.0,100.0,100.0
+P0,Primary P0 (Global Learned Memory),Top-3 Precedent Occlusion,11.0708,0.934,0.018,0.93,0.017,96.2,100.0
+P0,Primary P0 (Global Learned Memory),Same-Date Cross-Candidate Bundle Swap,14.5,0.772,0.043,0.769,0.042,87.3,100.0
+P0,Primary P0 (Global Learned Memory),Matched Random Precedent Replacement,18.25,0.18,0.023,0.176,0.022,23.2,29.7
+P0,Primary P0 (Global Learned Memory),Provenance-Only Negative Control,0.0,1.0,0.0,1.0,0.0,100.0,100.0
+P0*,Exploratory P0* (Domestic Guardrail),Baseline Replay,0.0,1.0,0.0,1.0,0.0,100.0,100.0
+P0*,Exploratory P0* (Domestic Guardrail),Top-3 Precedent Occlusion,9.5787,0.933,0.028,0.93,0.027,96.2,100.0
+P0*,Exploratory P0* (Domestic Guardrail),Same-Date Cross-Candidate Bundle Swap,14.5,0.797,0.031,0.792,0.033,88.2,100.0
+P0*,Exploratory P0* (Domestic Guardrail),Matched Random Precedent Replacement,18.25,0.16,0.023,0.155,0.023,20.5,26.7
+P0*,Exploratory P0* (Domestic Guardrail),Provenance-Only Negative Control,0.0,1.0,0.0,1.0,0.0,100.0,100.0

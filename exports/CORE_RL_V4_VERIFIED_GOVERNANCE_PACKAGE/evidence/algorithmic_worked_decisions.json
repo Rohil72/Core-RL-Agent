@@ -1,0 +1,257 @@
+[
+  {
+    "case_id": "Case 1",
+    "case_type": "Successful Concordant",
+    "selection_rule": "Concordant positive expectation (y_hat > 0, mu_mem > 0) nearest 90th return percentile",
+    "trade_id": "TRD_US_7_P0_013",
+    "market": "US",
+    "ticker": "V",
+    "timestamps": {
+      "signal_date": "2024-10-02",
+      "entry_date": "2024-10-03",
+      "exit_date": "2024-12-31",
+      "holding_days": 61
+    },
+    "score_decomposition": {
+      "pred_utility_y_hat": 0.0846,
+      "precedent_mean_mu_mem": 0.1164,
+      "expected_shortfall_cvar_05": 0.0536,
+      "precedent_dispersion_sigma_mem": 0.1309,
+      "volatility_21d": 0.0155,
+      "decision_score": 10.798,
+      "standardized_conflict": 0.243
+    },
+    "trade_execution": {
+      "entry_price": 272.56,
+      "exit_price": 311.94,
+      "shares": 170,
+      "gross_pnl": 6694.13,
+      "net_realized_pnl": 6594.76,
+      "return_pct": 14.22,
+      "exit_reason": "calendar_end",
+      "win": 1
+    },
+    "top_5_precedents": [
+      {
+        "rank": 1,
+        "market": "US",
+        "ticker": "ADBE",
+        "date": "2014-01-13",
+        "cosine_similarity": 0.995,
+        "normalized_weight": 0.109,
+        "realized_return_63d_pct": 4.76,
+        "realized_drawdown_63d_pct": -2.18
+      },
+      {
+        "rank": 2,
+        "market": "US",
+        "ticker": "ADBE",
+        "date": "2014-01-31",
+        "cosine_similarity": 0.9935,
+        "normalized_weight": 0.103,
+        "realized_return_63d_pct": 4.0,
+        "realized_drawdown_63d_pct": -3.16
+      },
+      {
+        "rank": 3,
+        "market": "US",
+        "ticker": "LMT",
+        "date": "2014-02-20",
+        "cosine_similarity": 0.9921,
+        "normalized_weight": 0.065,
+        "realized_return_63d_pct": -0.63,
+        "realized_drawdown_63d_pct": -5.75
+      },
+      {
+        "rank": 4,
+        "market": "India",
+        "ticker": "HDFCBANK.NS",
+        "date": "2014-03-13",
+        "cosine_similarity": 0.9906,
+        "normalized_weight": 0.059,
+        "realized_return_63d_pct": 15.0,
+        "realized_drawdown_63d_pct": -4.72
+      },
+      {
+        "rank": 5,
+        "market": "US",
+        "ticker": "LMT",
+        "date": "2014-03-28",
+        "cosine_similarity": 0.9892,
+        "normalized_weight": 0.059,
+        "realized_return_63d_pct": 2.18,
+        "realized_drawdown_63d_pct": -4.36
+      }
+    ]
+  },
+  {
+    "case_id": "Case 2",
+    "case_type": "Unsuccessful Downside Truncation",
+    "selection_rule": "Downside realization nearest 10th return percentile, demonstrating ATR chandelier exit",
+    "trade_id": "TRD_China_7_P0_001",
+    "market": "China",
+    "ticker": "600276.SS",
+    "timestamps": {
+      "signal_date": "2024-01-02",
+      "entry_date": "2024-01-03",
+      "exit_date": "2024-01-30",
+      "holding_days": 19
+    },
+    "score_decomposition": {
+      "pred_utility_y_hat": 0.2908,
+      "precedent_mean_mu_mem": 0.2952,
+      "expected_shortfall_cvar_05": 0.1651,
+      "precedent_dispersion_sigma_mem": 0.1535,
+      "volatility_21d": 0.0135,
+      "decision_score": 36.4652,
+      "standardized_conflict": 0.0287
+    },
+    "trade_execution": {
+      "entry_price": 43.66,
+      "exit_price": 38.73,
+      "shares": 725,
+      "gross_pnl": -3572.4,
+      "net_realized_pnl": -3632.13,
+      "return_pct": -11.46,
+      "exit_reason": "atr_chandelier_stop",
+      "win": 0
+    },
+    "top_5_precedents": [
+      {
+        "rank": 1,
+        "market": "Brazil",
+        "ticker": "EQTL3.SA",
+        "date": "2014-01-17",
+        "cosine_similarity": 0.995,
+        "normalized_weight": 0.09,
+        "realized_return_63d_pct": -11.74,
+        "realized_drawdown_63d_pct": -22.03
+      },
+      {
+        "rank": 2,
+        "market": "Brazil",
+        "ticker": "EQTL3.SA",
+        "date": "2014-02-05",
+        "cosine_similarity": 0.9935,
+        "normalized_weight": 0.082,
+        "realized_return_63d_pct": 1.09,
+        "realized_drawdown_63d_pct": -15.42
+      },
+      {
+        "rank": 3,
+        "market": "China",
+        "ticker": "601888.SS",
+        "date": "2014-03-17",
+        "cosine_similarity": 0.9921,
+        "normalized_weight": 0.07,
+        "realized_return_63d_pct": -9.55,
+        "realized_drawdown_63d_pct": -12.44
+      },
+      {
+        "rank": 4,
+        "market": "China",
+        "ticker": "000858.SZ",
+        "date": "2014-04-03",
+        "cosine_similarity": 0.9906,
+        "normalized_weight": 0.068,
+        "realized_return_63d_pct": 6.67,
+        "realized_drawdown_63d_pct": -7.21
+      },
+      {
+        "rank": 5,
+        "market": "Brazil",
+        "ticker": "EQTL3.SA",
+        "date": "2014-04-03",
+        "cosine_similarity": 0.9892,
+        "normalized_weight": 0.067,
+        "realized_return_63d_pct": 23.86,
+        "realized_drawdown_63d_pct": -6.57
+      }
+    ]
+  },
+  {
+    "case_id": "Case 3",
+    "case_type": "Evidence-Conflicted Divergence",
+    "selection_rule": "Maximum standardized divergence between model expectation and historical precedents",
+    "trade_id": "TRD_Brazil_7_P0_015",
+    "market": "Brazil",
+    "ticker": "MGLU3.SA",
+    "timestamps": {
+      "signal_date": "2024-09-26",
+      "entry_date": "2024-09-27",
+      "exit_date": "2024-12-09",
+      "holding_days": 49
+    },
+    "score_decomposition": {
+      "pred_utility_y_hat": 0.5967,
+      "precedent_mean_mu_mem": 0.4604,
+      "expected_shortfall_cvar_05": 0.3043,
+      "precedent_dispersion_sigma_mem": 0.1356,
+      "volatility_21d": 0.0281,
+      "decision_score": 32.208,
+      "standardized_conflict": 1.0049
+    },
+    "trade_execution": {
+      "entry_price": 8.98,
+      "exit_price": 7.89,
+      "shares": 3409,
+      "gross_pnl": -3715.77,
+      "net_realized_pnl": -3773.25,
+      "return_pct": -12.32,
+      "exit_reason": "atr_chandelier_stop",
+      "win": 0
+    },
+    "top_5_precedents": [
+      {
+        "rank": 1,
+        "market": "China",
+        "ticker": "601012.SS",
+        "date": "2014-02-07",
+        "cosine_similarity": 0.995,
+        "normalized_weight": 0.091,
+        "realized_return_63d_pct": -11.48,
+        "realized_drawdown_63d_pct": -22.5
+      },
+      {
+        "rank": 2,
+        "market": "China",
+        "ticker": "601012.SS",
+        "date": "2014-02-26",
+        "cosine_similarity": 0.9935,
+        "normalized_weight": 0.09,
+        "realized_return_63d_pct": 3.46,
+        "realized_drawdown_63d_pct": -8.01
+      },
+      {
+        "rank": 3,
+        "market": "Brazil",
+        "ticker": "VALE3.SA",
+        "date": "2014-02-24",
+        "cosine_similarity": 0.9921,
+        "normalized_weight": 0.09,
+        "realized_return_63d_pct": -10.4,
+        "realized_drawdown_63d_pct": -13.63
+      },
+      {
+        "rank": 4,
+        "market": "China",
+        "ticker": "601012.SS",
+        "date": "2014-04-03",
+        "cosine_similarity": 0.9906,
+        "normalized_weight": 0.088,
+        "realized_return_63d_pct": 17.78,
+        "realized_drawdown_63d_pct": -5.95
+      },
+      {
+        "rank": 5,
+        "market": "Brazil",
+        "ticker": "VALE3.SA",
+        "date": "2014-04-03",
+        "cosine_similarity": 0.9892,
+        "normalized_weight": 0.081,
+        "realized_return_63d_pct": -3.74,
+        "realized_drawdown_63d_pct": -11.86
+      }
+    ]
+  }
+]

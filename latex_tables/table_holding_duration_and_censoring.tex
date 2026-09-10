@@ -1,0 +1,17 @@
+\begin{table}[ht]
+\centering
+\small
+\begin{tabular}{lccccccc}
+\toprule
+\textbf{System} & \textbf{Trades} & \textbf{\shortstack{Stop Loss\\(\%)}} & \textbf{\shortstack{Max Horizon\\63d (\%)}} & \textbf{\shortstack{Calendar End\\Censored (\%)}} & \textbf{\shortstack{Median\\Hold}} & \textbf{\shortstack{Full RMST\\(63d, SE)}} & \textbf{\shortstack{Eligible\\RMST}} \\
+\midrule
+\textbf{P0} & 335 & 55.22\% & 29.55\% & 15.22\% & 38.0d & 42.04d (1.50) & 41.89d \\
+\textbf{P0*} & 330 & 52.73\% & 31.52\% & 15.76\% & 39.0d & 42.82d (1.63) & 42.39d \\
+P1 & 337 & 55.49\% & 29.38\% & 15.13\% & 38.0d & 41.78d (1.43) & 41.72d \\
+P2 & 335 & 55.82\% & 29.25\% & 14.93\% & 38.0d & 41.89d (1.62) & 41.63d \\
+P4 & 342 & 58.77\% & 26.32\% & 14.91\% & 40.5d & 40.60d (1.22) & 40.54d \\
+\bottomrule
+\end{tabular}
+\caption{Position Holding Duration, Active-Policy Termination, and Administrative Censoring across 6 Sovereign Markets $\times$ 3 Seeds (18 cells). \textit{Stop Loss}: trailing $2.5\times\text{ATR}_{14}$ Chandelier volatility liquidation. \textit{Max Horizon}: positions reaching the 63-session ceiling without stop triggering. \textit{Calendar End}: positions active at the 2024 boundary (treated as administrative right-censoring in survival estimation). \textit{Full RMST}: Restricted Mean Survival Time through day 63 with market--seed cluster-bootstrap standard error. \textit{Eligible RMST}: sensitivity restricted to positions with $\ge 63$ potential follow-up sessions before year-end on actual local market exchange calendars ($0.0\%$ calendar censoring).}
+\label{tab:holding_duration_and_censoring}
+\end{table}

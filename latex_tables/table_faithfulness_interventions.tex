@@ -1,0 +1,29 @@
+\begin{table*}[t]
+\centering
+\small
+\begin{tabular}{lcccccccc}
+\toprule
+\textbf{Intervention Condition} & \multicolumn{4}{c}{\textbf{Static Decision-Level Estimand}} & \multicolumn{4}{c}{\textbf{Dynamic Execution Estimand}} \\
+\cmidrule(lr){2-5} \cmidrule(lr){6-9}
+& \textbf{Score Shift} & \textbf{Rank $\rho$} & \textbf{Rank $\tau$} & \textbf{Top-3 Overlap} & \textbf{Ann. Return} & \textbf{Sharpe} & \textbf{MaxDD} & \textbf{Changed Trades} \\
+\midrule
+\multicolumn{9}{l}{\textit{\textbf{Panel A: Primary System $P_0$ (Global Learned Metric Memory, $N=18$ Market-Seeds)}}} \\
+\midrule
+\textbf{Baseline Replay} & \textbf{0.00} & \textbf{1.000} & \textbf{1.000} & \textbf{100.0\%} & \textbf{+1.05\%} & \textbf{0.155} & \textbf{-19.38\%} & \textbf{0.0\% (Base)} \\
+Provenance-Only Negative Control & 0.00 & 1.000 & 1.000 & 100.0\% & +1.05\% & 0.155 & -19.38\% & 0.0\% (Base) \\
+Top-3 Precedent Occlusion & 11.07 & 0.934 & 0.930 & 100.0\% & +0.40\% & 0.117 & -19.93\% & 14.1\% \\
+Same-Date Cross-Candidate Bundle Swap & 14.50 & 0.772 & 0.769 & 100.0\% & -0.90\% & 0.020 & -20.80\% & 87.2\% \\
+Matched Random Precedent Replacement & 18.25 & 0.180 & 0.176 & 29.7\% & +0.20\% & 0.103 & -20.08\% & 56.1\% \\
+\midrule
+\multicolumn{9}{l}{\textit{\textbf{Panel B: Exploratory System $P_0^*$ (Domestic Guardrail, $N=18$ Market-Seeds)}}} \\
+\midrule
+\textbf{Baseline Replay} & \textbf{0.00} & \textbf{1.000} & \textbf{1.000} & \textbf{100.0\%} & \textbf{+3.75\%} & \textbf{0.275} & \textbf{-18.12\%} & \textbf{0.0\% (Base)} \\
+Provenance-Only Negative Control & 0.00 & 1.000 & 1.000 & 100.0\% & +3.75\% & 0.275 & -18.12\% & 0.0\% (Base) \\
+Top-3 Precedent Occlusion & 9.58 & 0.933 & 0.930 & 100.0\% & +3.19\% & 0.243 & -18.67\% & 12.9\% \\
+Same-Date Cross-Candidate Bundle Swap & 14.50 & 0.797 & 0.792 & 100.0\% & +1.94\% & 0.147 & -19.54\% & 85.8\% \\
+Matched Random Precedent Replacement & 18.25 & 0.160 & 0.155 & 26.7\% & +3.04\% & 0.229 & -18.82\% & 53.5\% \\
+\bottomrule
+\end{tabular}
+\caption{Evidentiary Faithfulness and Inference-Time Evidence Interventions across 18 Market-Seeds. Separating the static decision-level estimand (evaluating rank sensitivity on fixed candidate sets across decision sessions) from the dynamic execution estimand (evaluating downstream portfolio capacity, turnover, and returns under realistic frictions: 10 bps fees, ATR-14 stops, 3 slots). Panel A evaluates the primary unconstrained global topology ($P_0$); Panel B evaluates the exploratory domestic-guardrailed architecture ($P_0^*$). Top-3 Precedent Occlusion deterministically masks the three highest-similarity historical precedents and renormalizes the remaining 22 weights. Same-Date Bundle Swap exchanges evidence bundles across candidates on the same session ($R=50$ replications). Matched Random Replacement samples historical mature episodes strictly pre-dating 2021 ($R=50$ replications). The Provenance-Only Negative Control verifies bitwise identical scores ($|\Delta\text{Score}| < 10^{-7}$) under permutation of unused metadata.}
+\label{tab:faithfulness_interventions}
+\end{table*}

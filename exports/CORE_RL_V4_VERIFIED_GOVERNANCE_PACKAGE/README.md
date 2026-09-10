@@ -1,36 +1,124 @@
-# Core-RL V4: Verified Governance and Empirical Evaluation Package
-===================================================================
-Package: CORE_RL_V4_VERIFIED_GOVERNANCE_PACKAGE
-Date: September 9, 2026
-Author: Core-RL Research Team
+# Core RL Agent
 
-## Overview & Scientific Dual Identity
-This package contains the authoritative empirical evidence, pre-trained model weights, synchronized publication tables, and verification tooling for the Core-RL framework.
+Core RL Agent is a research codebase for causal, retrieval-grounded equity
+decisions. It is not a live-trading system and no policy is currently promoted.
+The active path is a patch Transformer market-state encoder, market-local
+historical memory, and a deterministic continuous-rank policy that converts
+three independent retrieval views into trades. The active closing study holds
+the encoder and policy fixed while testing static versus growing, recency-aware,
+and country-balanced raw memory. Offline RL remains only as a rejected Phase 6
+comparison path.
 
-The framework is organized around two complementary identities:
-1. **The Long-Horizon Alpha Backbone (Patch Temporal Transformer):**
-   - Ingests $T = 252$ trading days aggregated into $N_p = 42$ macro patches ($P = 6$ days).
-   - Learns continuous metric geometry on the unit hypersphere $\mathbb{S}^{127}$, achieving rank correlation $\rho = +0.486$.
-   - Delivers primary predictive utility (+3.54% return, 0.271 Sharpe, Sortino 0.356).
-2. **The Regulatory Governance Layer (Retrospective Case-Based Memory):**
-   - Retrospective memory bank ($N = 164,871$ mature regimes $\le 2020$).
-   - Provides point-in-time precedent retrieval and strict audit trails (SR 11-7, MiFID II RTS 6, EU AI Act).
-   - Provides Expected Shortfall tail-risk defense ($\text{CVaR}_{0.05}$, $\tau = 0.08$).
-   - Establishes statistical non-inferiority via 10,000-draw multi-block bootstrap TOST ($\Delta\text{Sharpe} = +0.0108$, $p = 0.0455 < 0.05$ under $\delta = 0.15$).
+The cycle detector remains only for earlier experiments. The final encoder uses
+`patch_transformer`, disables detector targets, and sets detector action loss to
+zero.
 
----
+## Research Status
 
-## Directory Structure
-- `models/`: 3 frozen PyTorch model checkpoints (Seeds 7, 17, 37).
-- `evidence/`: 18 comprehensive empirical evidence and authoritative runtime truth files.
-- `latex_tables/`: 9 publication-ready LaTeX tables formatted with booktabs.
-- `VERIFY_PACKAGE.py`: Counter-adversarial verification script.
-- `SHA256SUMS.txt`: Cryptographic manifest.
+The sealed global/global reliability candidate failed confirmation and remains
+immutable. The corrected closing memory repair did not restore broad transfer.
+The active final study now asks why: stale historical evidence, source-market
+imbalance, neighborhood semantics, or insufficient frozen-state signal. It does
+not reopen or overwrite the failed confirmation, and no policy is promoted.
 
----
+See [Research Status](docs/RESEARCH_STATUS.md) for the evidence boundary,
+rejected hypotheses, promotion standard, and known limitations.
 
-## One-Click Reproduction & Verification
-To verify the entire package against cryptographic checksums, timestamp causality, top-5 neighbor agreement, candidate scores, and table alignment, execute:
-```bash
-python VERIFY_PACKAGE.py
+The chronological experiment ledger is in
+[Research Record](docs/research_record/README.md). It records confirmed
+results, rejected branches, diagnostic-only evidence, and unresolved data or
+scoring defects without overwriting the phase implementation documents.
+
+```text
+daily technical and point-in-time fundamental features
+  -> 252-session patch Transformer
+  -> 128-dimensional latent state
+  -> explicit 128-dimensional raw retrieval view
+  -> static or causally growing global memory
+  -> optional temporal decay and source-market balancing
+  -> continuous three-seed mean-rank policy
+  -> market-level and pooled robustness gates
 ```
+
+## Clean-Start Setup
+
+Python 3.11 is required. CUDA is required only when training encoders; replaying
+the locked final memory-policy evaluation is CPU-capable.
+
+```powershell
+py -3.11 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+```
+
+Compile the transfer-credibility study after restoring the preserved Phase 6
+and `final_memory_repair_v2` artifacts:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\run_final_memory_study.py `
+  --config configs\final_transfer_credibility.yaml `
+  --run-id final_transfer_credibility_v1 `
+  --stage build `
+  --python .venv\Scripts\python.exe
+```
+
+The stage-by-stage execution and confirmation-lock procedure is in
+[Resumable Experiments](docs/RESUMABLE_EXPERIMENTS.md).
+
+## Active Testbed
+
+`configs/final_transfer_credibility.yaml` fixes the active comparison:
+
+- Existing global patch Transformer outputs; no retraining.
+- Explicit raw 128-dimensional retrieval views and exact C0 outcomes.
+- Static, growing, two/four-year decay, and hard four-year memory variants.
+- Country-balanced evidence and exact outcome-maturity admission.
+- Three-seed continuous mean rank with zero required binary votes.
+- ElasticNet, gradient-boosted, and PCA-kNN frozen-state decoders.
+- Dependence-aware bootstrap, country jackknife, DSR, PBO, and mechanism audits.
+- Markets: US, India, China, Brazil, France, and UK.
+- No RL and no reliability filter.
+- Development, selection, and already-observed diagnostic periods are reported
+  separately. None can create a fresh confirmation claim.
+
+`configs/final_research_testbed.yaml` and `scripts/build_final_testbed.py`
+preserve the completed regional/global/offline-RL experiment for reproducibility,
+but they are no longer the active execution path.
+
+The active contract and commands are documented in
+[Transfer Credibility Study](docs/FINAL_TRANSFER_CREDIBILITY_STUDY.md). The rejected reconstruction is
+documented in [Local Rank Ensemble](docs/LOCAL_RANK_ENSEMBLE.md), and the failed
+sealed procedure remains documented in
+[Final Memory Confirmation](docs/FINAL_MEMORY_CONFIRMATION.md).
+
+## Repository Map
+
+- `src/models/patch_transformer_model.py`: active encoder.
+- `src/losses/outcome_geometry.py`: regression and optional geometry losses.
+- `src/memory/`: causal retrieval, evidence aggregation, and confidence.
+- `src/decision/`: counterfactual decision outcomes.
+- `src/policy/`: deterministic policy plus historical offline-RL comparisons.
+- `src/backtest/`: memory-policy backtesting.
+- `src/trainers/train_cycle_model.py`: encoder training and resumable state.
+- `src/orchestration/`: immutable durable experiment runner.
+- `scripts/run_final_memory_study.py`: active memory-only DAG and aggregation.
+- `scripts/run_transfer_credibility_audit.py`: transfer statistics and mechanism audit.
+- `src/eval/tabular_decoders.py`: conventional frozen-state decoder baselines.
+- `scripts/run_local_rank_ensemble.py`: rejected reconstruction infrastructure.
+- `src/eval/policy_baselines.py`: shared deterministic baseline contract.
+- `scripts/run_final_memory_confirmation.py`: sealed external evaluation and baselines.
+- `scripts/build_final_testbed.py`: historical Phase 6 RL testbed compiler.
+
+Generated data, checkpoints, models, reports, virtual environments, and
+Graphify outputs are ignored by Git. A clean clone contains runnable code,
+configuration, tests, and the small sample CSV fixture only.
+
+## Documentation
+
+- [Architecture](ARCHITECTURE.md)
+- [Research Status](docs/RESEARCH_STATUS.md)
+- [Resumable Experiments](docs/RESUMABLE_EXPERIMENTS.md)
+- [Final Memory Study](docs/FINAL_MEMORY_STUDY.md)
+- [Transfer Credibility Study](docs/FINAL_TRANSFER_CREDIBILITY_STUDY.md)
+- [Local Rank Ensemble](docs/LOCAL_RANK_ENSEMBLE.md)
+- [Final Memory Confirmation](docs/FINAL_MEMORY_CONFIRMATION.md)

@@ -1,0 +1,25 @@
+\begin{table*}[p]
+\centering
+\scriptsize
+\begin{tabular}{lcccccccc}
+\toprule
+\textbf{Study / Representative Work} & \textbf{\shortstack{Long Context\\($T \ge 252$)}} & \textbf{\shortstack{External\\Case Bank}} & \textbf{\shortstack{Cases Enter\\Decision}} & \textbf{\shortstack{Outcome-Maturity\\Gating}} & \textbf{\shortstack{Decision-Trade\\Lineage}} & \textbf{\shortstack{Faithfulness\\Interventions}} & \textbf{\shortstack{Portfolio\\Execution}} & \textbf{\shortstack{Cost of\\Inspectability}} \\
+\midrule
+ProtoPNet (\textit{Chen et al., 2019}) & $-$ & $\bullet^{\dagger}$ & $\bullet$ & $-$ & $\circ$ & $\circ^{\ddagger}$ & $-$ & Accuracy gap \\
+N-BEATS (\textit{Oreshkin et al., 2020}) & $\circ$ & $-$ & $-$ & $-$ & $-$ & $\circ$ & $-$ & Accuracy gap \\
+TFT (\textit{Lim et al., 2021}) & $\circ$ & $-$ & $-$ & $-$ & $-$ & $\circ$ & $-$ & Loss ablation \\
+PatchTST (\textit{Nie et al., 2023}) & $\bullet$ & $-$ & $-$ & $-$ & $-$ & $-$ & $-$ & $-$ \\
+MQ-ReTCNN (\textit{Yang et al., 2022}) & $\circ$ & $\bullet$ & $\bullet$ & $\circ$ & $-$ & $-$ & $-$ & Forecast error \\
+RAFT (\textit{Han et al., 2025}) & $\bullet$ & $\bullet$ & $\bullet$ & $\circ$ & $-$ & $\circ$ & $-$ & Forecast win ratio \\
+RAF (\textit{Tire et al., 2026}) & $\bullet$ & $\bullet$ & $\bullet$ & $\circ$ & $-$ & $\circ$ & $-$ & Zero-shot MSE \\
+Asset Pricing ML (\textit{Gu et al., 2020}) & $\circ$ & $-$ & $-$ & $\circ$ & $\bullet$ & $-$ & $\bullet$ & Sharpe / Turnover \\
+Autoencoder AP (\textit{Gu et al., 2021}) & $\circ$ & $-$ & $-$ & $\circ$ & $\bullet$ & $-$ & $\bullet$ & Factor pricing err \\
+Deep Asset Pricing (\textit{Chen et al., 2024}) & $\circ$ & $-$ & $-$ & $\circ$ & $\bullet$ & $-$ & $\bullet$ & Max Sharpe / Alpha \\
+DeepVaR (\textit{Fatouros et al., 2023}) & $\circ$ & $-$ & $-$ & $\circ$ & $\circ$ & $-$ & $\bullet$ & Backtest coverage \\
+Explainable P2P (\textit{Bone-Winkel et al., 2024}) & $-$ & $-$ & $-$ & $\circ$ & $\circ$ & $\circ$ & $\bullet$ & Concordance / Lift \\
+\textbf{Core-RL (This Study)} & $\bullet$ & $\bullet$ & $\bullet$ & $\bullet$ & $\bullet$ & $\bullet$ & $\bullet$ & \textbf{Non-inferiority TOST} \\
+\bottomrule
+\end{tabular}
+\caption{Comprehensive Methodological Comparison across Time-Series, Interpretability, Retrieval, and Financial Machine Learning Precedents. Capability symbols: $\bullet$ Full capability or evaluated in this study; $\circ$ Partial, task-dependent, or post-hoc; $-$ Absent or outside model scope. $^{\dagger}$ProtoPNet uses learned latent prototypes rather than dated external historical episodes. $^{\ddagger}$ProtoPNet evaluates prototype pruning rather than query-specific precedent occlusion under portfolio execution constraints.}
+\label{tab:novelty_full_comparison}
+\end{table*}

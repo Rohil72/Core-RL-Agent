@@ -1,0 +1,17 @@
+\begin{table*}[t]
+\centering
+\small
+\begin{tabular}{llcccccc}
+\toprule
+\textbf{Rung} & \textbf{Retrieval Representation} & \textbf{Dim ($D$)} & \textbf{Metric Space / Geometry} & \textbf{Ann. Return} & \textbf{Sharpe Ratio} & \textbf{Max Drawdown} & \textbf{Total Trades} \\
+\midrule
+Rung 1 & Single-Session Raw kNN ($P_3$) & 23 & Raw Euclidean (23-d) & +2.16\% ($\pm$5.03) & 0.192 ($\pm$0.261) & -19.65\% & 342 \\
+Rung 2 & Annual Summary kNN & 46 & Moments Euclidean (46-d) & +2.55\% ($\pm$4.57) & 0.164 ($\pm$0.238) & -20.92\% & 342 \\
+Rung 3 & Flattened Sequence kNN & 5,796 & High-Dim Euclidean (5,796-d) & +0.70\% ($\pm$2.17) & 0.045 ($\pm$0.109) & -21.50\% & 342 \\
+Rung 4 & Unsupervised PCA-128 kNN & 128 & Unsupervised Linear S^127 & +1.67\% ($\pm$3.72) & 0.156 ($\pm$0.191) & -19.80\% & 324 \\
+\textbf{Rung 5} & \textbf{Learned Outcome Geometry ($P_0$)} & \textbf{128} & \textbf{Supervised Continuous S^127} & \textbf{+1.05\% ($\pm$4.68)} & \textbf{0.155 ($\pm$0.237)} & \textbf{-19.38\%} & \textbf{335} \\
+\bottomrule
+\end{tabular}
+\caption{Temporally Matched Sequence Retrieval Ladder across 90 Evaluation Cells (6 Sovereign Markets $\times$ 3 Model Seeds $\times$ 5 Representation Rungs). All rungs are evaluated under strictly matched causal execution contracts: features observed strictly up to session $t$ Close, fills at session $t+1$ Open with 10 bps fees, 3-slot maximum portfolio capacity, and an adaptive $2.5\times\text{ATR}_{14}$ chandelier exit ceiling. Rung 1 utilizes single-session raw 23-d features ($P_3$); Rung 2 constructs rolling moment summaries (46-d); Rung 3 flattens the uncompressed annual trajectory ($5,796$-d Euclidean space, subject to distance concentration); Rung 4 applies an unsupervised PCA projection to $128$-d on $\mathbb{S}^{127}$; Rung 5 implements Core-RL's supervised continuous outcome geometry on $\mathbb{S}^{127}$ ($P_0$). All encoders and projections are fitted strictly on historical observations prior to 2021.}
+\label{tab:temporally_matched_retrieval_ladder}
+\end{table*}

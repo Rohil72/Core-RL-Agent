@@ -1,0 +1,112 @@
+{
+  "P0": {
+    "total_trades": 335,
+    "atr_stops": 185,
+    "atr_stops_pct": 55.22,
+    "max_horizon_63d": 99,
+    "max_horizon_pct": 29.55,
+    "calendar_censored": 51,
+    "calendar_censored_pct": 15.22,
+    "mean_holding_days": 39.38,
+    "median_holding_days": 38.0,
+    "q25_holding_days": 23.0,
+    "q75_holding_days": 63.0,
+    "rmst_day_63": 42.04,
+    "eligible_cohort_trades": 247,
+    "eligible_cohort_pct": 73.73,
+    "eligible_rmst_day_63": 41.89,
+    "rmst_cluster_se": 1.5,
+    "rmst_95_ci": [
+      39.21,
+      45.22
+    ]
+  },
+  "P0*": {
+    "total_trades": 330,
+    "atr_stops": 174,
+    "atr_stops_pct": 52.73,
+    "max_horizon_63d": 104,
+    "max_horizon_pct": 31.52,
+    "calendar_censored": 52,
+    "calendar_censored_pct": 15.76,
+    "mean_holding_days": 40.02,
+    "median_holding_days": 39.0,
+    "q25_holding_days": 24.0,
+    "q75_holding_days": 63.0,
+    "rmst_day_63": 42.82,
+    "eligible_cohort_trades": 246,
+    "eligible_cohort_pct": 74.55,
+    "eligible_rmst_day_63": 42.39,
+    "rmst_cluster_se": 1.63,
+    "rmst_95_ci": [
+      39.68,
+      46.23
+    ]
+  },
+  "P1": {
+    "total_trades": 337,
+    "atr_stops": 187,
+    "atr_stops_pct": 55.49,
+    "max_horizon_63d": 99,
+    "max_horizon_pct": 29.38,
+    "calendar_censored": 51,
+    "calendar_censored_pct": 15.13,
+    "mean_holding_days": 39.2,
+    "median_holding_days": 38.0,
+    "q25_holding_days": 23.0,
+    "q75_holding_days": 63.0,
+    "rmst_day_63": 41.78,
+    "eligible_cohort_trades": 250,
+    "eligible_cohort_pct": 74.18,
+    "eligible_rmst_day_63": 41.72,
+    "rmst_cluster_se": 1.43,
+    "rmst_95_ci": [
+      39.1,
+      44.79
+    ]
+  },
+  "P2": {
+    "total_trades": 335,
+    "atr_stops": 187,
+    "atr_stops_pct": 55.82,
+    "max_horizon_63d": 98,
+    "max_horizon_pct": 29.25,
+    "calendar_censored": 50,
+    "calendar_censored_pct": 14.93,
+    "mean_holding_days": 39.39,
+    "median_holding_days": 38.0,
+    "q25_holding_days": 22.5,
+    "q75_holding_days": 63.0,
+    "rmst_day_63": 41.89,
+    "eligible_cohort_trades": 249,
+    "eligible_cohort_pct": 74.33,
+    "eligible_rmst_day_63": 41.63,
+    "rmst_cluster_se": 1.62,
+    "rmst_95_ci": [
+      38.77,
+      45.29
+    ]
+  },
+  "P4": {
+    "total_trades": 342,
+    "atr_stops": 201,
+    "atr_stops_pct": 58.77,
+    "max_horizon_63d": 90,
+    "max_horizon_pct": 26.32,
+    "calendar_censored": 51,
+    "calendar_censored_pct": 14.91,
+    "mean_holding_days": 38.11,
+    "median_holding_days": 40.5,
+    "q25_holding_days": 19.0,
+    "q75_holding_days": 63.0,
+    "rmst_day_63": 40.6,
+    "eligible_cohort_trades": 261,
+    "eligible_cohort_pct": 76.32,
+    "eligible_rmst_day_63": 40.54,
+    "rmst_cluster_se": 1.22,
+    "rmst_95_ci": [
+      38.5,
+      43.14
+    ]
+  }
+}

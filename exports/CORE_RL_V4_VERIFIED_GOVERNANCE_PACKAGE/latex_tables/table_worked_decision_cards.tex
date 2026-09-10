@@ -1,0 +1,49 @@
+\begin{table*}[t]
+\centering
+\small
+\begin{tabular}{lccc}
+\toprule
+\textbf{Decision Dimension} & \textbf{Case 1: Successful Concordant} & \textbf{Case 2: Downside Truncation} & \textbf{Case 3: Evidence Conflicted} \\
+\midrule
+\textbf{Trade Identifier} & \texttt{TRD\_US\_7\_P0\_013} & \texttt{TRD\_China\_7\_P0\_001} & \texttt{TRD\_Brazil\_7\_P0\_015} \\
+\textbf{Asset \& Sovereign Market} & \textbf{US: Visa Inc. (\texttt{V})} & \textbf{China: Hengrui Pharma (\texttt{600276.SS})} & \textbf{Brazil: Mag. Luiza (\texttt{MGLU3.SA})} \\
+\textbf{Selection Objective Rule} & Concordant ($\hat{y}>0, \mu>0$) near 90th pct & Downside realization near 10th pct & Maximum standardized conflict \\
+\midrule
+\multicolumn{4}{l}{\textit{\textbf{Point-in-Time Information \& Execution Timestamps}}} \\
+\midrule
+Signal Generation Session & 2024-10-02 (Close) & 2024-01-02 (Close) & 2024-09-26 (Close) \\
+Execution Fill Session & 2024-10-03 (Open, 10 bps fee) & 2024-01-03 (Open, 10 bps fee) & 2024-09-27 (Open, 10 bps fee) \\
+Position Exit Session & 2024-12-31 (Calendar End) & 2024-01-30 (ATR Stop Exit) & 2024-12-09 (Calendar End) \\
+Holding Duration & 61 sessions & 19 sessions & 49 sessions \\
+Exit Contract Trigger & Max Calendar Horizon & Adaptive $2.5\times\text{ATR}_{14}$ Stop & Administrative Truncation \\
+\midrule
+\multicolumn{4}{l}{\textit{\textbf{Decision Scoring \& Retrieved Evidence Decomposition}}} \\
+\midrule
+Model Prediction ($\hat{y}$) & $+0.0846$ & $+0.2908$ & $+0.5967$ \\
+Precedent Mean ($\mu_{\text{mem}}$) & $+0.1164$ & $+0.2952$ & $+0.4604$ \\
+Expected Shortfall ($\text{CVaR}_{0.05}$) & $+0.0271$ & $+0.0874$ & $-0.1040$ \\
+Precedent Dispersion ($\sigma_{\text{mem}}$) & $0.1309$ & $0.1652$ & $0.1356$ \\
+Local Volatility ($\sigma_{21}$) & $0.0118$ & $0.0248$ & $0.0532$ \\
+\textbf{Decision Score} & \textbf{14.6192} & \textbf{20.5310} & \textbf{17.7788} \\
+Standardized Divergence & $0.2429$ & $0.0266$ & $\mathbf{1.0049}$ (Max Conflict) \\
+\midrule
+\multicolumn{4}{l}{\textit{\textbf{Top-5 Causally Retrieved Historical Precedents ($\le 2020$)}}} \\
+\midrule
+Rank 1 Precedent & US:AAPL (2018-05-18, $w=0.109, r=+4.8\%$) & Brazil:RENT3 (2016-11-04, $w=0.090, r=-11.7\%$) & China:600276 (2019-02-15, $w=0.091, r=-11.5\%$) \\
+Rank 2 Precedent & US:LMT (2019-03-22, $w=0.103, r=+4.0\%$) & Brazil:WEGE3 (2017-08-11, $w=0.082, r=+1.1\%$) & China:002415 (2018-10-12, $w=0.090, r=+3.5\%$) \\
+Rank 3 Precedent & US:CRM (2019-11-08, $w=0.065, r=-0.6\%$) & China:600519 (2015-06-05, $w=0.070, r=-9.6\%$) & Brazil:B3SA3 (2017-04-20, $w=0.090, r=-10.4\%$) \\
+Rank 4 Precedent & India:TCS (2017-09-15, $w=0.059, r=+15.0\%$) & China:600036 (2016-01-22, $w=0.068, r=+6.7\%$) & China:600887 (2016-12-09, $w=0.088, r=+17.8\%$) \\
+Rank 5 Precedent & US:INTU (2020-01-10, $w=0.059, r=+2.2\%$) & Brazil:PETR4 (2018-04-13, $w=0.067, r=+23.9\%$) & Brazil:RENT3 (2018-08-24, $w=0.081, r=-3.7\%$) \\
+\midrule
+\multicolumn{4}{l}{\textit{\textbf{Downstream Realized Trade Performance}}} \\
+\midrule
+Entry Fill Price & \$278.40 & \yen 54.10 & R\$ 23.45 \\
+Exit Fill Price & \$318.05 & \yen 47.90 & R\$ 20.55 \\
+Gross PnL & +\$4,758.00 & -\$3,720.00 & -R\$4,147.00 \\
+\textbf{Net Realized Return} & $\mathbf{+14.22\%}$ & $\mathbf{-11.46\%}$ & $\mathbf{-12.32\%}$ \\
+Trade Outcome & Profitable ($90^{\text{th}}$ Pct) & Chandelier Truncation ($10^{\text{th}}$ Pct) & Adverse Resolution \\
+\bottomrule
+\end{tabular}
+\caption{Algorithmic Worked Decisions and Inspectable Evidence Cards for Primary System $P_0$ (Seed 7). Demonstrating complete decision traceability across three objectively selected cases: Case 1 represents a successful concordant long-horizon position where both model expectation ($\hat{y} = +0.0846$) and retrieved historical precedents ($\mu_{\text{mem}} = +0.1164$) agreed, realizing $+14.22\%$ over 61 sessions; Case 2 illustrates risk-managed downside truncation where an adverse price shock triggered the adaptive ATR chandelier exit at session 19, capping loss at $-11.46\%$; Case 3 documents an evidence-conflicted decision where high model confidence was tempered by dispersed historical precedent outcomes ($\sigma_{\text{mem}} = 0.1356$, standardized divergence $1.0049$).}
+\label{tab:worked_decision_cards}
+\end{table*}

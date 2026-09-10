@@ -1,0 +1,48 @@
+\begin{table*}[t]
+\centering
+\small
+\caption{\textbf{Proposition-Level Scientific Verdicts and Empirical Accounting.} Systematic evaluation of the six core scientific propositions investigated in the \emph{Digital Finance} study. Verdicts are classified into established, unsupported/rejected, exploratory, and prospective categories based on strict computational and empirical invariants. All evaluations are conducted across 6 sovereign equity markets under matched execution frictions (10 bps transaction fees, next-day open execution, 3 portfolio slots, and ATR chandelier stops).}
+\label{tab:proposition_verdicts}
+\vspace{0.2cm}
+\begin{tabularx}{\textwidth}{p{3.2cm} p{2.8cm} X p{2.2cm} c}
+\toprule
+\textbf{Proposition} & \textbf{Targeted Claim} & \textbf{Empirical Counterfactual \& Test} & \textbf{Key Empirical Metric} & \textbf{Scientific Verdict} \\
+\midrule
+\textbf{P1: Operational Duration} & 
+Positions reflect authentic long-horizon holding ($>$40 sessions), not high-frequency turnover. & 
+Event-level Kaplan--Meier survival analysis with Greenwood 95\% confidence bands and local exchange calendar advancement through session 63. & 
+$P_0$ RMST = 42.04d (SE 1.50); Median hold = 38.0d; 0.0\% calendar censoring in complete-follow-up cohort ($T \ge 63$d). & 
+\textbf{Established} \\
+\addlinespace
+\textbf{P2: Evidentiary Faithfulness} & 
+Retrieved precedents causally determine candidate ranking and portfolio allocations. & 
+Five-condition intervention suite: Top-3 occlusion, same-date candidate bundle swap, matched random replacement, and provenance negative control ($R=50$ replications). & 
+Top-3 occlusion shifts scores by 11.07 and alters 14.1\% of trades; bundle swap collapses Sharpe to 0.020; negative control yields $\Delta = 0.000000$. & 
+\textbf{Established} \\
+\addlinespace
+\textbf{P3: Bounded Economic Cost} & 
+Inspectable continuous metric geometry incurs bounded performance penalty vs.\ ungrounded representations. & 
+Temporally matched 5-rung retrieval ladder comparing $P_0$ on $\mathbb{S}^{127}$ against unsupervised PCA-128, raw features ($P_3$), and uncompressed Euclidean sequences (90 cells). & 
+$P_0$ Sharpe (0.155) matches PCA-128 (0.142); uncompressed 5,796-d Euclidean matching suffers distance concentration (Sharpe 0.049). & 
+\textbf{Established} \\
+\addlinespace
+\textbf{P4: Memory Alpha Premium} & 
+Retrieval-grounded memory systematically generates superior risk-adjusted alpha over direct models. & 
+Paired block bootstrap return difference ($P_0 - P_1$) and Two-One-Sided-Tests (TOST) equivalence margin ($\pm 5.0\%$ ann.) across 18 market--seed cells. & 
+Paired return diff = $-1.48\%$ ($p = 0.0004$); rejects equivalence within 5\% margin ($p = 0.0125$). Memory does not add standalone alpha. & 
+\textbf{Unsupported / Rejected} \\
+\addlinespace
+\textbf{P5: Domestic Guardrail Optimization} & 
+Restricting retrieval to domestic precedents with dynamic CVaR thresholding ($P_0^*$) elevates Sharpe. & 
+Matched portfolio replay of $P_0^*$ vs.\ $P_0$ across identical market--seed cells, evaluating tail-risk mitigation under localized regimes. & 
+$P_0^*$ Sharpe = 0.275, Ann.\ return = $+3.75\%$, Max drawdown = $-9.81\%$. Altered by 12.9\% under Top-3 occlusion. & 
+\textbf{Exploratory} \\
+\addlinespace
+\textbf{P6: Prospective Regime Transfer} & 
+Architecture maintains decision traceability and bounded downside out-of-sample in future market regimes. & 
+Prospective evaluation on 2025--2026 data using frozen model checkpoints (Seeds 7, 17, 37) under pre-registered cryptographic protocol. & 
+Formal Git commit freeze (\texttt{v4.0.0}) and SHA-256 manifest locked in \texttt{PROSPECTIVE\_EVALUATION\_REGISTRATION.md}. & 
+\textbf{Prospective / Pre-Registered} \\
+\bottomrule
+\end{tabularx}
+\end{table*}
