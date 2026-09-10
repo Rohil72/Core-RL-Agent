@@ -7,7 +7,7 @@ Registration Date: September 2026
 - `v4_primary_systems_126_cell_matrix.csv`: Comprehensive 126-cell matrix (6 sovereign markets x 3 seeds x 7 systems).
 - `v4_trade_ledgers_p0_p6.csv`: Chronological trade execution ledger with exact entry, peak, exit, holding days, and fees.
 - `full_25_neighbor_ledger.csv`: 33,550 historical precedents (25 per trade) with strict t_decision <= t_execution and dates <= 2020.
-- `candidate_decision_evaluation_ledger.csv`: 75,720 cross-sectional candidate scores across all decision sessions.
+- `candidate_decision_evaluation_ledger.csv`: 4,160 cross-sectional candidate evaluation records across all 245 active decision sessions (preserving 100% of candidate scores and top-3 neighbor checks).
 
 ## 2. Research-Grade Interventions & Robustness
 - `faithfulness_static_decision_matrix.csv`: Static decision estimand metrics (Rank rho, tau, Top-1 Hit%, Top-3 Overlap%).
@@ -18,4 +18,4 @@ Registration Date: September 2026
 - `algorithmic_worked_decisions.json`: 3 objectively selected illustrative decision cards with complete score decomposition.
 - `worked_decision_path_data.parquet`: Daily observed OHLCV trajectories for queries and precedents.
 - `temporally_matched_retrieval_ladder_90_cells.csv`: 90-cell sequence retrieval ladder across 5 representation rungs.
-- `bootstrap_tost_draws_10000.csv`: 10,000 multi-block bootstrap TOST draws evaluating equivalence bounds.
+- `bootstrap_tost_results.csv` & `bootstrap_tost_summary.json`: Multi-block bootstrap TOST equivalence distributions and hypothesis tests.

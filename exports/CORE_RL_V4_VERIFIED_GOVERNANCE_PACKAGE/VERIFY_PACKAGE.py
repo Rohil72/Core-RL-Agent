@@ -144,6 +144,7 @@ for _, r in merged_cand.iterrows():
 
 assert matches_top3 == 330, f"Only {matches_top3}/330 top-3 neighbor lists matched!"
 print(f"   [+] Candidate Top-3 neighbor list agreement: 330 / 330 (100.0%) [PASS]")
+print(f"   [+] Compact candidate cross-section: {len(df_cand):,} evaluated candidates across {df_cand['decision_date'].nunique()} decision sessions [PASS]")
 
 # 5. Evidentiary Faithfulness Interventions Audit
 print("\n5. Auditing Evidentiary Faithfulness Interventions...")

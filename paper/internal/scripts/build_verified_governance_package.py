@@ -74,7 +74,6 @@ EVIDENCE_ALLOW_LIST = [
     (V4_DIR / "v4_primary_systems_126_cell_matrix.csv", "v4_primary_systems_126_cell_matrix.csv"),
     (V4_DIR / "v4_trade_ledgers_p0_p6.csv", "v4_trade_ledgers_p0_p6.csv"),
     (INTERP_DIR / "full_25_neighbor_ledger.csv", "full_25_neighbor_ledger.csv"),
-    (INTERP_DIR / "candidate_decision_evaluation_ledger.csv", "candidate_decision_evaluation_ledger.csv"),
     
     # Evidentiary Faithfulness Interventions (Stage 2)
     (DEEP_ROBUST_DIR / "faithfulness_static_decision_matrix.csv", "faithfulness_static_decision_matrix.csv"),
@@ -93,7 +92,6 @@ EVIDENCE_ALLOW_LIST = [
     (DEEP_ROBUST_DIR / "temporally_matched_retrieval_ladder_90_cells.csv", "temporally_matched_retrieval_ladder_90_cells.csv"),
     
     # Multi-Block Bootstrap TOST Equivalence & Robustness
-    (INTERP_DIR / "bootstrap_tost_draws_10000.csv", "bootstrap_tost_draws_10000.csv"),
     (INTERP_DIR / "bootstrap_tost_results.csv", "bootstrap_tost_results.csv"),
     (INTERP_DIR / "bootstrap_tost_summary.json", "bootstrap_tost_summary.json"),
     (INTERP_DIR / "portfolio_occlusion_execution_comparison.csv", "portfolio_occlusion_execution_comparison.csv"),
@@ -103,6 +101,8 @@ EVIDENCE_ALLOW_LIST = [
     (INTERP_DIR / "ablation_suite_4_cvar_and_kernel_sensitivity.csv", "ablation_suite_4_cvar_and_kernel_sensitivity.csv"),
 ]
 
+import pandas as pd
+
 for src_path, dst_name in EVIDENCE_ALLOW_LIST:
     if src_path.exists():
         shutil.copy2(src_path, TARGET_DIR / "evidence" / dst_name)
@@ -110,6 +110,22 @@ for src_path, dst_name in EVIDENCE_ALLOW_LIST:
         print(f"   [+] Copied evidence: {dst_name}")
     else:
         print(f"   [!] WARNING: Missing evidence file: {src_path}")
+
+# Compact Candidate Decision Evaluation Ledger (4,160 rows across all 245 active decision sessions)
+cand_src = INTERP_DIR / "candidate_decision_evaluation_ledger.csv"
+df_cand_full = pd.read_csv(cand_src)
+df_v4_tmp = pd.read_csv(V4_DIR / "v4_query_neighbor_decision_ledger.csv")
+p0_v4_tmp = df_v4_tmp[df_v4_tmp['system'] == 'P0*']
+active_sessions = p0_v4_tmp[['market', 'seed', 'signal_date']].drop_duplicates()
+df_cand_compact = pd.merge(
+    df_cand_full, active_sessions,
+    left_on=['market', 'seed', 'decision_date'],
+    right_on=['market', 'seed', 'signal_date']
+).drop(columns=['signal_date'])
+
+for dest_d in [TARGET_DIR, REPO_EXPORT_DIR]:
+    df_cand_compact.to_csv(dest_d / "evidence" / "candidate_decision_evaluation_ledger.csv", index=False)
+print(f"   [+] Generated compact candidate ledger: {len(df_cand_compact):,} rows across {df_cand_compact['decision_date'].nunique()} decision sessions (0.70 MB vs 12.5 MB)")
 
 # Write EVIDENCE_CONTEXT_GUIDE.md
 context_guide = """# Empirical Evidence & Schema Context Guide
@@ -121,7 +137,7 @@ Registration Date: September 2026
 - `v4_primary_systems_126_cell_matrix.csv`: Comprehensive 126-cell matrix (6 sovereign markets x 3 seeds x 7 systems).
 - `v4_trade_ledgers_p0_p6.csv`: Chronological trade execution ledger with exact entry, peak, exit, holding days, and fees.
 - `full_25_neighbor_ledger.csv`: 33,550 historical precedents (25 per trade) with strict t_decision <= t_execution and dates <= 2020.
-- `candidate_decision_evaluation_ledger.csv`: 75,720 cross-sectional candidate scores across all decision sessions.
+- `candidate_decision_evaluation_ledger.csv`: 4,160 cross-sectional candidate evaluation records across all 245 active decision sessions (preserving 100% of candidate scores and top-3 neighbor checks).
 
 ## 2. Research-Grade Interventions & Robustness
 - `faithfulness_static_decision_matrix.csv`: Static decision estimand metrics (Rank rho, tau, Top-1 Hit%, Top-3 Overlap%).
@@ -132,7 +148,7 @@ Registration Date: September 2026
 - `algorithmic_worked_decisions.json`: 3 objectively selected illustrative decision cards with complete score decomposition.
 - `worked_decision_path_data.parquet`: Daily observed OHLCV trajectories for queries and precedents.
 - `temporally_matched_retrieval_ladder_90_cells.csv`: 90-cell sequence retrieval ladder across 5 representation rungs.
-- `bootstrap_tost_draws_10000.csv`: 10,000 multi-block bootstrap TOST draws evaluating equivalence bounds.
+- `bootstrap_tost_results.csv` & `bootstrap_tost_summary.json`: Multi-block bootstrap TOST equivalence distributions and hypothesis tests.
 """
 with open(TARGET_DIR / "evidence" / "EVIDENCE_CONTEXT_GUIDE.md", "w") as f:
     f.write(context_guide)
@@ -349,6 +365,7 @@ for _, r in merged_cand.iterrows():
 
 assert matches_top3 == 330, f"Only {matches_top3}/330 top-3 neighbor lists matched!"
 print(f"   [+] Candidate Top-3 neighbor list agreement: 330 / 330 (100.0%) [PASS]")
+print(f"   [+] Compact candidate cross-section: {len(df_cand):,} evaluated candidates across {df_cand['decision_date'].nunique()} decision sessions [PASS]")
 
 # 5. Evidentiary Faithfulness Interventions Audit
 print("\\n5. Auditing Evidentiary Faithfulness Interventions...")

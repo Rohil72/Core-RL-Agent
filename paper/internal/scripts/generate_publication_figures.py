@@ -213,7 +213,7 @@ def generate_figure_2_decision_cards():
     pdf_out = FIG_DIR / "figure_2_decision_evidence_cards.pdf"
     png_out = FIG_DIR / "figure_2_decision_evidence_cards.png"
     plt.savefig(pdf_out, format='pdf', dpi=300, bbox_inches='tight')
-    plt.savefig(png_out, format='png', dpi=300, bbox_inches='tight')
+    plt.savefig(png_out, format='png', dpi=90, bbox_inches='tight')
     plt.close()
     print(f"   [+] Saved Figure 2 -> {pdf_out.name}, {png_out.name}")
 
@@ -356,7 +356,7 @@ def generate_figure_3_faithfulness_chain():
     pdf_out = FIG_DIR / "figure_3_faithfulness_intervention_chain.pdf"
     png_out = FIG_DIR / "figure_3_faithfulness_intervention_chain.png"
     plt.savefig(pdf_out, format='pdf', dpi=300, bbox_inches='tight')
-    plt.savefig(png_out, format='png', dpi=300, bbox_inches='tight')
+    plt.savefig(png_out, format='png', dpi=100, bbox_inches='tight')
     plt.close()
     print(f"   [+] Saved Figure 3 -> {pdf_out.name}, {png_out.name}")
 
@@ -461,7 +461,7 @@ def generate_figure_4_kaplan_meier_survival():
     pdf_out = FIG_DIR / "figure_4_kaplan_meier_survival.pdf"
     png_out = FIG_DIR / "figure_4_kaplan_meier_survival.png"
     plt.savefig(pdf_out, format='pdf', dpi=300, bbox_inches='tight')
-    plt.savefig(png_out, format='png', dpi=300, bbox_inches='tight')
+    plt.savefig(png_out, format='png', dpi=100, bbox_inches='tight')
     plt.close()
     print(f"   [+] Saved Figure 4 -> {pdf_out.name}, {png_out.name}")
 
