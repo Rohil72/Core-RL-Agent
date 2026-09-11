@@ -1,0 +1,21 @@
+{
+  "system": "P0 (Global Learned Memory)",
+  "total_trades": 335,
+  "atr_stops_count": 185,
+  "atr_stops_pct": 55.223880597014926,
+  "max_horizon_63d_count": 99,
+  "max_horizon_pct": 29.55223880597015,
+  "calendar_censored_count": 51,
+  "calendar_censored_pct": 15.223880597014924,
+  "median_holding_days": 38.0,
+  "mean_holding_days": 39.3820895522388,
+  "rmst_discrete_sessions": 42.04,
+  "rmst_continuous_sessions": 43.04,
+  "rmst_cluster_se": 1.5,
+  "rmst_95_ci": [
+    40.21,
+    46.22
+  ],
+  "shift_delta": 1.0,
+  "continuous_origin_proof": "Continuous integral int_0^63 S(t) dt includes interval [0, 1] where S(0)=1.0, shifting discrete sum 42.04 by +1.00 to 43.04 sessions."
+}

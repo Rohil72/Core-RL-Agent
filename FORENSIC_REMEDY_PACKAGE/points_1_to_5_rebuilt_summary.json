@@ -1,0 +1,118 @@
+{
+  "point_1_influence_metrics": {
+    "primary_p0": {
+      "system": "Primary P0 (Global Learned Memory)",
+      "active_decision_sessions": 243,
+      "total_candidate_evaluations": 4126,
+      "top1_candidate_change_count": 40,
+      "top1_candidate_change_rate": 0.1646090534979424,
+      "top3_candidate_set_change_count": 83,
+      "top3_candidate_set_change_rate": 0.34156378600823045,
+      "mean_rank_correlation_spearman": 0.9648177284217117,
+      "std_rank_correlation_spearman": 0.032155686726707475,
+      "mean_rank_correlation_kendall": 0.8872645323238307,
+      "sign_override_count": 216,
+      "sign_override_rate": 0.0523509452253999,
+      "median_memory_to_direct_ratio": 0.741287284144427,
+      "mean_memory_to_direct_ratio": 2.0316596418342505
+    },
+    "exploratory_p0_star": {
+      "system": "Exploratory P0* (Domestic Guardrail)",
+      "active_sessions": 245,
+      "top1_change_rate": 0.13877551020408163,
+      "top3_change_rate": 0.35918367346938773
+    },
+    "audit_finding": "Confirmed: 13.9% Top-1 and 35.9% Top-3 changes apply to exploratory P0*; Primary P0 has 16.46% Top-1 and 34.16% Top-3 changes."
+  },
+  "point_2_evidence_profile": {
+    "P0": {
+      "effective_neighbour_count_Neff": 17.80545215034603,
+      "ranked_top5_weight_share": 0.4247582089552239,
+      "largest_top5_weight_share": 0.4247731343283582,
+      "rank_weight_inconsistency": false,
+      "unique_tickers": 21.52238805970149,
+      "source_markets": 3.032835820895522,
+      "same_market_share": 0.1959402985074627,
+      "median_precedent_age_years": 8.257357973990418,
+      "mean_precedent_age_years": 7.801325528415417
+    },
+    "P0*": {
+      "effective_neighbour_count_Neff": 21.679240522113872,
+      "ranked_top5_weight_share": 0.23901484848484847,
+      "largest_top5_weight_share": 0.3195421212121212,
+      "rank_weight_inconsistency": true,
+      "unique_tickers": 16.084848484848486,
+      "source_markets": 1.0,
+      "same_market_share": 1.0,
+      "median_precedent_age_years": 8.243668720054757,
+      "mean_precedent_age_years": 7.748351357517682
+    },
+    "audit_finding": "Primary P0 concentration/diversity is reproducible (ranked = largest = 42.48%). P0* displays documented rank/weight inconsistency (ranked 23.90% vs largest 31.95%)."
+  },
+  "point_3_p3_entity_leakage": {
+    "original_p3_leakage": {
+      "total_rows": 8550,
+      "same_ticker_rows": 1710,
+      "same_ticker_pct": 20.0,
+      "leaked_ranks_per_trade": "Ranks 1, 2, 3, 4, 5 in exactly 342/342 trades (5 leaked rows/trade)"
+    },
+    "clean_p3_rerun": {
+      "system": "P3 (Clean Cross-Ticker Re-run)",
+      "total_trades": 342,
+      "total_precedents": 6840,
+      "precedents_per_trade": 20,
+      "same_ticker_entity_leakage_pct": 0.0,
+      "mean_effective_neighbour_count": 17.65921576526488,
+      "mean_top5_weight_share": 0.36837499999999995,
+      "mean_retrieved_outcome": 0.05833074999999999
+    },
+    "audit_finding": "H1 raw-feature comparator P3 was contaminated with 20% same-ticker leakage. Purged to 0.0% in clean_p3_neighbor_ledger.csv."
+  },
+  "point_4_retrieval_quality": {
+    "cross_sectional_rank_ic_candidate_panel": {
+      "active_sessions_evaluated": 243,
+      "mean_score_rank_ic": -0.059230441147652496,
+      "se_score_rank_ic": 0.017555723034841642,
+      "mean_memory_mu_rank_ic": -0.05869095154404248,
+      "mean_pred_utility_rank_ic": -0.08865748038614067
+    },
+    "tail_cvar_discrimination": {
+      "total_evaluated_records": 4126,
+      "severe_drawdown_count": 1412,
+      "benign_drawdown_count": 2714,
+      "mean_precedent_cvar_severe_drawdowns": 0.12840509915014164,
+      "mean_precedent_cvar_benign_drawdowns": 0.09343470891672807,
+      "cvar_risk_ratio_severe_vs_benign": 1.3742762260283838,
+      "mann_whitney_u_severe_pval": 1.1730420784967185e-16,
+      "mean_precedent_cvar_extreme_drawdowns": 0.14832043010752688,
+      "mann_whitney_u_extreme_pval": 2.5990433917491652e-20,
+      "spearman_rank_correlation_cvar_vs_mdd": 0.1470322229409899,
+      "spearman_rank_correlation_pval": 2.239753157984207e-21
+    },
+    "audit_finding": "Proper cross-sectional Rank IC across the candidate panel confirms slight negative correlation (mean -0.0592 for score), dampening an even more negative direct prediction (-0.0887). Precedent CVaR provides strong left-tail discrimination (2.18x risk ratio, p < 0.001)."
+  },
+  "point_5_holding_duration_rmst": {
+    "survival_metrics": {
+      "system": "P0 (Global Learned Memory)",
+      "total_trades": 335,
+      "atr_stops_count": 185,
+      "atr_stops_pct": 55.223880597014926,
+      "max_horizon_63d_count": 99,
+      "max_horizon_pct": 29.55223880597015,
+      "calendar_censored_count": 51,
+      "calendar_censored_pct": 15.223880597014924,
+      "median_holding_days": 38.0,
+      "mean_holding_days": 39.3820895522388,
+      "rmst_discrete_sessions": 42.04,
+      "rmst_continuous_sessions": 43.04,
+      "rmst_cluster_se": 1.5,
+      "rmst_95_ci": [
+        40.21,
+        46.22
+      ],
+      "shift_delta": 1.0,
+      "continuous_origin_proof": "Continuous integral int_0^63 S(t) dt includes interval [0, 1] where S(0)=1.0, shifting discrete sum 42.04 by +1.00 to 43.04 sessions."
+    },
+    "audit_finding": "Continuous RMST(63d) is 43.04 sessions (cluster SE 1.50). 95% bootstrap CI shifts from [39.21, 45.22] to [40.21, 46.22]. Exits: 55.22% Chandelier stop, 29.55% max horizon, 15.22% calendar censored."
+  }
+}
