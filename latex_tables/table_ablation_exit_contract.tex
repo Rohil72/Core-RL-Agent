@@ -1,0 +1,14 @@
+\begin{table}[ht]
+\centering
+\small
+\begin{tabular}{lcccccc}
+\toprule
+\textbf{Exit Mechanism} & \textbf{Median Duration} & \textbf{RMST (63d)} & \textbf{Stop Rate} & \textbf{Ann. Return} & \textbf{Sharpe} & \textbf{Max DD} \\
+\midrule
+\textbf{Dynamic ATR Chandelier (Core-RL)} & \textbf{38.0d} & \textbf{43.04d} & \textbf{55.22\%} & \textbf{+5.25\%} & \textbf{0.248} & \textbf{-17.29\%} \\
+Mechanical Fixed Horizon (Gu et al.) & 63.0d & 63.00d & 0.00\% & +1.12\% & 0.062 & -28.95\% \\
+\bottomrule
+\end{tabular}
+\caption{\textbf{Holding Duration and Exit Contract Ablation.} Comparison of Core-RL's dynamic volatility-scaled trailing chandelier stop ($2.5\times\text{ATR}_{14}$) against mechanical 63-session holding without stop-losses (the convention in Gu et al., 2020 and Chen et al., 2024). Eliminating trailing stops forces portfolios to absorb full drawdowns during regime shifts, collapsing Sharpe from 0.248 to 0.062 and expanding maximum drawdown from -17.29\% to -28.95\%.}
+\label{tab:ablation_exit_contract}
+\end{table}

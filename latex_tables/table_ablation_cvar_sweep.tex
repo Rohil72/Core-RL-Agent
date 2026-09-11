@@ -1,0 +1,16 @@
+\begin{table}[ht]
+\centering
+\small
+\begin{tabular}{lcccccc}
+\toprule
+\textbf{Configuration} & \textbf{$\lambda$ Penalty} & \textbf{Ann. Return} & \textbf{Sharpe} & \textbf{Sortino} & \textbf{Max DD} & \textbf{Win Rate} \\
+\midrule
+No Left-Tail Governance & $\lambda = 0.0$ & +6.82\% & 0.285 & 0.492 & -21.45\% & 49.2\% \\
+Mild Downside Penalty & $\lambda = 0.1$ & +5.94\% & 0.264 & 0.468 & -18.80\% & 48.8\% \\
+\textbf{Champion Configuration} & $\mathbf{\lambda = 0.2}$ & \textbf{+5.25\%} & \textbf{0.248} & \textbf{0.447} & \textbf{-17.29\%} & \textbf{48.5\%} \\
+Heavy Left-Tail Penalty & $\lambda = 0.5$ & +3.41\% & 0.182 & 0.312 & -14.92\% & 46.8\% \\
+\bottomrule
+\end{tabular}
+\caption{\textbf{Downside CVaR Governance Parameter Sweep ($\lambda \in [0.0, 0.5]$).} Demonstrating the Pareto trade-off between gross upside capture and left-tail drawdown protection across 18 sovereign market--seed cells. Setting $\lambda = 0.0$ elevates annual return by +157 bps but expands maximum drawdown by -416 bps; the champion configuration ($\lambda = 0.2$) bounds drawdown to -17.29\% while preserving positive risk-adjusted returns.}
+\label{tab:ablation_cvar_sweep}
+\end{table}

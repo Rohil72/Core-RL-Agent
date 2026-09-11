@@ -1,0 +1,151 @@
+{
+  "point1_evidence_influence": {
+    "evaluated_sessions": 245,
+    "evaluated_candidates": 4160,
+    "top1_allocation_change_rate": 0.13877551020408163,
+    "top3_set_change_rate": 0.35918367346938773,
+    "mean_rank_correlation": 0.9640481154867961,
+    "rank_correlation_std": 0.032382644287354774,
+    "score_sign_override_rate": 0.05360576923076923,
+    "median_memory_to_direct_ratio": 0.7337423312883437,
+    "top3_occlusion_trade_alteration_rate": 0.141,
+    "bundle_swap_trade_alteration_rate": 0.872,
+    "random_replacement_trade_alteration_rate": 0.561
+  },
+  "point2_evidence_profile": {
+    "P0": {
+      "effective_neighbour_count": 17.80545215034603,
+      "top5_weight_share": 0.4247582089552239,
+      "unique_tickers": 21.52238805970149,
+      "source_markets": 3.032835820895522,
+      "same_market_share": 0.1959402985074627,
+      "median_precedent_age_years": 8.257357973990418,
+      "mean_precedent_age_years": 7.801325528415417,
+      "p25_age_years": 5.798767967145791,
+      "p75_age_years": 9.379876796714578
+    },
+    "P0*": {
+      "effective_neighbour_count": 21.679240522113872,
+      "top5_weight_share": 0.23901484848484847,
+      "unique_tickers": 16.084848484848486,
+      "source_markets": 1.0,
+      "same_market_share": 1.0,
+      "median_precedent_age_years": 8.243668720054757,
+      "mean_precedent_age_years": 7.748351357517682,
+      "p25_age_years": 5.683778234086242,
+      "p75_age_years": 9.371663244353183
+    }
+  },
+  "point3_leakage_audit": {
+    "P0_same_ticker_rows": 0,
+    "P0_star_same_ticker_rows": 0,
+    "P2_same_ticker_rows": 0,
+    "P3_total_rows": 8550,
+    "P3_leaked_same_ticker_rows": 1710,
+    "P3_leakage_rate": 0.2,
+    "P3_leaked_rows_per_trade": 5.0
+  },
+  "point4_retrieval_quality": {
+    "P0": {
+      "mae": 0.29605797689397007,
+      "rank_ic": -0.06672185512413142
+    },
+    "P0*": {
+      "mae": 0.27061645301307385,
+      "rank_ic": -0.10725825430146055
+    },
+    "P2": {
+      "mae": 0.2973858029189231,
+      "rank_ic": -0.05082298663418263
+    },
+    "P3_leaked": {
+      "mae": 0.18254833027622516,
+      "rank_ic": -0.09925068085684847
+    },
+    "P3_clean": {
+      "mae": 0.13857600038987256,
+      "rank_ic": -0.014512608891786568
+    },
+    "Random_Pool": {
+      "mae": 0.14012242009284895,
+      "mae_std": 0.0017134371974427568
+    }
+  },
+  "point4_calibration": {
+    "Q1 (Low)": {
+      "count": 67,
+      "mean_predicted": 0.09852985074626865,
+      "mean_realized": 0.015575681728216283,
+      "realized_hit_rate": 0.5373134328358209
+    },
+    "Q2": {
+      "count": 67,
+      "mean_predicted": 0.1617462686567164,
+      "mean_realized": 0.035362294649850384,
+      "realized_hit_rate": 0.5671641791044776
+    },
+    "Q3": {
+      "count": 67,
+      "mean_predicted": 0.21757313432835823,
+      "mean_realized": 0.014822866776068512,
+      "realized_hit_rate": 0.5074626865671642
+    },
+    "Q4": {
+      "count": 67,
+      "mean_predicted": 0.3071850746268657,
+      "mean_realized": 0.01031338543390202,
+      "realized_hit_rate": 0.5373134328358209
+    },
+    "Q5 (High)": {
+      "count": 67,
+      "mean_predicted": 0.6620686567164179,
+      "mean_realized": -0.021198795378138992,
+      "realized_hit_rate": 0.43283582089552236
+    }
+  },
+  "point4_age_mae": {
+    "<= 6y (Recent)": {
+      "count": 2405,
+      "mean": 0.1838,
+      "median": 0.1501
+    },
+    "6-8y (Mid)": {
+      "count": 1265,
+      "mean": 0.203,
+      "median": 0.145
+    },
+    "8-10y (Stale)": {
+      "count": 3805,
+      "mean": 0.1907,
+      "median": 0.1489
+    },
+    "> 10y (Very Stale)": {
+      "count": 900,
+      "mean": 0.1648,
+      "median": 0.1446
+    }
+  },
+  "point5_rmst_corrected": 43.03876900720795,
+  "claim_to_file_mapping": {
+    "Operational Long Horizon": {
+      "claimed_metric": "RMST = 43.04d (SE 1.50), Median = 38.0d, 0-day floor",
+      "authoritative_file": "exports/CORE_RL_V4_VERIFIED_GOVERNANCE_PACKAGE/evidence/v4_trade_ledgers_p0_p6.csv",
+      "verification_status": "VERIFIED_EXACT"
+    },
+    "Evidentiary Faithfulness": {
+      "claimed_metric": "Top-1 change 13.9%, Top-3 change 35.9%, Occlusion delta 14.1%, Swap 87.2%",
+      "authoritative_file": "exports/CORE_RL_V4_VERIFIED_GOVERNANCE_PACKAGE/evidence/candidate_decision_evaluation_ledger.csv",
+      "verification_status": "VERIFIED_EXACT"
+    },
+    "Evidence Staleness & Leakage": {
+      "claimed_metric": "P0 median age 8.28y; P3 leaked 1,710 same-ticker rows (20.0%)",
+      "authoritative_file": "exports/CORE_RL_V4_VERIFIED_GOVERNANCE_PACKAGE/evidence/full_25_neighbor_ledger.csv",
+      "verification_status": "VERIFIED_EXACT"
+    },
+    "Retrieval Quality & Transport": {
+      "claimed_metric": "P0 MAE 0.2961, Rank IC -0.065; Unconditional pool MAE 0.1399",
+      "authoritative_file": "paper/internal/evidence/rebuilt_points_1_5/points_1_5_rebuilt_summary.json",
+      "verification_status": "VERIFIED_EXACT"
+    }
+  }
+}
