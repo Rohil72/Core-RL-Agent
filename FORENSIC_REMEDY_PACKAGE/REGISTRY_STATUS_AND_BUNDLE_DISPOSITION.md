@@ -1,7 +1,7 @@
 # Canonical Experiment Registry and Bundle Disposition Audit
 **Digital Finance Forensic Governance Overhaul**  
 **Date:** September 2026  
-**Git Commit SHA:** `a3fb72c5b24819eafcc748765cc7078d19af4e51`  
+**Git Commit SHA:** `0af4944a1766d38bcf5436d316467c23b747e002`  
 **Data Manifest SHA-256:** `bdf79b3866b3659b1e14e41453f31d558bbc057ab3e7af7c706a97762c33d7f5`
 
 ---
@@ -39,7 +39,7 @@ Each manuscript table, figure, and empirical claim is cryptographically linked t
 
 ## 3. Cryptographic Governance Hashes
 
-1. **Git Commit SHA**: `a3fb72c5b24819eafcc748765cc7078d19af4e51`
+1. **Git Commit SHA**: `0af4944a1766d38bcf5436d316467c23b747e002`
 2. **Data Manifest SHA-256 (103 OHLCV parquets)**: `bdf79b3866b3659b1e14e41453f31d558bbc057ab3e7af7c706a97762c33d7f5`
 3. **Model Weights Checkpoint Hashes**:
    - `Seed 7`: `3355e4f1a118c2e4c44f647bf3bcae43444a8b7e41498216c39abaf67659aba6`
