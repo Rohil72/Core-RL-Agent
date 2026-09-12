@@ -22,7 +22,7 @@
     "repository_id": "R_kgDORN1f3A",
     "visibility": "PUBLIC",
     "base_commit_sha": "a23a682967e0394ca12b41194f9c3161b2b38652",
-    "release_commit_sha": "57eb74e59d7424cedd1c26b62f8864edcfe86594",
+    "release_commit_sha": "897924ece199cfb341a92b1f423d58972c3d382c",
     "tag": "paper-v1.0.2",
     "github_release_url": "https://github.com/Rohil72/Core-RL-Agent/releases/tag/paper-v1.0.2",
     "zenodo_status": "pending_author_activation",
