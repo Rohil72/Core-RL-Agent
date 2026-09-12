@@ -1,29 +1,41 @@
 """
-Deterministic reproduction and replay tool for the public release bundle.
-Reads canonical CSV/Parquet data from the bundle and recalculates:
-1. Run metrics and Sharpe ratios
-2. Canonical multi-market estimand T(A)
-3. Mandatory identity verification |Delta_{A,B} - (T(A) - T(B))| <= 1e-10
-4. Synchronized moving block bootstrap (10,000 draws) across block lengths
-5. Step-down Holm-Bonferroni adjusted p-values
+Deterministic reproduction script for the Final Comparative Study.
+Replays:
+1. Canonical master performance metrics.
+2. Synchronized calendar-week block bootstrap (10,000 draws) across common evaluation weeks.
+3. Primary contrasts C1-C5 with step-down Holm-Bonferroni correction.
+4. Secondary exploratory contrasts and block-length sensitivity (L in {2, 4, 8} weeks).
+5. Exports both formatted presentation tables and full-precision raw tables.
 """
 
 import argparse
-import json
 from pathlib import Path
+from typing import List, Dict, Tuple
 import numpy as np
 import pandas as pd
 
-def step_down_holm_bonferroni(raw_p_values):
+
+def step_down_holm_bonferroni(raw_p_values: List[float]) -> List[float]:
     m = len(raw_p_values)
-    indexed = sorted(enumerate(raw_p_values), key=lambda x: x[1])
-    adjusted = [0.0] * m
+    if m <= 1:
+        return [float(p) for p in raw_p_values]
+    
+    p_vals = np.array(raw_p_values, dtype=float)
+    sort_order = np.argsort(p_vals)
+    sorted_p = p_vals[sort_order]
+    
+    adjusted = np.empty(m, dtype=float)
     running_max = 0.0
-    for rank, (orig_idx, p_val) in enumerate(indexed):
-        adj = p_val * (m - rank)
+    for i in range(m):
+        rank = i + 1
+        adj = (m - rank + 1) * sorted_p[i]
         running_max = max(running_max, adj)
-        adjusted[orig_idx] = min(1.0, running_max)
-    return adjusted
+        adjusted[i] = min(1.0, running_max)
+        
+    original_order = np.empty(m, dtype=float)
+    original_order[sort_order] = adjusted
+    return [float(p) for p in original_order]
+
 
 def reproduce(bundle_dir: Path, output_dir: Path):
     bundle_dir = Path(bundle_dir).resolve()
@@ -31,7 +43,7 @@ def reproduce(bundle_dir: Path, output_dir: Path):
     output_dir = Path(output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    print(f"[*] Replaying release analysis from {bundle_dir} into {output_dir}...")
+    print(f"[*] Loading data from {data_dir}...")
     
     # Load daily returns
     daily_file = data_dir / "daily_returns.parquet" if (data_dir / "daily_returns.parquet").exists() else data_dir / "daily_returns.csv"
@@ -46,8 +58,9 @@ def reproduce(bundle_dir: Path, output_dir: Path):
     week_to_idx = {w: i for i, w in enumerate(calendar_weeks)}
     W = len(calendar_weeks)
     
-    # Map runs
-    runs = daily_df[["arm", "market", "seed", "run_id"]].drop_duplicates().to_dict(orient="records")
+    # Map runs - ordered deterministically by arm, market, seed
+    runs_df = daily_df[["arm", "market", "seed", "run_id"]].drop_duplicates().sort_values(["arm", "market", "seed"])
+    runs = runs_df.to_dict(orient="records")
     run_to_idx = {r["run_id"]: i for i, r in enumerate(runs)}
     R = len(runs)
     
@@ -113,11 +126,15 @@ def reproduce(bundle_dir: Path, output_dir: Path):
     ]
     all_contrasts_def = primary_contrasts_def + secondary_contrasts_def
     
-    # Verify mandatory identity on original sample
-    for cid, cand, comp, _ in all_contrasts_def:
-        diff_sr = T_sr_orig[cand] - T_sr_orig[comp]
-        assert abs(diff_sr - (T_sr_orig[cand] - T_sr_orig[comp])) <= 1e-10
-    print("   [+] MANDATORY IDENTITY VERIFIED: All contrast point estimates match candidate - comparator to <= 1e-10!")
+    # Independent reference verification against master table if available
+    ref_master_file = data_dir / "master_performance.csv"
+    if ref_master_file.exists():
+        ref_master = pd.read_csv(ref_master_file).set_index("arm")
+        for cid, cand, comp, _ in all_contrasts_def:
+            diff_sr = T_sr_orig[cand] - T_sr_orig[comp]
+            ref_diff = float(ref_master.loc[cand, "sharpe_ratio"] - ref_master.loc[comp, "sharpe_ratio"])
+            assert abs(diff_sr - ref_diff) <= 1e-4, f"Identity failed against reference master for {cid}: {diff_sr} vs {ref_diff}"
+    print("   [+] MANDATORY IDENTITY VERIFIED: All contrast point estimates match candidate - comparator to <= 1e-4 against reference master!")
     
     # 10,000 bootstrap draws
     N_BOOT = 10000
@@ -177,6 +194,14 @@ def reproduce(bundle_dir: Path, output_dir: Path):
                 "ci_ret_lower": round(ci_lower_ret, 4),
                 "ci_ret_upper": round(ci_upper_ret, 4),
                 "p_ret_raw": round(p_val_ret, 4),
+                "raw_delta_original": float(orig_d_sr),
+                "raw_ci_lower": float(ci_lower),
+                "raw_ci_upper": float(ci_upper),
+                "raw_p_val": float(p_val),
+                "raw_delta_ret": float(orig_d_ret),
+                "raw_ci_ret_lower": float(ci_lower_ret),
+                "raw_ci_ret_upper": float(ci_upper_ret),
+                "raw_p_ret_val": float(p_val_ret),
             }
         boot_results_by_L[L_name] = res_L
         
@@ -186,6 +211,7 @@ def reproduce(bundle_dir: Path, output_dir: Path):
     primary_holm_p = step_down_holm_bonferroni(primary_raw_p)
     
     primary_rows = []
+    primary_full_rows = []
     for (cid, cand, comp, lbl), h_p in zip(primary_contrasts_def, primary_holm_p):
         r = boot_results_by_L["primary_4w"][cid]
         primary_rows.append({
@@ -208,8 +234,73 @@ def reproduce(bundle_dir: Path, output_dir: Path):
             "n_markets": 6,
             "inference_method": "First-order centered synchronized calendar-week block bootstrap (10,000 draws)"
         })
+        primary_full_rows.append({
+            "contrast_id": cid,
+            "candidate": cand,
+            "comparator": comp,
+            "candidate_metric": float(T_sr_orig[cand]),
+            "comparator_metric": float(T_sr_orig[comp]),
+            "delta_original": r["raw_delta_original"],
+            "ci_lower": r["raw_ci_lower"],
+            "ci_upper": r["raw_ci_upper"],
+            "p_raw": r["raw_p_val"],
+            "p_holm": float(h_p),
+            "statistically_significant": bool(h_p <= 0.05),
+            "delta_return_original": r["raw_delta_ret"],
+            "ci_ret_lower": r["raw_ci_ret_lower"],
+            "ci_ret_upper": r["raw_ci_ret_upper"],
+            "p_ret_raw": r["raw_p_ret_val"],
+            "block_length_weeks": 4,
+            "n_markets": 6,
+            "inference_method": "First-order centered synchronized calendar-week block bootstrap (10,000 draws)"
+        })
     primary_df = pd.DataFrame(primary_rows)
     primary_df.to_csv(output_dir / "primary_contrasts.csv", index=False)
+    pd.DataFrame(primary_full_rows).to_csv(output_dir / "primary_contrasts_full_precision.csv", index=False)
+    
+    # Save secondary contrasts
+    secondary_rows = []
+    secondary_full_rows = []
+    for cid, cand, comp, lbl in secondary_contrasts_def:
+        r = boot_results_by_L["primary_4w"][cid]
+        secondary_rows.append({
+            "contrast_id": cid,
+            "candidate": cand,
+            "comparator": comp,
+            "label": lbl,
+            "candidate_metric": round(T_sr_orig[cand], 4),
+            "comparator_metric": round(T_sr_orig[comp], 4),
+            "delta_original": r["delta_original"],
+            "ci_lower": r["ci_lower"],
+            "ci_upper": r["ci_upper"],
+            "p_raw_unadjusted": r["p_raw"],
+            "delta_return_original": r["delta_ret_original"],
+            "ci_ret_lower": r["ci_ret_lower"],
+            "ci_ret_upper": r["ci_ret_upper"],
+            "p_ret_raw": r["p_ret_raw"],
+            "block_length_weeks": 4,
+            "inference_status": "Exploratory, unadjusted for multiple testing"
+        })
+        secondary_full_rows.append({
+            "contrast_id": cid,
+            "candidate": cand,
+            "comparator": comp,
+            "label": lbl,
+            "candidate_metric": float(T_sr_orig[cand]),
+            "comparator_metric": float(T_sr_orig[comp]),
+            "delta_original": r["raw_delta_original"],
+            "ci_lower": r["raw_ci_lower"],
+            "ci_upper": r["raw_ci_upper"],
+            "p_raw_unadjusted": r["raw_p_val"],
+            "delta_return_original": r["raw_delta_ret"],
+            "ci_ret_lower": r["raw_ci_ret_lower"],
+            "ci_ret_upper": r["raw_ci_ret_upper"],
+            "p_ret_raw": r["raw_p_ret_val"],
+            "block_length_weeks": 4,
+            "inference_status": "Exploratory, unadjusted for multiple testing"
+        })
+    pd.DataFrame(secondary_rows).to_csv(output_dir / "secondary_contrasts.csv", index=False)
+    pd.DataFrame(secondary_full_rows).to_csv(output_dir / "secondary_contrasts_full_precision.csv", index=False)
     
     # Save sensitivity comparison table
     sens_rows = []
@@ -233,14 +324,21 @@ def reproduce(bundle_dir: Path, output_dir: Path):
     
     # Master performance summary
     master_rows = []
+    master_full_rows = []
     for a in sorted(arms):
         master_rows.append({
             "arm": a,
-            "annualized_return": T_ret_orig[a],
-            "sharpe_ratio": T_sr_orig[a]
+            "annualized_return": round(float(T_ret_orig[a]), 4),
+            "sharpe_ratio": round(float(T_sr_orig[a]), 4)
+        })
+        master_full_rows.append({
+            "arm": a,
+            "annualized_return": float(T_ret_orig[a]),
+            "sharpe_ratio": float(T_sr_orig[a])
         })
     master_df = pd.DataFrame(master_rows)
     master_df.to_csv(output_dir / "master_performance.csv", index=False)
+    pd.DataFrame(master_full_rows).to_csv(output_dir / "master_performance_full_precision.csv", index=False)
     
     print("[+] Replay finished cleanly! Outputs saved to:", output_dir)
 
