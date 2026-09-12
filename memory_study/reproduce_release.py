@@ -39,6 +39,7 @@ def reproduce(bundle_dir: Path, output_dir: Path):
         daily_df = pd.read_parquet(daily_file)
     else:
         daily_df = pd.read_csv(daily_file)
+    daily_df["arm"] = daily_df["arm"].str.replace("Transformer_", "TRANS_")
         
     daily_df["date"] = pd.to_datetime(daily_df["date"])
     calendar_weeks = sorted(daily_df["calendar_week"].unique())
@@ -52,10 +53,13 @@ def reproduce(bundle_dir: Path, output_dir: Path):
     
     # Precompute sufficient statistics tensor (R, W, 4): [sum_r, sum_r2, sum_log1p, count]
     tensor = np.zeros((R, W, 4), dtype=np.float64)
-    for row in daily_df.itertuples():
-        r_idx = run_to_idx[row.run_id]
-        w_idx = week_to_idx[row.calendar_week]
-        r = float(row.return)
+    run_ids = daily_df["run_id"].values
+    weeks = daily_df["calendar_week"].values
+    returns = daily_df["return"].values
+    for i in range(len(daily_df)):
+        r_idx = run_to_idx[run_ids[i]]
+        w_idx = week_to_idx[weeks[i]]
+        r = float(returns[i])
         tensor[r_idx, w_idx, 0] += r
         tensor[r_idx, w_idx, 1] += r * r
         tensor[r_idx, w_idx, 2] += np.log1p(r)

@@ -1,0 +1,97 @@
+{
+  "schema_version": "1.0",
+  "status": "verified_public_release",
+  "code": {
+    "repository_url": "https://github.com/Rohil72/Core-RL-Agent",
+    "repository_id": "R_kgDORN1f3A",
+    "visibility": "PUBLIC",
+    "base_commit_sha": "a23a682967e0394ca12b41194f9c3161b2b38652",
+    "release_commit_sha": "559bbe7f015c2b22880f7d721d7fd7b55bcb8a2a",
+    "tag": "paper-v1.0.0",
+    "github_release_id": "RE_kwDORN1f3M4XG_0X",
+    "github_release_url": "https://github.com/Rohil72/Core-RL-Agent/releases/tag/paper-v1.0.0",
+    "zenodo_record_id": null,
+    "version_doi": null,
+    "concept_doi": null,
+    "archive_url": "https://github.com/Rohil72/Core-RL-Agent/archive/refs/tags/paper-v1.0.0.zip",
+    "archive_sha256": null
+  },
+  "data": {
+    "repository_url": "https://github.com/Rohil72/historical-memory-equity-data",
+    "repository_id": "R_kgDOUYWCcA",
+    "visibility": "PUBLIC",
+    "release_commit_sha": "7df3c0fa65c856d69ebdd3f5c71bd45d7564e1f0",
+    "tag": "v1.0.0",
+    "github_release_id": "RE_kwDOUYWCcM4XG_x_",
+    "github_release_url": "https://github.com/Rohil72/historical-memory-equity-data/releases/tag/v1.0.0",
+    "zenodo_record_id": null,
+    "version_doi": null,
+    "concept_doi": null,
+    "archive_url": "https://github.com/Rohil72/historical-memory-equity-data/releases/download/v1.0.0/historical-memory-equity-data-v1.0.0.zip",
+    "archive_sha256": "32c6af8795c93dc1fdb13af67f1833be9a5ad6d55ed27ea1c25140222e73966f",
+    "manifest_sha256": "d88bae1e773d84f094d009eceabfb694117a0f9257c3fdbd30851a58e8cca3f1"
+  },
+  "verification": {
+    "checked_at_utc": "2026-09-12T21:32:48Z",
+    "anonymous_repository_access": true,
+    "anonymous_asset_downloads": true,
+    "checksums_passed": true,
+    "clean_analysis_replay_passed": true,
+    "reproduction_levels_verified": [
+      1,
+      2
+    ],
+    "validation_report_url": "https://raw.githubusercontent.com/Rohil72/historical-memory-equity-data/v1.0.0/validation/report.json"
+  },
+  "commit_log": [
+    {
+      "commit_id": "C1",
+      "sha": "39faa232771e90a70c48ebb764f74be429a2f022",
+      "message": "chore(release): freeze and document the final study contract",
+      "repository": "Rohil72/Core-RL-Agent"
+    },
+    {
+      "commit_id": "C2",
+      "sha": "acd9698d0bcf195216870ab4c3fe7446461f5108",
+      "message": "feat(release): add deterministic evidence export and replay commands",
+      "repository": "Rohil72/Core-RL-Agent"
+    },
+    {
+      "commit_id": "C3",
+      "sha": "1ca9205bbcd4ca2d8c12a72a216e09601ac19cf0",
+      "message": "test(release): validate schemas provenance and manuscript results",
+      "repository": "Rohil72/Core-RL-Agent"
+    },
+    {
+      "commit_id": "C4",
+      "sha": "559bbe7f015c2b22880f7d721d7fd7b55bcb8a2a",
+      "message": "docs(release): finalize public reproduction and citation metadata",
+      "repository": "Rohil72/Core-RL-Agent"
+    },
+    {
+      "commit_id": "D1",
+      "sha": "d6de520f593f3c75dee067f81792aa99098f6138",
+      "message": "docs(data): define dataset context schemas and provenance",
+      "repository": "Rohil72/historical-memory-equity-data"
+    },
+    {
+      "commit_id": "D2",
+      "sha": "a3f809521a798649f4ee083b991f318b62694ea3",
+      "message": "data(release): export canonical results and analysis inputs",
+      "repository": "Rohil72/historical-memory-equity-data"
+    },
+    {
+      "commit_id": "D3",
+      "sha": "de3c2f242d34903ebfd96685e0ef051e73b401f1",
+      "message": "test(data): verify evidence against frozen analysis",
+      "repository": "Rohil72/historical-memory-equity-data"
+    },
+    {
+      "commit_id": "D4",
+      "sha": "7df3c0fa65c856d69ebdd3f5c71bd45d7564e1f0",
+      "message": "chore(data): freeze versioned evidence and integrity manifest",
+      "repository": "Rohil72/historical-memory-equity-data"
+    }
+  ],
+  "remaining_blockers": []
+}

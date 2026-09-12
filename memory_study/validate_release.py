@@ -24,10 +24,11 @@ def validate_release(bundle_dir: Path, replay_dir: Path = None):
     results = {"checks": [], "all_passed": True}
     
     def log_check(name, passed, details=""):
-        results["checks"].append({"name": name, "passed": passed, "details": details})
-        status_str = "[PASS]" if passed else "[FAIL]"
+        p_bool = bool(passed)
+        results["checks"].append({"name": name, "passed": p_bool, "details": str(details)})
+        status_str = "[PASS]" if p_bool else "[FAIL]"
         print(f"   {status_str} {name}: {details}")
-        if not passed:
+        if not p_bool:
             results["all_passed"] = False
 
     # Check 1: Required files exist

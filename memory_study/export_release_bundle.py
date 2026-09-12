@@ -88,6 +88,7 @@ def export_bundle(source_dir: Path, output_dir: Path):
     
     # 3. Daily returns (with canonical calendar week mapping)
     daily_df = pd.read_parquet(source_dir / "daily_nav.parquet")
+    daily_df["arm"] = daily_df["arm"].str.replace("Transformer_", "TRANS_")
     daily_df["date"] = pd.to_datetime(daily_df["date"])
     # Calendar week = Monday of that week
     daily_df["calendar_week"] = daily_df["date"].apply(lambda d: (d - pd.Timedelta(days=d.weekday())).strftime("%Y-%m-%d"))

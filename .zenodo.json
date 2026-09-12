@@ -1,0 +1,23 @@
+{
+  "title": "Core-RL-Agent: Causal Market Memory and Selective Trust Gating for Equity Selection",
+  "description": "Official research code repository accompanying 'A Reproducibility and Robustness Audit of Historical Market Memory for Equity Selection: Negative Validation Across Six Markets' (Digital Finance, Springer Nature).",
+  "creators": [
+    {
+      "name": "Gujarathi, Rohil",
+      "affiliation": "Vivekanand Education Society's Institute of Technology (VESIT)"
+    },
+    {
+      "name": "Goyal, Vaibhav",
+      "affiliation": "Predixion AI"
+    }
+  ],
+  "access_right": "open",
+  "license": "Apache-2.0",
+  "keywords": [
+    "reinforcement learning",
+    "quantitative finance",
+    "retrieval-augmented prediction",
+    "empirical asset pricing",
+    "reproducibility audit"
+  ]
+}
