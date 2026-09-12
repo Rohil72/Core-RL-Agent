@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.0.0",
+  "schema_version": "1.0.1",
   "study_name": "final_comparative_study",
   "contract_date": "2026-09-13",
   "target_journal": "Digital Finance (Springer Nature)",
@@ -7,16 +7,17 @@
   "data_repository": "https://github.com/Rohil72/historical-memory-equity-data",
   "models": {
     "mlp_backbone": {
-      "architecture": "Input(966) -> Linear(966, 64) -> ReLU -> LayerNorm(64) -> Linear(64, 128) -> LayerNorm(128) -> Linear(128, 1)",
-      "input_dimension": 966,
+      "architecture": "Input(23) -> Linear(23, 64) -> LayerNorm(64) -> GELU() -> Linear(64, 128) -> LayerNorm(128) -> Linear(128, 1)",
+      "input_dimension": 23,
+      "input_nature": "23-dimensional normalized feature vector at decision session t-1 (training uses feat[loc-1]; query evaluation takes final 6-session patch mean)",
       "latent_dimension": 128,
       "hidden_dimension": 64,
       "loss": "MSE",
-      "optimizer": "Adam",
+      "optimizer": "AdamW",
       "learning_rate": 0.001,
       "weight_decay": 0.0001,
-      "batch_size": 32,
-      "epochs": 100,
+      "batch_size": 4096,
+      "epochs": 5,
       "seeds": [
         7,
         17,
@@ -26,7 +27,24 @@
         "2013-01-01",
         "2020-12-31"
       ],
-      "checkpoint_selection": "minimum_validation_mse_2021"
+      "checkpoint_selection": "minimum_validation_mse_2021",
+      "checkpoint_files": {
+        "seed_7": {
+          "path": "models/mlp_encoder_seed_7.pt",
+          "sha256": "aef80aab3a58b674db09f2da25f4ac1885566131ed3abe525c905b02f81b7e60",
+          "bytes": 45458
+        },
+        "seed_17": {
+          "path": "models/mlp_encoder_seed_17.pt",
+          "sha256": "7372b0b0dcfc9865cf21136d569f51536682b1038c3ee9b35796343b680446f4",
+          "bytes": 45472
+        },
+        "seed_37": {
+          "path": "models/mlp_encoder_seed_37.pt",
+          "sha256": "2f7aee308b93fb9ad8da7c1dd46f45af3b63231abb94a7869e6c6e5e7e5ed65b",
+          "bytes": 45472
+        }
+      }
     },
     "transformer_backbone": {
       "architecture": "Input(B, 42, 23) -> Linear(23, 64) + PositionalEncoding -> 2-layer TransformerEncoder(d=64, nhead=4, dim_ff=128, dropout=0.1) -> AttentionPool -> Linear(64, 128) -> LayerNorm(128) -> Linear(128, 1)",
@@ -52,13 +70,30 @@
         "2013-01-01",
         "2020-12-31"
       ],
-      "checkpoint_selection": "minimum_validation_mse_2021"
+      "checkpoint_selection": "minimum_validation_mse_2021",
+      "checkpoint_files": {
+        "seed_7": {
+          "path": "exports/CORE_RL_V4_VERIFIED_GOVERNANCE_PACKAGE/models/v4_metric_transformer_seed_7.pt",
+          "sha256": "3355e4f1a118c2e4c44f647bf3bcae43444a8b7e41498216c39abaf67659aba6",
+          "bytes": 322190
+        },
+        "seed_17": {
+          "path": "exports/CORE_RL_V4_VERIFIED_GOVERNANCE_PACKAGE/models/v4_metric_transformer_seed_17.pt",
+          "sha256": "81a774c9794a99e6651808d603ba944d4036c0b0faabd6025b702be8f4c36213",
+          "bytes": 322228
+        },
+        "seed_37": {
+          "path": "exports/CORE_RL_V4_VERIFIED_GOVERNANCE_PACKAGE/models/v4_metric_transformer_seed_37.pt",
+          "sha256": "92c6422d14fee7210ef496d00d8136299034f080b2e31904a619c3c658970d40",
+          "bytes": 322228
+        }
+      }
     }
   },
   "target": {
     "equation": "y_t = (Close_{t+63} - Close_t) / Close_t",
     "horizon_sessions": 63,
-    "price_basis": "unadjusted_local_currency_adjusted_for_corporate_actions",
+    "price_basis": "dividend_and_split_adjusted_ohlcv",
     "entry_session": "t+1 (Open)",
     "exit_session": "t+63 (Close) or earlier stop-loss trigger",
     "availability_timestamp": "UTC aligned post-close"
@@ -66,36 +101,41 @@
   "features": {
     "count": 23,
     "channels": [
-      "returns_1d",
-      "returns_5d",
-      "returns_21d",
-      "returns_63d",
-      "ma_ratio_5",
-      "ma_ratio_21",
-      "ma_ratio_63",
-      "ma_ratio_252",
-      "volatility_21",
-      "volatility_63",
-      "volatility_252",
-      "rsi_14",
-      "macd",
-      "macd_signal",
-      "macd_hist",
-      "bollinger_upper",
-      "bollinger_lower",
-      "bollinger_pct_b",
-      "atr_14",
-      "high_distance_63",
-      "high_distance_252",
-      "drawdown_63",
-      "drawdown_252"
+      "tech_return_1d",
+      "tech_momentum_3d",
+      "tech_momentum_10d",
+      "tech_momentum_21d",
+      "tech_volatility_21d",
+      "tech_volume_sma_21d",
+      "tech_volume_ratio_21d",
+      "tech_volume_change_1d",
+      "tech_intraday_range_hl",
+      "tech_drawdown_from_peak_21d",
+      "tech_trend_slope_21d",
+      "tech_close_vs_sma_50",
+      "tech_close_vs_sma_150",
+      "tech_close_vs_sma_200",
+      "tech_sma_200_trend_20",
+      "tech_pct_above_52w_low",
+      "tech_pct_from_52w_high",
+      "tech_up_down_volume_ratio_50",
+      "tech_rsi_14",
+      "tech_atr_ratio_14",
+      "tech_macd_signal_diff",
+      "tech_bollinger_bandwidth_20",
+      "tech_historical_vol_ratio_63_21"
     ],
-    "scaling": "standardized_per_market_pre_2021",
+    "scaling": "standardized_per_market_pre_2021_clipped_minus5_plus5",
     "fit_dates": [
       "2013-01-01",
       "2020-12-31"
     ],
-    "missing_value_handling": "forward_fill_then_zero"
+    "missing_value_handling": "feature-specific explicit fillna rules followed by per-market mean imputation"
+  },
+  "window_endpoint_convention": {
+    "query_window_slice": "[loc - 252 : loc] (excludes session at decision index loc; encompasses preceding 252 trading sessions)",
+    "patch_construction": "42 non-overlapping patches of 6 sessions each, taking the 6-session mean per patch",
+    "mlp_input_convention": "Training uses last session feature feat[loc-1]; query evaluation uses last patch (mean of sessions loc-6 to loc-1)"
   },
   "retrieval": {
     "database_cutoff": "2020-12-31",
@@ -116,11 +156,11 @@
   },
   "selective_trust_gate": {
     "functional_form": "g_t = sigmoid(a^T u_t + b)",
-    "input_features": [
-      "abs_backbone_prediction",
-      "abs_prediction_discrepancy",
-      "abs_memory_prediction",
-      "rolling_asset_volatility_21"
+    "evaluation_input_channels": [
+      "channel_1: abs_backbone_prediction (|q_pred|)",
+      "channel_2: abs_prediction_discrepancy (|q_pred - mem_sim_pred|)",
+      "channel_3: abs_memory_prediction (|mem_sim_pred|)",
+      "channel_4: constant_baseline_volatility (0.015 constant across all evaluation queries; asset-specific trailing volatility is applied in portfolio sizing/scoring, not in this neural gate channel)"
     ],
     "input_standardization": "mean_and_std_fit_on_h2_2021",
     "training_window": [
@@ -137,7 +177,38 @@
     "learning_rate": 0.05,
     "weight_decay": 0.001,
     "epochs": 50,
-    "checkpoints": "models/trust_gate_{mlp,transformer}_seed_{7,17,37}.pt"
+    "checkpoint_files": {
+      "trust_gate_mlp_seed_7": {
+        "path": "models/trust_gate_mlp_seed_7.pt",
+        "sha256": "25fd78f6532d2334c5213a935013e66d7f066ce9f5cd30d48b2436cfae7f71e4",
+        "bytes": 2240
+      },
+      "trust_gate_mlp_seed_17": {
+        "path": "models/trust_gate_mlp_seed_17.pt",
+        "sha256": "a15c88c23d4e0bd8a1bf016de5b011121183c58aef6464b53352b0d08935f259",
+        "bytes": 2312
+      },
+      "trust_gate_mlp_seed_37": {
+        "path": "models/trust_gate_mlp_seed_37.pt",
+        "sha256": "9d6ff7b45838ed8c22434b4508c5db9e6cb1af77a248b7a32c332352a3410f58",
+        "bytes": 2312
+      },
+      "trust_gate_transformer_seed_7": {
+        "path": "models/trust_gate_transformer_seed_7.pt",
+        "sha256": "43a330fe9f7796bdadca53c72afde531d6555432b28ec2720f4bf8a9213e701b",
+        "bytes": 2368
+      },
+      "trust_gate_transformer_seed_17": {
+        "path": "models/trust_gate_transformer_seed_17.pt",
+        "sha256": "0983f9b6a83bbf01065040beba4ccb5b553824437278f872e4a847f679bd8da1",
+        "bytes": 2376
+      },
+      "trust_gate_transformer_seed_37": {
+        "path": "models/trust_gate_transformer_seed_37.pt",
+        "sha256": "a18e715ba847ac3644b4fbe557403515871bed712b669a850774ff2ddf8c7408",
+        "bytes": 2376
+      }
+    }
   },
   "fixed_mixture_selection": {
     "grid_candidates": [
@@ -161,13 +232,14 @@
     "initial_capital": 100000.0,
     "max_concurrent_slots": 3,
     "slot_funding": "equal_weight_33_percent",
+    "fee_rate": 0.001,
     "transaction_fee_bps": {
       "US": 10.0,
-      "Brazil": 15.0,
-      "India": 20.0,
-      "China": 20.0,
-      "France": 20.0,
-      "UK": 25.0
+      "Brazil": 10.0,
+      "India": 10.0,
+      "China": 10.0,
+      "France": 10.0,
+      "UK": 10.0
     },
     "cash_buffer_ratio": 0.95,
     "min_holding_days_for_stop": 1,
@@ -176,6 +248,16 @@
     "chandelier_min_dist": 0.1,
     "negative_score_policy": "allocate_to_cash_no_shorting",
     "terminal_accounting_tolerance": 0.1
+  },
+  "metric_definitions": {
+    "sharpe_ratio": "Annualized Sharpe ratio computed as mean daily return divided by population standard deviation (ddof=0) multiplied by sqrt(252)",
+    "win_rate": "Fraction of active daily trading sessions with positive return (returns > 0.0)",
+    "rank_ic": "Pooled Spearman rank correlation over all asset-date predictions across the entire market-year run; marked null for constant forecasts"
+  },
+  "leakage_guardrails": {
+    "same_ticker_exclusion": "Enforced query filter rule (mem_ticker != query_ticker); no same-company precedents permitted in top-k",
+    "min_temporal_separation": "21 sessions enforced between consecutive precedents from the same issuer",
+    "leakage_audit_status": "Enforced retrieval constraint rule, not an unmeasured post-hoc counter"
   },
   "statistical_inference": {
     "estimand": "T(A) = (1/M) sum_{m=1}^M [ (1/R_{A,m}) sum_{r=1}^{R_{A,m}} SR_{A,m,r} ]",
