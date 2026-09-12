@@ -1,0 +1,21 @@
+cff-version: 1.2.0
+message: "If you use this software or data in your research, please cite it as below."
+authors:
+  - family-names: "Gujarathi"
+    given-names: "Rohil"
+    affiliation: "Vivekanand Education Society's Institute of Technology (VESIT)"
+  - family-names: "Goyal"
+    given-names: "Vaibhav"
+    affiliation: "Predixion AI"
+title: "Core-RL-Agent: Causal Market Memory and Selective Trust Gating for Equity Selection"
+version: 1.0.0
+date-released: 2026-09-13
+url: "https://github.com/Rohil72/Core-RL-Agent"
+repository-code: "https://github.com/Rohil72/Core-RL-Agent"
+keywords:
+  - "reinforcement learning"
+  - "retrieval-augmented prediction"
+  - "quantitative finance"
+  - "empirical asset pricing"
+  - "reproducibility audit"
+license: Apache-2.0
