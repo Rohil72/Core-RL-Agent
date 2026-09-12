@@ -1,0 +1,81 @@
+schema_version: 1
+
+study:
+  name: final_comparative_study
+  description: "Definitive comparative evaluation of pure memory (MEM_SIM), gated MLP (MLP_GATE), controls, and benchmarks."
+
+periods:
+  evaluation:
+    start_date: "2024-01-01"
+    end_date: "2024-12-31"
+    evidence_status: "isolated_out_of_sample_benchmark"
+  development:
+    start_date: "2021-07-01"
+    end_date: "2021-12-31"
+    evidence_status: "hyperparameter_and_gate_training"
+    max_target_maturity: "2023-12-31"
+
+markets:
+  US: ["AAPL", "ADBE", "AMD", "AMGN", "AMZN", "AVGO", "CRM", "GOOGL", "INTU", "ISRG", "LMT", "META", "MSFT", "NOC", "NVDA", "ORCL", "REGN", "V"]
+  India: ["ASIANPAINT.NS", "BAJFINANCE.NS", "BHARTIARTL.NS", "EICHERMOT.NS", "HCLTECH.NS", "HDFCBANK.NS", "ICICIBANK.NS", "INFY.NS", "LT.NS", "M&M.NS", "MARUTI.NS", "PIDILITIND.NS", "RELIANCE.NS", "SUNPHARMA.NS", "TCS.NS", "TECHM.NS", "TITAN.NS", "ULTRACEMCO.NS"]
+  China: ["000333.SZ", "000725.SZ", "000858.SZ", "002230.SZ", "002241.SZ", "002415.SZ", "002475.SZ", "002594.SZ", "300059.SZ", "600036.SS", "600196.SS", "600276.SS", "600309.SS", "600519.SS", "600887.SS", "601012.SS", "601318.SS", "601888.SS"]
+  Brazil: ["B3SA3.SA", "EQTL3.SA", "FLRY3.SA", "ITUB4.SA", "KLBN11.SA", "LREN3.SA", "MGLU3.SA", "PETR4.SA", "RADL3.SA", "RAIL3.SA", "RENT3.SA", "SUZB3.SA", "TOTS3.SA", "VALE3.SA", "WEGE3.SA"]
+  France: ["AI.PA", "AIR.PA", "CAP.PA", "DG.PA", "DIM.PA", "DSY.PA", "EL.PA", "LR.PA", "MC.PA", "ML.PA", "OR.PA", "RI.PA", "RMS.PA", "SAF.PA", "SU.PA", "TEP.PA", "WLN.PA"]
+  UK: ["AUTO.L", "AZN.L", "BA.L", "CPG.L", "CRDA.L", "DGE.L", "EXPN.L", "HLMA.L", "JD.L", "LSEG.L", "OCDO.L", "PRU.L", "REL.L", "RMV.L", "RTO.L", "SGE.L", "SPX.L"]
+
+backbones:
+  seeds: [7, 17, 37]
+  architectures: ["mlp", "transformer"]
+
+retrieval:
+  k: 25
+  geometry: "standardized_966d_window_euclidean"
+  precedent_cutoff: "2020-12-31"
+  same_ticker: "exclude"
+  min_separation_sessions: 21
+  max_per_ticker: 3
+  random_seeds: [1001, 1002, 1003]
+
+risk_and_execution:
+  memory_tail_penalty_coefficient: 0.0
+  execution_stop_policy: "existing_reference"
+  initial_capital: 100000.0
+  max_slots: 3
+  fee_rate: 0.0010
+  cash_buffer_ratio: 0.95
+  chandelier_multiplier: 2.5
+  chandelier_min_dist: 0.10
+  max_holding_sessions: 63
+  score_epsilon: 0.0001
+
+mixture_selection:
+  candidate_lambdas: [0.0, 0.10, 0.25, 0.50, 1.00]
+  selection_criterion: "mean_net_sharpe_across_markets"
+
+statistical_inference:
+  n_bootstrap_resamples: 10000
+  primary_block_length_sessions: 20  # 4 calendar weeks
+  sensitivity_block_lengths_sessions: [10, 40]  # 2 and 8 weeks
+  confidence_level: 0.95
+  random_seed: 42
+  family_contrasts:
+    - id: "C1"
+      candidate: "MEM_SIM"
+      comparator: "MEM_RANDOM"
+      label: "C1: Similarity vs Random Precedents"
+    - id: "C2"
+      candidate: "MEM_SIM"
+      comparator: "HIST_PRIOR"
+      label: "C2: Similarity vs Historical Prior Mean"
+    - id: "C3"
+      candidate: "MEM_SIM"
+      comparator: "MLP_BASE"
+      label: "C3: Pure Memory vs Direct MLP"
+    - id: "C4"
+      candidate: "MLP_GATE"
+      comparator: "MEM_SIM"
+      label: "C4: Gated Hybrid vs Pure Memory"
+    - id: "C5"
+      candidate: "MLP_GATE"
+      comparator: "MLP_MIX_SELECTED"
+      label: "C5: Dynamic Gate vs Selected Fixed Mixture"

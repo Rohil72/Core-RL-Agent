@@ -1,0 +1,41 @@
+{
+  "schema_version": "1.0.0",
+  "study": "final_comparative_study",
+  "total_execution_cells": 150,
+  "arms_evaluated": [
+    "BENCH_EQUAL_WEIGHT",
+    "BENCH_MOMENTUM_21",
+    "HIST_PRIOR",
+    "MEM_RANDOM",
+    "MEM_SIM",
+    "MLP_BASE",
+    "MLP_GATE",
+    "MLP_MIX_SELECTED",
+    "TRANS_BASE",
+    "TRANS_GATE",
+    "TRANS_MIX_SELECTED"
+  ],
+  "markets_evaluated": [
+    "Brazil",
+    "China",
+    "France",
+    "India",
+    "UK",
+    "US"
+  ],
+  "evaluation_window": {
+    "start": "2024-01-01",
+    "end": "2024-12-31"
+  },
+  "data_sources": {
+    "market_daily_bars": "Yahoo Finance (103 securities across 6 sovereign markets)",
+    "precomputed_embeddings": "models/trust_gate_*.pt and pre-trained backbones",
+    "historical_memory_precedents": "pre-2021 historical database (2013-2020)",
+    "evaluation_realizations_parquet": "research_runs/memory_study/final_comparison/daily_nav.parquet",
+    "reanalysis_canonical_outputs": "research_runs/memory_study/final_comparison/reanalysis_v1/"
+  },
+  "accounting_certification": {
+    "penny_accounting_identity": "max discrepancy <= .00 across all 150 runs",
+    "zero_entity_leakage": "0 same-ticker precedents retrieved across all 25,753 queries"
+  }
+}

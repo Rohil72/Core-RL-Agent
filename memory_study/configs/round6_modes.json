@@ -1,0 +1,53 @@
+{
+  "round": 6,
+  "name": "Risk-Aware Extension",
+  "description": "Evaluates the restoration of downside tail risk penalty (TailMean_0.05) on the winning Selective Trust Gate and Pure Memory forecasters.",
+  "modes": {
+    "R_base": {
+      "name": "R_base: Backbone Alone (No Memory)",
+      "alpha_tail": 0.0
+    },
+    "R0_gate": {
+      "name": "R0_gate: Selective Trust Gate (No Tail Penalty, alpha=0.0)",
+      "alpha_tail": 0.0
+    },
+    "R1_gate": {
+      "name": "R1_gate: Selective Trust Gate (Mild Tail Penalty, alpha=0.10)",
+      "alpha_tail": 0.10
+    },
+    "R2_gate": {
+      "name": "R2_gate: Selective Trust Gate (Full Tail Penalty, alpha=0.20)",
+      "alpha_tail": 0.20
+    },
+    "R0_mem": {
+      "name": "R0_mem: Pure Memory (No Tail Penalty, alpha=0.0)",
+      "alpha_tail": 0.0
+    },
+    "R2_mem": {
+      "name": "R2_mem: Pure Memory (Full Tail Penalty, alpha=0.20)",
+      "alpha_tail": 0.20
+    }
+  },
+  "contrasts": [
+    {
+      "candidate": "R2_gate",
+      "comparator": "R0_gate",
+      "label": "Full Tail Penalty vs No Tail Penalty on Gate (R2_gate vs R0_gate)"
+    },
+    {
+      "candidate": "R1_gate",
+      "comparator": "R0_gate",
+      "label": "Mild Tail Penalty vs No Tail Penalty on Gate (R1_gate vs R0_gate)"
+    },
+    {
+      "candidate": "R2_gate",
+      "comparator": "R_base",
+      "label": "Risk-Aware Gated Memory vs Backbone Alone (R2_gate vs R_base)"
+    },
+    {
+      "candidate": "R2_mem",
+      "comparator": "R0_mem",
+      "label": "Tail Penalty on Pure Memory (R2_mem vs R0_mem)"
+    }
+  ]
+}

@@ -1,0 +1,49 @@
+{
+  "round": 3,
+  "name": "Learned Aggregation",
+  "description": "Evaluates A0 (fixed softmax kernel), A1 (learned query-conditioned logit adjustment), A_ctrl (query-only adapter capacity control), A_unif (uniform weighting), and M0 (backbone alone).",
+  "modes": {
+    "M0": {
+      "name": "M0: Backbone Alone",
+      "lambda_hybrid": 0.0
+    },
+    "A_unif": {
+      "name": "A_unif: Uniform Weighting (1/k)",
+      "lambda_hybrid": 0.25
+    },
+    "A0": {
+      "name": "A0: Fixed Softmax Kernel (tau=0.08)",
+      "lambda_hybrid": 0.25
+    },
+    "A1": {
+      "name": "A1: Learned Logit Adjustment",
+      "lambda_hybrid": 0.25
+    },
+    "A_ctrl": {
+      "name": "A_ctrl: Query-Only Capacity Control",
+      "lambda_hybrid": 0.25
+    }
+  },
+  "contrasts": [
+    {
+      "candidate": "A1",
+      "comparator": "A0",
+      "label": "Learned Adjustment vs Fixed Softmax Kernel (A1 vs A0)"
+    },
+    {
+      "candidate": "A1",
+      "comparator": "A_unif",
+      "label": "Learned Adjustment vs Uniform Weighting (A1 vs A_unif)"
+    },
+    {
+      "candidate": "A1",
+      "comparator": "A_ctrl",
+      "label": "Evidence Weighting vs Capacity Control (A1 vs A_ctrl)"
+    },
+    {
+      "candidate": "A1",
+      "comparator": "M0",
+      "label": "Complete System vs Backbone Alone (A1 vs M0)"
+    }
+  ]
+}

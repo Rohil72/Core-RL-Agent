@@ -1,0 +1,45 @@
+{
+  "round": 4,
+  "name": "Enriched Value Fields",
+  "description": "Evaluates V0 (63-day return only), V1 (21-day + 63-day returns), V2 (63-day return + 63-day max drawdown), and reference row M0 (backbone alone).",
+  "modes": {
+    "M0": {
+      "name": "M0: Backbone Alone",
+      "lambda_hybrid": 0.0
+    },
+    "V0": {
+      "name": "V0: Single-Field Return (63-Session)",
+      "lambda_hybrid": 0.25
+    },
+    "V1": {
+      "name": "V1: Multi-Horizon Returns (21-Session + 63-Session)",
+      "lambda_hybrid": 0.25
+    },
+    "V2": {
+      "name": "V2: Return + Path Risk (63-Session + Drawdown)",
+      "lambda_hybrid": 0.25
+    }
+  },
+  "contrasts": [
+    {
+      "candidate": "V1",
+      "comparator": "V0",
+      "label": "Multi-Horizon Returns vs Single Return (V1 vs V0)"
+    },
+    {
+      "candidate": "V2",
+      "comparator": "V0",
+      "label": "Return + Path Risk vs Single Return (V2 vs V0)"
+    },
+    {
+      "candidate": "V2",
+      "comparator": "V1",
+      "label": "Return + Path Risk vs Multi-Horizon (V2 vs V1)"
+    },
+    {
+      "candidate": "V0",
+      "comparator": "M0",
+      "label": "Memory (V0) vs Backbone Alone (V0 vs M0)"
+    }
+  ]
+}

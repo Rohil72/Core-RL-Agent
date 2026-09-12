@@ -1,0 +1,46 @@
+{
+  "modes": {
+    "M0": {
+      "name": "Backbone Alone",
+      "description": "No memory retrieval, lambda=0",
+      "lambda": 0.0,
+      "retrieval_mode": "none",
+      "weights": "none"
+    },
+    "M1": {
+      "name": "Random Eligible Memory",
+      "description": "Random priority eligible precedents satisfying constraints, uniform weights",
+      "lambda": 0.25,
+      "retrieval_mode": "random",
+      "weights": "uniform"
+    },
+    "M2": {
+      "name": "Input Window Similarity",
+      "description": "Standardized input-window Euclidean distance ranking, uniform weights",
+      "lambda": 0.25,
+      "retrieval_mode": "input_window_euclidean",
+      "weights": "uniform"
+    },
+    "M3": {
+      "name": "Frozen Latent Retrieval",
+      "description": "Frozen latent cosine similarity ranking, uniform weights",
+      "lambda": 0.25,
+      "retrieval_mode": "latent_cosine",
+      "weights": "uniform"
+    },
+    "M4": {
+      "name": "Fixed Similarity Weighting",
+      "description": "Same neighbour IDs as M3, weighted by softmax kernel with tau=0.08",
+      "lambda": 0.25,
+      "retrieval_mode": "latent_cosine",
+      "weights": "softmax_kernel",
+      "tau": 0.08
+    }
+  },
+  "contrasts": [
+    {"candidate": "M3", "comparator": "M1", "label": "Learned vs Random Selection (Uniform)"},
+    {"candidate": "M3", "comparator": "M2", "label": "Learned Latent vs Input-Window Euclidean"},
+    {"candidate": "M4", "comparator": "M3", "label": "Similarity Weighting on Identical Neighbours"},
+    {"candidate": "M4", "comparator": "M0", "label": "Complete Fixed Retrieval vs Backbone Alone"}
+  ]
+}

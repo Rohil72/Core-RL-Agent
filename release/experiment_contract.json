@@ -1,0 +1,242 @@
+{
+  "schema_version": "1.0.0",
+  "study_name": "final_comparative_study",
+  "contract_date": "2026-09-13",
+  "target_journal": "Digital Finance (Springer Nature)",
+  "code_repository": "https://github.com/Rohil72/Core-RL-Agent",
+  "data_repository": "https://github.com/Rohil72/historical-memory-equity-data",
+  "models": {
+    "mlp_backbone": {
+      "architecture": "Input(966) -> Linear(966, 64) -> ReLU -> LayerNorm(64) -> Linear(64, 128) -> LayerNorm(128) -> Linear(128, 1)",
+      "input_dimension": 966,
+      "latent_dimension": 128,
+      "hidden_dimension": 64,
+      "loss": "MSE",
+      "optimizer": "Adam",
+      "learning_rate": 0.001,
+      "weight_decay": 0.0001,
+      "batch_size": 32,
+      "epochs": 100,
+      "seeds": [
+        7,
+        17,
+        37
+      ],
+      "training_period": [
+        "2013-01-01",
+        "2020-12-31"
+      ],
+      "checkpoint_selection": "minimum_validation_mse_2021"
+    },
+    "transformer_backbone": {
+      "architecture": "Input(B, 42, 23) -> Linear(23, 64) + PositionalEncoding -> 2-layer TransformerEncoder(d=64, nhead=4, dim_ff=128, dropout=0.1) -> AttentionPool -> Linear(64, 128) -> LayerNorm(128) -> Linear(128, 1)",
+      "input_shape": [
+        42,
+        23
+      ],
+      "patch_size_sessions": 6,
+      "n_patches": 42,
+      "latent_dimension": 128,
+      "loss": "MSE",
+      "optimizer": "Adam",
+      "learning_rate": 0.0005,
+      "weight_decay": 0.0001,
+      "batch_size": 32,
+      "epochs": 100,
+      "seeds": [
+        7,
+        17,
+        37
+      ],
+      "training_period": [
+        "2013-01-01",
+        "2020-12-31"
+      ],
+      "checkpoint_selection": "minimum_validation_mse_2021"
+    }
+  },
+  "target": {
+    "equation": "y_t = (Close_{t+63} - Close_t) / Close_t",
+    "horizon_sessions": 63,
+    "price_basis": "unadjusted_local_currency_adjusted_for_corporate_actions",
+    "entry_session": "t+1 (Open)",
+    "exit_session": "t+63 (Close) or earlier stop-loss trigger",
+    "availability_timestamp": "UTC aligned post-close"
+  },
+  "features": {
+    "count": 23,
+    "channels": [
+      "returns_1d",
+      "returns_5d",
+      "returns_21d",
+      "returns_63d",
+      "ma_ratio_5",
+      "ma_ratio_21",
+      "ma_ratio_63",
+      "ma_ratio_252",
+      "volatility_21",
+      "volatility_63",
+      "volatility_252",
+      "rsi_14",
+      "macd",
+      "macd_signal",
+      "macd_hist",
+      "bollinger_upper",
+      "bollinger_lower",
+      "bollinger_pct_b",
+      "atr_14",
+      "high_distance_63",
+      "high_distance_252",
+      "drawdown_63",
+      "drawdown_252"
+    ],
+    "scaling": "standardized_per_market_pre_2021",
+    "fit_dates": [
+      "2013-01-01",
+      "2020-12-31"
+    ],
+    "missing_value_handling": "forward_fill_then_zero"
+  },
+  "retrieval": {
+    "database_cutoff": "2020-12-31",
+    "scope": "global_across_all_six_markets",
+    "nearest_neighbors_k": 25,
+    "distance_metric": "euclidean_distance_on_standardized_966d_window",
+    "aggregation": "uniform_mean_1_over_k",
+    "guardrails": {
+      "same_ticker_exclusion": true,
+      "max_precedents_per_company": 3,
+      "min_temporal_separation_sessions": 21
+    },
+    "random_retrieval_seeds": [
+      1001,
+      1002,
+      1003
+    ]
+  },
+  "selective_trust_gate": {
+    "functional_form": "g_t = sigmoid(a^T u_t + b)",
+    "input_features": [
+      "abs_backbone_prediction",
+      "abs_prediction_discrepancy",
+      "abs_memory_prediction",
+      "rolling_asset_volatility_21"
+    ],
+    "input_standardization": "mean_and_std_fit_on_h2_2021",
+    "training_window": [
+      "2021-07-01",
+      "2021-12-31"
+    ],
+    "loss_objective": "MSE_against_realized_63d_returns",
+    "initialization": {
+      "weights": "zeros",
+      "bias": -1.0986,
+      "prior_gate_value": 0.25
+    },
+    "optimizer": "Adam",
+    "learning_rate": 0.05,
+    "weight_decay": 0.001,
+    "epochs": 50,
+    "checkpoints": "models/trust_gate_{mlp,transformer}_seed_{7,17,37}.pt"
+  },
+  "fixed_mixture_selection": {
+    "grid_candidates": [
+      0.0,
+      0.1,
+      0.25,
+      0.5,
+      1.0
+    ],
+    "development_window": [
+      "2021-07-01",
+      "2021-12-31"
+    ],
+    "selection_metric": "mean_net_sharpe_across_markets",
+    "selected_coefficients": {
+      "mlp": 0.5,
+      "transformer": 0.5
+    }
+  },
+  "execution": {
+    "initial_capital": 100000.0,
+    "max_concurrent_slots": 3,
+    "slot_funding": "equal_weight_33_percent",
+    "transaction_fee_bps": {
+      "US": 10.0,
+      "Brazil": 15.0,
+      "India": 20.0,
+      "China": 20.0,
+      "France": 20.0,
+      "UK": 25.0
+    },
+    "cash_buffer_ratio": 0.95,
+    "min_holding_days_for_stop": 1,
+    "max_holding_sessions": 63,
+    "chandelier_multiplier": 2.5,
+    "chandelier_min_dist": 0.1,
+    "negative_score_policy": "allocate_to_cash_no_shorting",
+    "terminal_accounting_tolerance": 0.1
+  },
+  "statistical_inference": {
+    "estimand": "T(A) = (1/M) sum_{m=1}^M [ (1/R_{A,m}) sum_{r=1}^{R_{A,m}} SR_{A,m,r} ]",
+    "n_markets": 6,
+    "markets": [
+      "US",
+      "India",
+      "China",
+      "Brazil",
+      "France",
+      "UK"
+    ],
+    "evaluation_window": [
+      "2024-01-01",
+      "2024-12-31"
+    ],
+    "calendar_alignment": "53_canonical_calendar_weeks_monday_boundary",
+    "bootstrap_draws": 10000,
+    "primary_block_length_weeks": 4,
+    "sensitivity_block_lengths_weeks": [
+      2,
+      8
+    ],
+    "random_seed": 42,
+    "confidence_level": 0.95,
+    "multiplicity_correction": "step_down_holm_bonferroni_on_c1_c5",
+    "mandatory_identity_tolerance": 1e-10
+  },
+  "diagnostic_population": {
+    "total_queries": 25753,
+    "bins": [
+      {
+        "range": "[0.0, 0.2)",
+        "count": 7,
+        "mean_gate": 0.1917,
+        "memory_win_pct": 42.9
+      },
+      {
+        "range": "[0.2, 0.4)",
+        "count": 5081,
+        "mean_gate": 0.3422,
+        "memory_win_pct": 38.8
+      },
+      {
+        "range": "[0.4, 0.6)",
+        "count": 6878,
+        "mean_gate": 0.5074,
+        "memory_win_pct": 54.8
+      },
+      {
+        "range": "[0.6, 0.8)",
+        "count": 10398,
+        "mean_gate": 0.6935,
+        "memory_win_pct": 55.4
+      },
+      {
+        "range": "[0.8, 1.0]",
+        "count": 3389,
+        "mean_gate": 0.8832,
+        "memory_win_pct": 69.8
+      }
+    ]
+  }
+}

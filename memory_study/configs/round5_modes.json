@@ -1,0 +1,49 @@
+{
+  "round": 5,
+  "name": "Selective Trust Gate",
+  "description": "Evaluates G_base (backbone alone), G_fixed (fixed lambda=0.25), G_grid (optimal grid lambda* tuned on H2 2021), G_gate (linear logistic trust gate), and G_mem (memory alone).",
+  "modes": {
+    "G_base": {
+      "name": "G_base: Backbone Alone",
+      "lambda_hybrid": 0.0
+    },
+    "G_fixed": {
+      "name": "G_fixed: Fixed Weight (lambda=0.25)",
+      "lambda_hybrid": 0.25
+    },
+    "G_grid": {
+      "name": "G_grid: Grid-Tuned Fixed Weight (H2 2021)",
+      "lambda_hybrid": null
+    },
+    "G_gate": {
+      "name": "G_gate: Selective Trust Gate",
+      "lambda_hybrid": null
+    },
+    "G_mem": {
+      "name": "G_mem: Memory Alone",
+      "lambda_hybrid": 1.0
+    }
+  },
+  "contrasts": [
+    {
+      "candidate": "G_gate",
+      "comparator": "G_fixed",
+      "label": "Selective Trust Gate vs Fixed Mixing (G_gate vs G_fixed)"
+    },
+    {
+      "candidate": "G_gate",
+      "comparator": "G_base",
+      "label": "Selective Trust Gate vs Backbone Alone (G_gate vs G_base)"
+    },
+    {
+      "candidate": "G_gate",
+      "comparator": "G_grid",
+      "label": "Selective Trust Gate vs Grid-Tuned Weight (G_gate vs G_grid)"
+    },
+    {
+      "candidate": "G_fixed",
+      "comparator": "G_base",
+      "label": "Fixed Mixing vs Backbone Alone (G_fixed vs G_base)"
+    }
+  ]
+}

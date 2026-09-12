@@ -70,3 +70,11 @@ reports/*
 Thumbs.db
 .vscode/
 .idea/
+
+# Evaluation outputs and large array caches
+research_runs/
+
+
+canonical_benchmark_outputs_superseded_v1/
+scientific_contract_dossier/
+

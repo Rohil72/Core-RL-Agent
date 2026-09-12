@@ -1,0 +1,53 @@
+{
+  "markets": {
+    "US": ["AAPL", "ADBE", "AMD", "AMGN", "AMZN", "AVGO", "CRM", "GOOGL", "INTU", "ISRG", "LMT", "META", "MSFT", "NOC", "NVDA", "ORCL", "REGN", "V"],
+    "India": ["ASIANPAINT.NS", "BAJFINANCE.NS", "BHARTIARTL.NS", "EICHERMOT.NS", "HCLTECH.NS", "HDFCBANK.NS", "ICICIBANK.NS", "INFY.NS", "LT.NS", "M&M.NS", "MARUTI.NS", "PIDILITIND.NS", "RELIANCE.NS", "SUNPHARMA.NS", "TCS.NS", "TECHM.NS", "TITAN.NS", "ULTRACEMCO.NS"],
+    "China": ["000333.SZ", "000725.SZ", "000858.SZ", "002230.SZ", "002241.SZ", "002415.SZ", "002475.SZ", "002594.SZ", "300059.SZ", "600036.SS", "600196.SS", "600276.SS", "600309.SS", "600519.SS", "600887.SS", "601012.SS", "601318.SS", "601888.SS"],
+    "Brazil": ["B3SA3.SA", "EQTL3.SA", "FLRY3.SA", "ITUB4.SA", "KLBN11.SA", "LREN3.SA", "MGLU3.SA", "PETR4.SA", "RADL3.SA", "RAIL3.SA", "RENT3.SA", "SUZB3.SA", "TOTS3.SA", "VALE3.SA", "WEGE3.SA"],
+    "France": ["AI.PA", "AIR.PA", "CAP.PA", "DG.PA", "DIM.PA", "DSY.PA", "EL.PA", "LR.PA", "MC.PA", "ML.PA", "OR.PA", "RI.PA", "RMS.PA", "SAF.PA", "SU.PA", "TEP.PA", "WLN.PA"],
+    "UK": ["AUTO.L", "AZN.L", "BA.L", "CPG.L", "CRDA.L", "DGE.L", "EXPN.L", "HLMA.L", "JD.L", "LSEG.L", "OCDO.L", "PRU.L", "REL.L", "RMV.L", "RTO.L", "SGE.L", "SPX.L"]
+  },
+  "sessions_per_year": {
+    "US": 252,
+    "India": 248,
+    "China": 242,
+    "Brazil": 249,
+    "France": 254,
+    "UK": 253
+  },
+  "backbone_seeds": [7, 17, 37],
+  "retrieval_seeds": [1001, 1002, 1003],
+  "window_sessions": 252,
+  "patch_size": 6,
+  "n_patches": 42,
+  "latent_dim": 128,
+  "execution": {
+    "initial_capital": 100000.0,
+    "max_slots": 3,
+    "fee_rate": 0.0010,
+    "cash_buffer_ratio": 0.95,
+    "min_holding_days_for_stop": 1,
+    "max_holding_sessions": 63,
+    "chandelier_multiplier": 2.5,
+    "chandelier_min_dist": 0.10,
+    "eps_vol": 1e-4
+  },
+  "retrieval_defaults": {
+    "k": 25,
+    "max_per_ticker": 3,
+    "min_separation_sessions": 21,
+    "memory_cutoff_date": "2020-12-31",
+    "tau": 0.08,
+    "lambda_hybrid": 0.25
+  },
+  "schedule": {
+    "training_cutoff": "2020-12-31",
+    "val_selection_start": "2021-01-01",
+    "val_selection_end": "2021-06-30",
+    "val_gate_start": "2021-07-01",
+    "val_gate_end": "2021-12-31",
+    "eval_start": "2022-01-01",
+    "eval_end": "2024-12-31",
+    "reference_benchmark_year": "2024"
+  }
+}

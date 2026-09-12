@@ -1,0 +1,54 @@
+{
+  "round": 2,
+  "name": "Learned Retrieval Keys",
+  "description": "Evaluates K0 (latent 128D), K1 (random 32D), K2 (trained 32D) alongside reference rows M2 (input-window) and M0 (no-memory).",
+  "modes": {
+    "M0": {
+      "name": "M0: Backbone Alone",
+      "lambda_hybrid": 0.0,
+      "key_dim": null
+    },
+    "M2": {
+      "name": "M2: Input-Window Euclidean",
+      "lambda_hybrid": 0.25,
+      "key_dim": 966
+    },
+    "K0": {
+      "name": "K0: Original Latent Keys (128D)",
+      "lambda_hybrid": 0.25,
+      "key_dim": 128
+    },
+    "K1": {
+      "name": "K1: Random 32D Projection",
+      "lambda_hybrid": 0.25,
+      "key_dim": 32
+    },
+    "K2": {
+      "name": "K2: Learned 32D Key Projection",
+      "lambda_hybrid": 0.25,
+      "key_dim": 32
+    }
+  },
+  "contrasts": [
+    {
+      "candidate": "K2",
+      "comparator": "K1",
+      "label": "Learned Projection vs Random Projection (K2 vs K1)"
+    },
+    {
+      "candidate": "K2",
+      "comparator": "K0",
+      "label": "Learned Projection vs Original Latents (K2 vs K0)"
+    },
+    {
+      "candidate": "K2",
+      "comparator": "M2",
+      "label": "Learned Keys vs Input-Window Retrieval (K2 vs M2)"
+    },
+    {
+      "candidate": "K2",
+      "comparator": "M0",
+      "label": "Learned Key Memory vs Backbone Alone (K2 vs M0)"
+    }
+  ]
+}

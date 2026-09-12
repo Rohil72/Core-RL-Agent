@@ -1,0 +1,22 @@
+{
+  "schema_version": "1.0.0",
+  "python_version": "3.13.7 (tags/v3.13.7:bcee1c3, Aug 14 2025, 14:15:11) [MSC v.1944 64 bit (AMD64)]",
+  "platform": "Windows-11-10.0.26200-SP0",
+  "machine": "AMD64",
+  "processor": "Intel64 Family 6 Model 154 Stepping 3, GenuineIntel",
+  "pytorch_version": "2.6.0+cu124",
+  "cuda_available": true,
+  "cuda_version": "12.4",
+  "device_name": "NVIDIA GeForce RTX 2050",
+  "device_count": 1,
+  "installed_packages": {
+    "torch": "2.6.0+cu124",
+    "numpy": "1.26.4",
+    "pandas": "2.2.2",
+    "pyarrow": "14.0.1",
+    "fastparquet": "0.8.2",
+    "scipy": "1.11.4",
+    "scikit-learn": "1.3.2",
+    "pytest": "9.0.2"
+  }
+}
