@@ -2,7 +2,8 @@
 
 This document provides exact instructions to verify and reproduce the experimental findings and statistical analyses reported in:
 
-> **"A Reproducibility and Robustness Audit of Historical Market Memory for Equity Selection: Negative Validation Across Six Markets"**  
+> **"Auditable Historical-Memory Retrieval for Long-Horizon Equity Selection: Negative Validation Across Six Sovereign Markets"
+> Authors: Rohil Gujarathi, Sangeeta Oswal, Vaibhav Goyal**  
 > *Digital Finance* (Springer Nature)  
 > Code Repository: [https://github.com/Rohil72/Core-RL-Agent](https://github.com/Rohil72/Core-RL-Agent)  
 > Data Repository: [https://github.com/Rohil72/historical-memory-equity-data](https://github.com/Rohil72/historical-memory-equity-data)
@@ -43,7 +44,7 @@ We document three distinct levels of reproduction:
 # Clone the repository
 git clone https://github.com/Rohil72/Core-RL-Agent.git
 cd Core-RL-Agent
-git checkout paper-v1.0.0
+git checkout paper-v1.0.1
 
 # Create virtual environment
 python -m venv .venv

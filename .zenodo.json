@@ -1,9 +1,13 @@
 {
-  "title": "Core-RL-Agent: Causal Market Memory and Selective Trust Gating for Equity Selection",
-  "description": "Official research code repository accompanying 'A Reproducibility and Robustness Audit of Historical Market Memory for Equity Selection: Negative Validation Across Six Markets' (Digital Finance, Springer Nature).",
+  "title": "Core-RL-Agent: Auditable Historical-Memory Retrieval for Long-Horizon Equity Selection",
+  "description": "Official research code repository accompanying 'Auditable Historical-Memory Retrieval for Long-Horizon Equity Selection: Negative Validation Across Six Markets' (Digital Finance, Springer Nature).",
   "creators": [
     {
       "name": "Gujarathi, Rohil",
+      "affiliation": "Vivekanand Education Society's Institute of Technology (VESIT)"
+    },
+    {
+      "name": "Oswal, Sangeeta",
       "affiliation": "Vivekanand Education Society's Institute of Technology (VESIT)"
     },
     {
