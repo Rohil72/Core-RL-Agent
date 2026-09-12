@@ -1,0 +1,27 @@
+{
+  "execution_time_seconds": 504.6,
+  "python_version": "3.13.7 (tags/v3.13.7:bcee1c3, Aug 14 2025, 14:15:11) [MSC v.1944 64 bit (AMD64)]",
+  "torch_version": "2.6.0+cu124",
+  "cuda_device": "NVIDIA GeForce RTX 2050",
+  "checkpoint_hashes": {
+    "7": "3355e4f1a118c2e4c44f647bf3bcae43444a8b7e41498216c39abaf67659aba6",
+    "17": "81a774c9794a99e6651808d603ba944d4036c0b0faabd6025b702be8f4c36213",
+    "37": "92c6422d14fee7210ef496d00d8136299034f080b2e31904a619c3c658970d40"
+  },
+  "data_manifest_sha256": "bdf79b3866b3659b1e14e41453f31d558bbc057ab3e7af7c706a97762c33d7f5",
+  "systems_evaluated": [
+    "P0",
+    "P0*",
+    "P1",
+    "P2",
+    "P3",
+    "P4",
+    "P5",
+    "P6"
+  ],
+  "total_cells": 144,
+  "total_trades": 2637,
+  "total_decisions": 2343,
+  "total_precedents": 33550,
+  "entity_leakage_p3_rows": 0
+}

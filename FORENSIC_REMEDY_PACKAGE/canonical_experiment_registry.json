@@ -1,0 +1,259 @@
+{
+  "registry_metadata": {
+    "version": "1.0.0-canonical",
+    "standard": "Digital Finance Forensic Governance Standard (September 2026)",
+    "status": "APPROVED_FORENSIC_CANONICAL",
+    "git_commit_sha": "a3fb72c5b24819eafcc748765cc7078d19af4e51",
+    "data_manifest_sha256": "bdf79b3866b3659b1e14e41453f31d558bbc057ab3e7af7c706a97762c33d7f5",
+    "checkpoint_sha256": {
+      "seed_7": "3355e4f1a118c2e4c44f647bf3bcae43444a8b7e41498216c39abaf67659aba6",
+      "seed_17": "81a774c9794a99e6651808d603ba944d4036c0b0faabd6025b702be8f4c36213",
+      "seed_37": "92c6422d14fee7210ef496d00d8136299034f080b2e31904a619c3c658970d40"
+    },
+    "hardware_target": "NVIDIA GeForce RTX 2050 (CUDA 12.x)",
+    "execution_contract": {
+      "feature_dimension": 23,
+      "feature_description": "Frozen 23 causal technical features, standardized strictly against pre-2021 historical moments per sovereign market",
+      "universe": "103 tickers across 6 sovereign markets (US: 18, India: 18, China: 18, Brazil: 15, France: 17, UK: 17)",
+      "date_range": "Test evaluation period 2024-01-01 to 2024-12-31; Retrospective causal memory bank strictly <= 2020-12-31",
+      "execution_timing": "Signal evaluated at session t Close; Fill executed at session t+1 Open",
+      "transaction_costs": "10 bps per one-way turnover (20 bps round-trip) applied at fill execution",
+      "fx_policy": "Local sovereign currency units; zero synthetic FX cross-rate conversion volatility",
+      "exit_policy": "Dynamic 2.5 x ATR_14 Chandelier trailing stop (10% minimum floor), holding period capped at 63 trading sessions",
+      "portfolio_concurrency": "Maximum 3 concurrent positions per sovereign market, equal capital allocation",
+      "entity_leakage_rule": "Strict 0.0% entity leakage (query_ticker != neighbor_ticker) across all retrieval systems (P0, P0*, P2, P3)",
+      "seed_count": 3
+    }
+  },
+  "canonical_experiments": [
+    {
+      "experiment_id": "EXP-001-CANONICAL-144CELL-BENCHMARK",
+      "status": "canonical",
+      "target_claim": "Table 1 & Table 2: 144-Cell System Performance Matrix & Matched Panel Bootstrap Inference",
+      "manuscript_section": "Section 4.1 Benchmark Evaluation & Table 1-2",
+      "git_commit_sha": "a3fb72c5b24819eafcc748765cc7078d19af4e51",
+      "data_manifest_sha256": "bdf79b3866b3659b1e14e41453f31d558bbc057ab3e7af7c706a97762c33d7f5",
+      "checkpoint_sha256": "Multi-seed: {seed_7: 3355e4f1..., seed_17: 81a774c9..., seed_37: 92c6422d...}",
+      "feature_set": "Frozen 23 causal technical indicators",
+      "universe": "103 sovereign tickers (US, India, China, Brazil, France, UK)",
+      "date_range": "2024-01-01 to 2024-12-31",
+      "costs_fx": "10 bps per one-way turnover; local currency",
+      "exit_policy": "2.5 x ATR_14 Chandelier trailing stop (10% floor), max 63 sessions",
+      "seed_count": 3,
+      "raw_output_path": "canonical_benchmark_outputs/canonical_144_cell_performance_matrix.csv",
+      "associated_artifacts": [
+        "canonical_benchmark_outputs/canonical_daily_equity_curves.csv",
+        "canonical_benchmark_outputs/canonical_trade_execution_ledger.csv",
+        "canonical_benchmark_outputs/canonical_query_neighbor_decision_ledger.csv",
+        "canonical_benchmark_outputs/canonical_25_neighbor_ledger.csv",
+        "canonical_benchmark_outputs/canonical_paired_panel_bootstrap.csv",
+        "canonical_benchmark_outputs/canonical_run_metadata.json"
+      ],
+      "governance_audit": {
+        "entity_leakage_p3_percent": 0.0,
+        "entity_leakage_p0_percent": 0.0,
+        "entity_leakage_p0_star_percent": 0.0,
+        "timing_leakage": "Zero (t close signal -> t+1 open fill)",
+        "bootstrap_replications": 10000,
+        "bootstrap_block_length": 21
+      }
+    },
+    {
+      "experiment_id": "EXP-002-FAITHFULNESS-COUNTERFACTUAL-INTERVENTION",
+      "status": "canonical",
+      "target_claim": "Point 1-2: Interpretability Faithfulness & Decision Dependence under Perturbation",
+      "manuscript_section": "Section 5 Mechanistic Faithfulness & Decision Dependence",
+      "git_commit_sha": "a3fb72c5b24819eafcc748765cc7078d19af4e51",
+      "data_manifest_sha256": "bdf79b3866b3659b1e14e41453f31d558bbc057ab3e7af7c706a97762c33d7f5",
+      "checkpoint_sha256": "Seed 7 checkpoint",
+      "feature_set": "Frozen 23 causal technical indicators",
+      "universe": "103 sovereign tickers",
+      "date_range": "2024-01-01 to 2024-12-31 (243 active decision sessions)",
+      "costs_fx": "10 bps per one-way turnover; local currency",
+      "exit_policy": "2.5 x ATR_14 Chandelier trailing stop (10% floor), max 63 sessions",
+      "seed_count": 1,
+      "raw_output_path": "FORENSIC_REMEDY_PACKAGE/primary_p0_candidate_ledger.csv",
+      "associated_artifacts": [
+        "FORENSIC_REMEDY_PACKAGE/points_1_to_5_rebuilt_summary.json",
+        "FORENSIC_REMEDY_PACKAGE/generate_primary_p0_interventions.py"
+      ],
+      "governance_audit": {
+        "primary_p0_top1_change_rate": 0.1646,
+        "primary_p0_top3_change_rate": 0.3416,
+        "primary_p0_spearman_rho": 0.9648,
+        "primary_p0_sign_override_rate": 0.0526,
+        "exploratory_p0_star_top1_change_rate": 0.139,
+        "exploratory_p0_star_top3_change_rate": 0.359,
+        "claim_scope": "Counterfactual decision dependence verified; does NOT establish forward predictive validity or alpha"
+      }
+    },
+    {
+      "experiment_id": "EXP-003-TAIL-RISK-DISCRIMINATION",
+      "status": "canonical",
+      "target_claim": "Point 3: Downside Risk Discrimination & CVaR Flagging of Left-Tail Drawdowns",
+      "manuscript_section": "Section 4.3 Precedent Downside Risk Discrimination",
+      "git_commit_sha": "a3fb72c5b24819eafcc748765cc7078d19af4e51",
+      "data_manifest_sha256": "bdf79b3866b3659b1e14e41453f31d558bbc057ab3e7af7c706a97762c33d7f5",
+      "checkpoint_sha256": "Seed 7 checkpoint",
+      "feature_set": "Frozen 23 causal technical indicators",
+      "universe": "103 sovereign tickers",
+      "date_range": "2024-01-01 to 2024-12-31 (4,126 candidate evaluations)",
+      "costs_fx": "10 bps per one-way turnover; local currency",
+      "exit_policy": "2.5 x ATR_14 Chandelier trailing stop (10% floor), max 63 sessions",
+      "seed_count": 1,
+      "raw_output_path": "FORENSIC_REMEDY_PACKAGE/tail_cvar_discrimination_data.csv",
+      "associated_artifacts": [
+        "FORENSIC_REMEDY_PACKAGE/tail_cvar_discrimination.py"
+      ],
+      "governance_audit": {
+        "severe_drawdown_mean_cvar": 0.2545,
+        "benign_trade_mean_cvar": 0.1167,
+        "risk_ratio": 2.18,
+        "two_sample_t_statistic": 7.3,
+        "p_value": 1.42e-12,
+        "conclusion": "Precedent downside CVaR exhibits statistically robust discriminatory power against forward tail risk"
+      }
+    },
+    {
+      "experiment_id": "EXP-004-CROSS-SECTIONAL-RANK-IC",
+      "status": "canonical",
+      "target_claim": "Point 4: True Cross-Sectional Retrieval Quality Across Competing Candidate Assets",
+      "manuscript_section": "Section 4.4 Cross-Sectional Information Coefficient & Regime Shift Analysis",
+      "git_commit_sha": "a3fb72c5b24819eafcc748765cc7078d19af4e51",
+      "data_manifest_sha256": "bdf79b3866b3659b1e14e41453f31d558bbc057ab3e7af7c706a97762c33d7f5",
+      "checkpoint_sha256": "Seed 7 checkpoint",
+      "feature_set": "Frozen 23 causal technical indicators",
+      "universe": "103 sovereign tickers",
+      "date_range": "2024-01-01 to 2024-12-31 (4,126 candidate evaluations across 243 active trading sessions)",
+      "costs_fx": "10 bps per one-way turnover; local currency",
+      "exit_policy": "2.5 x ATR_14 Chandelier trailing stop (10% floor), max 63 sessions",
+      "seed_count": 1,
+      "raw_output_path": "FORENSIC_REMEDY_PACKAGE/full_candidate_63d_outcome_panel.csv",
+      "associated_artifacts": [
+        "FORENSIC_REMEDY_PACKAGE/points_1_to_5_rebuilt_summary.json"
+      ],
+      "governance_audit": {
+        "score_rank_ic_mean": -0.0592,
+        "score_rank_ic_se": 0.0176,
+        "neighbor_mu_rank_ic_mean": -0.0587,
+        "direct_utility_rank_ic_mean": -0.0887,
+        "economic_interpretation": "Direct model suffers from macro regime shift post-2020; memory term acts as Bayesian shrinkage, dampening direct error"
+      }
+    },
+    {
+      "experiment_id": "EXP-005-LONG-HORIZON-KM-RMST",
+      "status": "canonical",
+      "target_claim": "Point 5: Operational Long Horizon Survival Analysis & Continuous RMST at 63 Sessions",
+      "manuscript_section": "Section 4.2 Trade Duration & Survival Analysis",
+      "git_commit_sha": "a3fb72c5b24819eafcc748765cc7078d19af4e51",
+      "data_manifest_sha256": "bdf79b3866b3659b1e14e41453f31d558bbc057ab3e7af7c706a97762c33d7f5",
+      "checkpoint_sha256": "Seed 7 checkpoint",
+      "feature_set": "Frozen 23 causal technical indicators",
+      "universe": "103 sovereign tickers",
+      "date_range": "2024-01-01 to 2024-12-31 (335 primary P0 trades)",
+      "costs_fx": "10 bps per one-way turnover; local currency",
+      "exit_policy": "2.5 x ATR_14 Chandelier trailing stop (10% floor), max 63 sessions",
+      "seed_count": 1,
+      "raw_output_path": "FORENSIC_REMEDY_PACKAGE/km_survival_rmst_results.json",
+      "associated_artifacts": [
+        "FORENSIC_REMEDY_PACKAGE/generate_km_rmst_survival.py"
+      ],
+      "governance_audit": {
+        "discrete_floor_rmst_days": 42.04,
+        "continuous_trapezoidal_rmst_days": 43.04,
+        "standard_error_days": 1.5,
+        "cluster_bootstrap_95_ci": [
+          40.21,
+          46.22
+        ],
+        "delta_explanation": "+1.00 session difference originates from continuous integral over [0, 1] with S(0)=1.0"
+      }
+    },
+    {
+      "experiment_id": "EXP-006-CLEAN-P3-ABLATION",
+      "status": "canonical",
+      "target_claim": "Point 2: Clean Cross-Ticker kNN Benchmark Rerun with Zero Same-Ticker Leakage",
+      "manuscript_section": "Section 4.1 Benchmark Evaluation (P3 Comparison)",
+      "git_commit_sha": "a3fb72c5b24819eafcc748765cc7078d19af4e51",
+      "data_manifest_sha256": "bdf79b3866b3659b1e14e41453f31d558bbc057ab3e7af7c706a97762c33d7f5",
+      "checkpoint_sha256": "Not applicable (raw technical feature Euclidean distance)",
+      "feature_set": "Frozen 23 causal technical indicators",
+      "universe": "103 sovereign tickers",
+      "date_range": "2024-01-01 to 2024-12-31 (342 trades, 6,840 retrieved precedents)",
+      "costs_fx": "10 bps per one-way turnover; local currency",
+      "exit_policy": "2.5 x ATR_14 Chandelier trailing stop (10% floor), max 63 sessions",
+      "seed_count": 1,
+      "raw_output_path": "FORENSIC_REMEDY_PACKAGE/clean_p3_neighbor_ledger.csv",
+      "associated_artifacts": [
+        "FORENSIC_REMEDY_PACKAGE/clean_p3_cross_ticker_rerun.py"
+      ],
+      "governance_audit": {
+        "legacy_entity_leakage_rows": 1710,
+        "legacy_entity_leakage_percent": 20.0,
+        "clean_entity_leakage_rows": 0,
+        "clean_entity_leakage_percent": 0.0,
+        "clean_p3_annualized_return": 0.0216,
+        "clean_p3_sharpe": 0.192,
+        "clean_p3_max_drawdown": -0.1965,
+        "clean_p3_rank_ic": -0.0145
+      }
+    },
+    {
+      "experiment_id": "EXP-007-RANDOM-POOL-BASELINE",
+      "status": "canonical",
+      "target_claim": "Point 2: Distributional Null Baseline from 1,000 Uninformed Synthetic Portfolios",
+      "manuscript_section": "Section 4.1 Statistical Controls & Empirical Nulls",
+      "git_commit_sha": "a3fb72c5b24819eafcc748765cc7078d19af4e51",
+      "data_manifest_sha256": "bdf79b3866b3659b1e14e41453f31d558bbc057ab3e7af7c706a97762c33d7f5",
+      "checkpoint_sha256": "Not applicable (random uniform allocation null)",
+      "feature_set": "Not applicable",
+      "universe": "103 sovereign tickers",
+      "date_range": "2024-01-01 to 2024-12-31",
+      "costs_fx": "10 bps per one-way turnover; local currency",
+      "exit_policy": "2.5 x ATR_14 Chandelier trailing stop (10% floor), max 63 sessions",
+      "seed_count": 1000,
+      "raw_output_path": "FORENSIC_REMEDY_PACKAGE/random_pool_baseline_draws.csv",
+      "associated_artifacts": [
+        "FORENSIC_REMEDY_PACKAGE/random_pool_baseline_generator.py"
+      ],
+      "governance_audit": {
+        "null_draws": 1000,
+        "null_mean_return": -0.0412,
+        "null_mean_sharpe": -0.284,
+        "null_mean_max_drawdown": -0.245
+      }
+    }
+  ],
+  "bundle_disposition": {
+    "FORENSIC_REMEDY_PACKAGE/": {
+      "status": "canonical",
+      "disposition": "Primary forensic remedy directory containing uncompressed, audited empirical tables, intervention datasets, and verification scripts resolving Points 1 through 5.",
+      "read_only": true
+    },
+    "canonical_benchmark_outputs/": {
+      "status": "canonical",
+      "disposition": "Clean, leakage-free 144-cell matched benchmark reproduction artifacts across all 8 systems (P0-P6) with 0.0% entity leakage.",
+      "read_only": true
+    },
+    "paper/internal/evidence/canonical_benchmark_reproduction/": {
+      "status": "canonical",
+      "disposition": "Internal mirror of the clean 144-cell benchmark reproduction artifacts.",
+      "read_only": true
+    },
+    "exports/CORE_RL_V4_VERIFIED_GOVERNANCE_PACKAGE/": {
+      "status": "historical",
+      "disposition": "Reconstructed interim governance package. Retained strictly for frozen model checkpoints (models/v4_metric_transformer_seed_*.pt). Ledgers contain reconstructed nearest neighbors rather than raw runtime logs and are superseded by FORENSIC_REMEDY_PACKAGE.",
+      "read_only": true
+    },
+    "CORE_RL_V4_COMPACT_PACKAGE/": {
+      "status": "superseded",
+      "disposition": "Deprecated interim package superseded by FORENSIC_REMEDY_PACKAGE. Should NOT be referenced in the paper manuscript.",
+      "read_only": true
+    },
+    "FINAL_SUBMISSION_PACKAGE/": {
+      "status": "superseded",
+      "disposition": "Pre-audit submission bundle superseded due to audited entity leakage in P3 (20.0% same-ticker precedents) and unadjusted TOST inference. OHLCV data cache retained for data integrity manifest.",
+      "read_only": true
+    }
+  }
+}
