@@ -44,7 +44,7 @@ We document three distinct levels of reproduction:
 # Clone the repository
 git clone https://github.com/Rohil72/Core-RL-Agent.git
 cd Core-RL-Agent
-git checkout paper-v1.0.1
+git checkout paper-v1.0.2
 
 # Create virtual environment
 python -m venv .venv
@@ -62,7 +62,7 @@ pip install -r requirements.txt
 Run the full pytest suite to verify all causal invariants, mathematical identities, and release contracts:
 
 ```bash
-pytest tests/test_release_contract.py tests/test_final_analysis_reconciliation.py -v
+pytest tests/test_release_contract.py tests/test_validation_suite.py tests/test_final_analysis_reconciliation.py -v
 ```
 
 All tests must pass with exit code 0.

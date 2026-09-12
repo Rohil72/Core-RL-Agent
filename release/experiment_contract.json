@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.0.1",
+  "schema_version": "1.0.2",
   "study_name": "final_comparative_study",
   "contract_date": "2026-09-13",
   "target_journal": "Digital Finance (Springer Nature)",
@@ -9,7 +9,7 @@
     "mlp_backbone": {
       "architecture": "Input(23) -> Linear(23, 64) -> LayerNorm(64) -> GELU() -> Linear(64, 128) -> LayerNorm(128) -> Linear(128, 1)",
       "input_dimension": 23,
-      "input_nature": "23-dimensional normalized feature vector at decision session t-1 (training uses feat[loc-1]; query evaluation takes final 6-session patch mean)",
+      "input_nature": "23-dimensional normalized technical features. Single-row training convention uses feature vector at session loc-1 (feat[loc-1]); query evaluation convention uses the mean over the final 6-session patch (sessions loc-6 to loc-1).",
       "latent_dimension": 128,
       "hidden_dimension": 64,
       "loss": "MSE",
@@ -27,7 +27,7 @@
         "2013-01-01",
         "2020-12-31"
       ],
-      "checkpoint_selection": "minimum_validation_mse_2021",
+      "checkpoint_selection": "epoch_5_final_frozen (no early stopping)",
       "checkpoint_files": {
         "seed_7": {
           "path": "models/mlp_encoder_seed_7.pt",
@@ -44,7 +44,10 @@
           "sha256": "2f7aee308b93fb9ad8da7c1dd46f45af3b63231abb94a7869e6c6e5e7e5ed65b",
           "bytes": 45472
         }
-      }
+      },
+      "gelu_activation_count": 1,
+      "gelu_activation_note": "Exactly ONE GELU activation between LayerNorm(64) and Linear(64, 128); no activation follows LayerNorm(128) before head.",
+      "early_stopping": false
     },
     "transformer_backbone": {
       "architecture": "Input(B, 42, 23) -> Linear(23, 64) + PositionalEncoding -> 2-layer TransformerEncoder(d=64, nhead=4, dim_ff=128, dropout=0.1) -> AttentionPool -> Linear(64, 128) -> LayerNorm(128) -> Linear(128, 1)",
@@ -155,7 +158,7 @@
     ]
   },
   "selective_trust_gate": {
-    "functional_form": "g_t = sigmoid(a^T u_t + b)",
+    "functional_form": "Normalized linear logistic model: g_t = sigmoid(w^T z_t + b), where z_t = (u_t - mu_u) / (sigma_u + 1e-8)",
     "evaluation_input_channels": [
       "channel_1: abs_backbone_prediction (|q_pred|)",
       "channel_2: abs_prediction_discrepancy (|q_pred - mem_sim_pred|)",
@@ -208,7 +211,14 @@
         "sha256": "a18e715ba847ac3644b4fbe557403515871bed712b669a850774ff2ddf8c7408",
         "bytes": 2376
       }
-    }
+    },
+    "ordered_inputs": [
+      "channel_1: abs_base_prediction (|q_pred|)",
+      "channel_2: abs_prediction_discrepancy (|q_pred - mem_sim_pred|)",
+      "channel_3: abs_memory_prediction (|mem_sim_pred|)",
+      "channel_4: constant_baseline_volatility (0.015)"
+    ],
+    "volatility_channel_rule": "Constant 0.015 baseline volatility across all evaluation queries. Asset-specific trailing return volatility is applied strictly in portfolio sizing/scoring inside the execution engine, not in this neural gate channel."
   },
   "fixed_mixture_selection": {
     "grid_candidates": [
@@ -252,7 +262,9 @@
   "metric_definitions": {
     "sharpe_ratio": "Annualized Sharpe ratio computed as mean daily return divided by population standard deviation (ddof=0) multiplied by sqrt(252)",
     "win_rate": "Fraction of active daily trading sessions with positive return (returns > 0.0)",
-    "rank_ic": "Pooled Spearman rank correlation over all asset-date predictions across the entire market-year run; marked null for constant forecasts"
+    "rank_ic": "Pooled asset-date Spearman rank correlation over all evaluation predictions. HIST_PRIOR records 0.0 as a legacy numerical sentinel for an undefined rank correlation (constant cross-sectional predictions produce zero rank variance).",
+    "transaction_fees": "Flat 10.0 bps (0.0010) per executed leg applied uniformly across all sovereign markets",
+    "penny_accounting": "Author-reported certification from conformance_audit_report.json (max discrepancy <= $0.10 across all cells; not independently verified from raw trade ticks)"
   },
   "leakage_guardrails": {
     "same_ticker_exclusion": "Enforced query filter rule (mem_ticker != query_ticker); no same-company precedents permitted in top-k",

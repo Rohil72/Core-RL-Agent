@@ -1,0 +1,420 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "HistoricalMemoryEquityDataTablesSchema",
+  "description": "Validation schema for canonical data files in historical-memory-equity-data",
+  "type": "object",
+  "definitions": {
+    "DailyReturnRecord": {
+      "type": "object",
+      "required": [
+        "run_id",
+        "arm",
+        "market",
+        "seed",
+        "date",
+        "calendar_week",
+        "return",
+        "equity"
+      ],
+      "properties": {
+        "run_id": {
+          "type": "string"
+        },
+        "arm": {
+          "type": "string"
+        },
+        "market": {
+          "type": "string",
+          "enum": [
+            "US",
+            "India",
+            "China",
+            "Brazil",
+            "France",
+            "UK"
+          ]
+        },
+        "seed": {
+          "type": [
+            "integer",
+            "string"
+          ]
+        },
+        "date": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        },
+        "calendar_week": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        },
+        "return": {
+          "type": "number"
+        },
+        "equity": {
+          "type": "number"
+        }
+      }
+    },
+    "PrimaryContrastRecord": {
+      "type": "object",
+      "required": [
+        "contrast_id",
+        "candidate",
+        "comparator",
+        "delta_original",
+        "ci_lower",
+        "ci_upper",
+        "p_raw",
+        "p_holm"
+      ],
+      "properties": {
+        "contrast_id": {
+          "type": "string",
+          "enum": [
+            "C1",
+            "C2",
+            "C3",
+            "C4",
+            "C5"
+          ]
+        },
+        "candidate": {
+          "type": "string"
+        },
+        "comparator": {
+          "type": "string"
+        },
+        "delta_original": {
+          "type": "number"
+        },
+        "ci_lower": {
+          "type": "number"
+        },
+        "ci_upper": {
+          "type": "number"
+        },
+        "p_raw": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        "p_holm": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        "statistically_significant": {
+          "type": "boolean"
+        },
+        "delta_return_original": {
+          "type": "number"
+        },
+        "ci_ret_lower": {
+          "type": "number"
+        },
+        "ci_ret_upper": {
+          "type": "number"
+        },
+        "p_ret_raw": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0
+        }
+      }
+    },
+    "SecondaryContrastRecord": {
+      "type": "object",
+      "required": [
+        "contrast_id",
+        "candidate",
+        "comparator",
+        "delta_original",
+        "ci_lower",
+        "ci_upper",
+        "p_raw_unadjusted"
+      ],
+      "properties": {
+        "contrast_id": {
+          "type": "string"
+        },
+        "candidate": {
+          "type": "string"
+        },
+        "comparator": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "delta_original": {
+          "type": "number"
+        },
+        "ci_lower": {
+          "type": "number"
+        },
+        "ci_upper": {
+          "type": "number"
+        },
+        "p_raw_unadjusted": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        "delta_return_original": {
+          "type": "number"
+        },
+        "ci_ret_lower": {
+          "type": "number"
+        },
+        "ci_ret_upper": {
+          "type": "number"
+        },
+        "p_ret_raw": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0
+        }
+      }
+    },
+    "MasterPerformanceRecord": {
+      "type": "object",
+      "required": [
+        "arm",
+        "annualized_return",
+        "sharpe_ratio",
+        "max_drawdown",
+        "win_rate",
+        "turnover",
+        "avg_exposure"
+      ],
+      "properties": {
+        "arm": {
+          "type": "string"
+        },
+        "annualized_return": {
+          "type": "number"
+        },
+        "sharpe_ratio": {
+          "type": "number"
+        },
+        "max_drawdown": {
+          "type": "number"
+        },
+        "win_rate": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        "turnover": {
+          "type": "number",
+          "minimum": 0.0
+        },
+        "avg_exposure": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        "forecast_mse": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "rank_ic": {
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      }
+    },
+    "RunManifestRecord": {
+      "type": "object",
+      "required": [
+        "run_id",
+        "arm",
+        "market",
+        "seed",
+        "annualized_return",
+        "sharpe_ratio"
+      ],
+      "properties": {
+        "run_id": {
+          "type": "string"
+        },
+        "arm": {
+          "type": "string"
+        },
+        "market": {
+          "type": "string",
+          "enum": [
+            "US",
+            "India",
+            "China",
+            "Brazil",
+            "France",
+            "UK"
+          ]
+        },
+        "seed": {
+          "type": [
+            "integer",
+            "string"
+          ]
+        },
+        "annualized_return": {
+          "type": "number"
+        },
+        "sharpe_ratio": {
+          "type": "number"
+        },
+        "max_drawdown": {
+          "type": "number"
+        },
+        "win_rate": {
+          "type": "number"
+        },
+        "turnover": {
+          "type": "number"
+        },
+        "avg_exposure": {
+          "type": "number"
+        }
+      }
+    },
+    "FeatureDefinitionRecord": {
+      "type": "object",
+      "required": [
+        "feature_idx",
+        "name",
+        "category",
+        "lookback_sessions",
+        "equation",
+        "scaling"
+      ],
+      "properties": {
+        "feature_idx": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 22
+        },
+        "name": {
+          "type": "string",
+          "pattern": "^tech_"
+        },
+        "category": {
+          "type": "string"
+        },
+        "lookback_sessions": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "equation": {
+          "type": "string"
+        },
+        "units": {
+          "type": "string"
+        },
+        "scaling": {
+          "type": "string"
+        },
+        "fill_handling": {
+          "type": "string"
+        },
+        "missing_value_rule": {
+          "type": "string"
+        }
+      }
+    },
+    "ExecutionRecord": {
+      "type": "object",
+      "required": [
+        "trade_id",
+        "market",
+        "ticker",
+        "signal_date",
+        "entry_date",
+        "exit_date",
+        "shares",
+        "realized_pnl",
+        "arm",
+        "seed"
+      ],
+      "properties": {
+        "trade_id": {
+          "type": "string"
+        },
+        "market": {
+          "type": "string"
+        },
+        "ticker": {
+          "type": "string"
+        },
+        "signal_date": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        },
+        "entry_date": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        },
+        "exit_date": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        },
+        "holding_days": {
+          "type": [
+            "integer",
+            "number"
+          ]
+        },
+        "exit_reason": {
+          "type": "string"
+        },
+        "entry_price": {
+          "type": "number"
+        },
+        "exit_price": {
+          "type": "number"
+        },
+        "shares": {
+          "type": [
+            "integer",
+            "number"
+          ]
+        },
+        "entry_fee": {
+          "type": "number"
+        },
+        "exit_fee": {
+          "type": "number"
+        },
+        "realized_pnl": {
+          "type": "number"
+        },
+        "return_pct": {
+          "type": "number"
+        },
+        "win": {
+          "type": [
+            "integer",
+            "boolean"
+          ]
+        },
+        "run_id": {
+          "type": "string"
+        },
+        "arm": {
+          "type": "string"
+        },
+        "seed": {
+          "type": [
+            "integer",
+            "string"
+          ]
+        }
+      }
+    }
+  }
+}

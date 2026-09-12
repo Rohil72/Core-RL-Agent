@@ -1,6 +1,6 @@
 # Core-RL-Agent
 
-[![Release](https://img.shields.io/badge/release-paper--v1.0.1-blue.svg)](https://github.com/Rohil72/Core-RL-Agent/releases/tag/paper-v1.0.1)
+[![Release](https://img.shields.io/badge/release-paper--v1.0.1-blue.svg)](https://github.com/Rohil72/Core-RL-Agent/releases/tag/paper-v1.0.2)
 [![Data](https://img.shields.io/badge/data-historical--memory--equity--data-green.svg)](https://github.com/Rohil72/historical-memory-equity-data)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.11%20%7C%203.13-blue)](https://www.python.org/)
@@ -18,7 +18,7 @@
 # Clone the repository
 git clone https://github.com/Rohil72/Core-RL-Agent.git
 cd Core-RL-Agent
-git checkout paper-v1.0.1
+git checkout paper-v1.0.2
 
 # Install minimal analysis requirements
 pip install numpy pandas pyarrow pytest

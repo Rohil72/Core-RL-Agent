@@ -8,8 +8,152 @@ import argparse
 import json
 import shutil
 from pathlib import Path
+from typing import List, Dict, Any
 import numpy as np
 import pandas as pd
+
+from memory_study.cache_builder import FEATURE_NAMES_23
+
+
+def generate_evaluated_feature_definitions() -> pd.DataFrame:
+    """
+    Generates names, order, formulas, units, scaling, and missing-value rules
+    derived directly from the evaluated 23-feature implementation (cache_builder.py).
+    """
+    feature_meta = {
+        "tech_return_1d": {
+            "category": "Momentum", "lookback_sessions": 1,
+            "equation": "P_t / P_{t-1} - 1", "units": "decimal_return",
+            "fill_handling": "fillna(0.0)"
+        },
+        "tech_momentum_3d": {
+            "category": "Momentum", "lookback_sessions": 3,
+            "equation": "P_t / P_{t-3} - 1", "units": "decimal_return",
+            "fill_handling": "fillna(0.0)"
+        },
+        "tech_momentum_10d": {
+            "category": "Momentum", "lookback_sessions": 10,
+            "equation": "P_t / P_{t-10} - 1", "units": "decimal_return",
+            "fill_handling": "fillna(0.0)"
+        },
+        "tech_momentum_21d": {
+            "category": "Momentum", "lookback_sessions": 21,
+            "equation": "P_t / P_{t-21} - 1", "units": "decimal_return",
+            "fill_handling": "fillna(0.0)"
+        },
+        "tech_volatility_21d": {
+            "category": "Volatility", "lookback_sessions": 21,
+            "equation": "Std(tech_return_1d, 21)", "units": "daily_return_std",
+            "fill_handling": "fillna(0.01)"
+        },
+        "tech_volume_sma_21d": {
+            "category": "Volume", "lookback_sessions": 21,
+            "equation": "SMA(Volume, 21)", "units": "shares",
+            "fill_handling": "fillna(Volume)"
+        },
+        "tech_volume_ratio_21d": {
+            "category": "Volume", "lookback_sessions": 21,
+            "equation": "Volume / (tech_volume_sma_21d + 1e-9)", "units": "ratio",
+            "fill_handling": "fillna(1.0)"
+        },
+        "tech_volume_change_1d": {
+            "category": "Volume", "lookback_sessions": 1,
+            "equation": "Volume_t / Volume_{t-1} - 1", "units": "decimal_change",
+            "fill_handling": "fillna(0.0)"
+        },
+        "tech_intraday_range_hl": {
+            "category": "Volatility", "lookback_sessions": 1,
+            "equation": "(High - Low) / (Close + 1e-9)", "units": "ratio_to_close",
+            "fill_handling": "fillna(0.02)"
+        },
+        "tech_drawdown_from_peak_21d": {
+            "category": "Range", "lookback_sessions": 252,
+            "equation": "(Close - RollingMax(Close, 252)) / (RollingMax + 1e-9)", "units": "ratio_to_peak",
+            "fill_handling": "fillna(0.0)"
+        },
+        "tech_trend_slope_21d": {
+            "category": "Trend", "lookback_sessions": 21,
+            "equation": "LinearSlope(Close, 21) / (Close + 1e-9)", "units": "slope_per_session",
+            "fill_handling": "fillna(0.0)"
+        },
+        "tech_close_vs_sma_50": {
+            "category": "Trend", "lookback_sessions": 50,
+            "equation": "(Close - SMA(Close, 50)) / (SMA_50 + 1e-9)", "units": "ratio_to_sma",
+            "fill_handling": "fillna(0.0)"
+        },
+        "tech_close_vs_sma_150": {
+            "category": "Trend", "lookback_sessions": 150,
+            "equation": "(Close - SMA(Close, 150)) / (SMA_150 + 1e-9)", "units": "ratio_to_sma",
+            "fill_handling": "fillna(0.0)"
+        },
+        "tech_close_vs_sma_200": {
+            "category": "Trend", "lookback_sessions": 200,
+            "equation": "(Close - SMA(Close, 200)) / (SMA_200 + 1e-9)", "units": "ratio_to_sma",
+            "fill_handling": "fillna(0.0)"
+        },
+        "tech_sma_200_trend_20": {
+            "category": "Trend", "lookback_sessions": 220,
+            "equation": "(SMA_200 - Shift(SMA_200, 20)) / (Shift(SMA_200, 20) + 1e-9)", "units": "ratio_to_lagged_sma",
+            "fill_handling": "fillna(0.0)"
+        },
+        "tech_pct_above_52w_low": {
+            "category": "Range", "lookback_sessions": 252,
+            "equation": "(Close - RollingMin(Close, 252)) / (RollingMin + 1e-9)", "units": "ratio_to_low",
+            "fill_handling": "fillna(0.0)"
+        },
+        "tech_pct_from_52w_high": {
+            "category": "Range", "lookback_sessions": 252,
+            "equation": "(Close - RollingMax(Close, 252)) / (RollingMax + 1e-9)", "units": "ratio_to_high",
+            "fill_handling": "fillna(0.0)"
+        },
+        "tech_up_down_volume_ratio_50": {
+            "category": "Volume", "lookback_sessions": 50,
+            "equation": "RollingSum(UpVol, 50) / (RollingSum(DownVol, 50) + 1e-9)", "units": "ratio",
+            "fill_handling": "fillna(1.0)"
+        },
+        "tech_rsi_14": {
+            "category": "Oscillator", "lookback_sessions": 14,
+            "equation": "(100 - (100 / (1 + RS))) / 100", "units": "normalized_0_to_1",
+            "fill_handling": "fillna(0.50)"
+        },
+        "tech_atr_ratio_14": {
+            "category": "Volatility", "lookback_sessions": 14,
+            "equation": "SMA(TrueRange, 14) / (Close + 1e-9)", "units": "ratio_to_close",
+            "fill_handling": "fillna(0.02)"
+        },
+        "tech_macd_signal_diff": {
+            "category": "Trend", "lookback_sessions": 26,
+            "equation": "(MACD - Signal) / (Close + 1e-9)", "units": "ratio_to_close",
+            "fill_handling": "fillna(0.0)"
+        },
+        "tech_bollinger_bandwidth_20": {
+            "category": "Volatility", "lookback_sessions": 20,
+            "equation": "(UpperBand - LowerBand) / (SMA_20 + 1e-9)", "units": "ratio_to_sma",
+            "fill_handling": "fillna(0.04)"
+        },
+        "tech_historical_vol_ratio_63_21": {
+            "category": "Volatility", "lookback_sessions": 63,
+            "equation": "Std(Return, 63) / (Std(Return, 21) + 1e-9)", "units": "volatility_ratio",
+            "fill_handling": "fillna(1.0)"
+        }
+    }
+
+    rows = []
+    for idx, name in enumerate(FEATURE_NAMES_23):
+        meta = feature_meta[name]
+        rows.append({
+            "feature_idx": idx,
+            "name": name,
+            "category": meta["category"],
+            "lookback_sessions": meta["lookback_sessions"],
+            "equation": meta["equation"],
+            "units": meta["units"],
+            "scaling": "Per-market standardized [-5.0, 5.0]",
+            "fill_handling": meta["fill_handling"],
+            "missing_value_rule": "feature-specific explicit fillna rules followed by per-market mean imputation"
+        })
+    return pd.DataFrame(rows)
+
 
 def export_bundle(source_dir: Path, output_dir: Path):
     source_dir = Path(source_dir).resolve()
@@ -57,50 +201,20 @@ def export_bundle(source_dir: Path, output_dir: Path):
     univ_df.sort_values(by=["market", "ticker"]).to_csv(data_dir / "universe_manifest.csv", index=False)
     print("   [+] Exported data/universe_manifest.csv")
     
-    # 2. Feature Definitions
-    feature_defs = [
-        {"feature_idx": 0, "name": "returns_1d", "category": "Momentum", "lookback_sessions": 1, "equation": "P_t / P_{t-1} - 1", "scaling": "Market-specific standardized pre-2021"},
-        {"feature_idx": 1, "name": "returns_5d", "category": "Momentum", "lookback_sessions": 5, "equation": "P_t / P_{t-5} - 1", "scaling": "Market-specific standardized pre-2021"},
-        {"feature_idx": 2, "name": "returns_21d", "category": "Momentum", "lookback_sessions": 21, "equation": "P_t / P_{t-21} - 1", "scaling": "Market-specific standardized pre-2021"},
-        {"feature_idx": 3, "name": "returns_63d", "category": "Momentum", "lookback_sessions": 63, "equation": "P_t / P_{t-63} - 1", "scaling": "Market-specific standardized pre-2021"},
-        {"feature_idx": 4, "name": "ma_ratio_5", "category": "Trend", "lookback_sessions": 5, "equation": "P_t / SMA_5 - 1", "scaling": "Market-specific standardized pre-2021"},
-        {"feature_idx": 5, "name": "ma_ratio_21", "category": "Trend", "lookback_sessions": 21, "equation": "P_t / SMA_21 - 1", "scaling": "Market-specific standardized pre-2021"},
-        {"feature_idx": 6, "name": "ma_ratio_63", "category": "Trend", "lookback_sessions": 63, "equation": "P_t / SMA_63 - 1", "scaling": "Market-specific standardized pre-2021"},
-        {"feature_idx": 7, "name": "ma_ratio_252", "category": "Trend", "lookback_sessions": 252, "equation": "P_t / SMA_252 - 1", "scaling": "Market-specific standardized pre-2021"},
-        {"feature_idx": 8, "name": "volatility_21", "category": "Volatility", "lookback_sessions": 21, "equation": "Std(returns_1d, 21) * sqrt(252)", "scaling": "Market-specific standardized pre-2021"},
-        {"feature_idx": 9, "name": "volatility_63", "category": "Volatility", "lookback_sessions": 63, "equation": "Std(returns_1d, 63) * sqrt(252)", "scaling": "Market-specific standardized pre-2021"},
-        {"feature_idx": 10, "name": "volatility_252", "category": "Volatility", "lookback_sessions": 252, "equation": "Std(returns_1d, 252) * sqrt(252)", "scaling": "Market-specific standardized pre-2021"},
-        {"feature_idx": 11, "name": "rsi_14", "category": "Oscillator", "lookback_sessions": 14, "equation": "100 - 100 / (1 + RS)", "scaling": "Market-specific standardized pre-2021"},
-        {"feature_idx": 12, "name": "macd", "category": "Trend", "lookback_sessions": 26, "equation": "EMA_12 - EMA_26", "scaling": "Market-specific standardized pre-2021"},
-        {"feature_idx": 13, "name": "macd_signal", "category": "Trend", "lookback_sessions": 9, "equation": "EMA_9(macd)", "scaling": "Market-specific standardized pre-2021"},
-        {"feature_idx": 14, "name": "macd_hist", "category": "Trend", "lookback_sessions": 9, "equation": "macd - macd_signal", "scaling": "Market-specific standardized pre-2021"},
-        {"feature_idx": 15, "name": "bollinger_upper", "category": "Volatility", "lookback_sessions": 20, "equation": "(SMA_20 + 2*Std_20) / P_t - 1", "scaling": "Market-specific standardized pre-2021"},
-        {"feature_idx": 16, "name": "bollinger_lower", "category": "Volatility", "lookback_sessions": 20, "equation": "(SMA_20 - 2*Std_20) / P_t - 1", "scaling": "Market-specific standardized pre-2021"},
-        {"feature_idx": 17, "name": "bollinger_pct_b", "category": "Volatility", "lookback_sessions": 20, "equation": "(P_t - Lower) / (Upper - Lower)", "scaling": "Market-specific standardized pre-2021"},
-        {"feature_idx": 18, "name": "atr_14", "category": "Volatility", "lookback_sessions": 14, "equation": "SMA_14(TrueRange) / P_t", "scaling": "Market-specific standardized pre-2021"},
-        {"feature_idx": 19, "name": "high_distance_63", "category": "Range", "lookback_sessions": 63, "equation": "P_t / Max(High, 63) - 1", "scaling": "Market-specific standardized pre-2021"},
-        {"feature_idx": 20, "name": "high_distance_252", "category": "Range", "lookback_sessions": 252, "equation": "P_t / Max(High, 252) - 1", "scaling": "Market-specific standardized pre-2021"},
-        {"feature_idx": 21, "name": "drawdown_63", "category": "Range", "lookback_sessions": 63, "equation": "P_t / Max(High, 63) - 1", "scaling": "Market-specific standardized pre-2021"},
-        {"feature_idx": 22, "name": "drawdown_252", "category": "Range", "lookback_sessions": 252, "equation": "P_t / Max(High, 252) - 1", "scaling": "Market-specific standardized pre-2021"}
-    ]
-    pd.DataFrame(feature_defs).to_csv(data_dir / "feature_definitions.csv", index=False)
-    print("   [+] Exported data/feature_definitions.csv")
+    # 2. Dynamic Feature Definitions derived from evaluated 23-feature implementation
+    feat_df = generate_evaluated_feature_definitions()
+    feat_df.to_csv(data_dir / "feature_definitions.csv", index=False)
+    print(f"   [+] Exported data/feature_definitions.csv ({len(feat_df)} technical features)")
     
     # 3. Daily returns (with canonical calendar week mapping)
     daily_df = pd.read_parquet(source_dir / "daily_nav.parquet")
     daily_df["arm"] = daily_df["arm"].str.replace("Transformer_", "TRANS_")
     daily_df["date"] = pd.to_datetime(daily_df["date"])
-    # Calendar week = Monday of that week
     daily_df["calendar_week"] = daily_df["date"].apply(lambda d: (d - pd.Timedelta(days=d.weekday())).strftime("%Y-%m-%d"))
     daily_df["date"] = daily_df["date"].dt.strftime("%Y-%m-%d")
-    
-    # Assign deterministic run_id
     daily_df["run_id"] = daily_df["arm"] + "_" + daily_df["market"] + "_" + daily_df["seed"].astype(str)
-    
-    # Sort deterministically
     daily_df = daily_df.sort_values(by=["arm", "market", "seed", "date"])
     
-    # Save CSV and Parquet
     daily_df.to_csv(data_dir / "daily_returns.csv", index=False)
     daily_df.to_parquet(data_dir / "daily_returns.parquet", index=False)
     print(f"   [+] Exported data/daily_returns.csv & parquet ({len(daily_df)} rows)")
@@ -114,6 +228,8 @@ def export_bundle(source_dir: Path, output_dir: Path):
     
     # 5. Run Manifest & Metrics by Run
     metrics_run_df = pd.read_csv(reanalysis_dir / "metrics_by_run.csv")
+    if "run_id" not in metrics_run_df.columns:
+        metrics_run_df.insert(0, "run_id", metrics_run_df["arm"] + "_" + metrics_run_df["market"] + "_" + metrics_run_df["seed"].astype(str))
     metrics_run_df = metrics_run_df.sort_values(by=["arm", "market", "seed"])
     metrics_run_df.to_csv(data_dir / "metrics_by_run.csv", index=False)
     
@@ -122,8 +238,14 @@ def export_bundle(source_dir: Path, output_dir: Path):
     run_manifest_df.to_csv(data_dir / "run_manifest.csv", index=False)
     print("   [+] Exported data/metrics_by_run.csv and data/run_manifest.csv")
     
-    # 6. Reanalysis summary tables
-    for f in ["master_performance.csv", "market_performance.csv", "primary_contrasts.csv", "secondary_contrasts.csv", "block_length_sensitivity.csv", "estimand_reconciliation.csv"]:
+    # 6. Reanalysis summary tables (both displayed and full precision)
+    for f in [
+        "master_performance.csv", "master_performance_full_precision.csv",
+        "market_performance.csv", "market_performance_full_precision.csv",
+        "primary_contrasts.csv", "primary_contrasts_full_precision.csv",
+        "secondary_contrasts.csv", "secondary_contrasts_full_precision.csv",
+        "block_length_sensitivity.csv", "estimand_reconciliation.csv"
+    ]:
         if (reanalysis_dir / f).exists():
             shutil.copy2(reanalysis_dir / f, data_dir / f)
             print(f"   [+] Exported data/{f}")
@@ -131,7 +253,8 @@ def export_bundle(source_dir: Path, output_dir: Path):
     # 7. Bootstrap draws
     boot_df = pd.read_parquet(reanalysis_dir / "bootstrap_draws.parquet")
     boot_df_export = boot_df.copy()
-    boot_df_export.insert(0, "draw_idx", np.arange(1, len(boot_df_export) + 1))
+    if "draw_idx" not in boot_df_export.columns:
+        boot_df_export.insert(0, "draw_idx", np.arange(1, len(boot_df_export) + 1))
     boot_df_export.to_csv(data_dir / "bootstrap_draws.csv", index=False)
     boot_df_export.to_parquet(data_dir / "bootstrap_draws.parquet", index=False)
     print(f"   [+] Exported data/bootstrap_draws.csv & parquet ({len(boot_df_export)} draws)")
@@ -148,8 +271,13 @@ def export_bundle(source_dir: Path, output_dir: Path):
     
     # Gate manifest
     gate_manifest = {
-        "gate_architecture": "Linear logistic g_t = sigmoid(a^T u_t + b)",
-        "inputs": ["abs_base_prediction", "abs_discrepancy", "abs_mem_prediction", "asset_volatility_21"],
+        "gate_architecture": "Normalized linear logistic model: g_t = sigmoid(w^T z_t + b), where z_t = (u_t - mu_u) / (sigma_u + 1e-8)",
+        "ordered_inputs": [
+            "abs(base_prediction)",
+            "abs(base_prediction - memory_prediction)",
+            "abs(memory_prediction)",
+            "constant_baseline_volatility (0.015)"
+        ],
         "fitted_checkpoints": {
             "mlp_seed_7": "models/trust_gate_mlp_seed_7.pt",
             "mlp_seed_17": "models/trust_gate_mlp_seed_17.pt",
@@ -170,15 +298,17 @@ def export_bundle(source_dir: Path, output_dir: Path):
         "n_features": 23,
         "training_period": ["2013-01-01", "2020-12-31"],
         "scaling_method": "(x - mean) / (std + 1e-8)",
+        "clipping_bounds": [-5.0, 5.0],
         "markets": ["US", "India", "China", "Brazil", "France", "UK"]
     }
     (meta_dir / "scaler_manifest.json").write_text(json.dumps(scaler_manifest, indent=2), encoding="utf-8")
     
     print("[+] Release bundle export complete!")
 
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Export release bundle")
     parser.add_argument("--source", default="research_runs/memory_study/final_comparison", help="Source archive directory")
-    parser.add_argument("--output", default="c:/Users/rohil/OneDrive/Desktop/historical-memory-equity-data", help="Output data repository directory")
+    parser.add_argument("--output", default="../historical-memory-equity-data", help="Output data repository directory")
     args = parser.parse_args()
     export_bundle(args.source, args.output)
