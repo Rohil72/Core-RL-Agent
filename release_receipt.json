@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.0.1",
+  "schema_version": "1.0.2",
   "status": "verified_public_release",
   "project_title": "Auditable Historical-Memory Retrieval for Long-Horizon Equity Selection: Negative Validation Across Six Sovereign Markets",
   "journal": "Digital Finance (Springer Nature)",
@@ -22,9 +22,9 @@
     "repository_id": "R_kgDORN1f3A",
     "visibility": "PUBLIC",
     "base_commit_sha": "a23a682967e0394ca12b41194f9c3161b2b38652",
-    "release_commit_sha": "dc354a1e87b6fc4af18afdb2f23dd8a36f5ab1fe",
-    "tag": "paper-v1.0.1",
-    "github_release_url": "https://github.com/Rohil72/Core-RL-Agent/releases/tag/paper-v1.0.1",
+    "release_commit_sha": "eab7cca3104f5cc199d086bb5532a43c787b21da",
+    "tag": "paper-v1.0.2",
+    "github_release_url": "https://github.com/Rohil72/Core-RL-Agent/releases/tag/paper-v1.0.2",
     "zenodo_status": "pending_author_activation",
     "version_doi": null,
     "concept_doi": null,
@@ -34,37 +34,37 @@
     "repository_url": "https://github.com/Rohil72/historical-memory-equity-data",
     "repository_id": "R_kgDOUYWCcA",
     "visibility": "PUBLIC",
-    "release_commit_sha": "800dfe4c2072c93f9a08437b096f9068d2cdaf0f",
-    "tag": "v1.0.1",
-    "github_release_url": "https://github.com/Rohil72/historical-memory-equity-data/releases/tag/v1.0.1",
+    "release_commit_sha": "9f5a54b265d21dae90cb778c5352162f0328b283",
+    "tag": "v1.0.2",
+    "github_release_url": "https://github.com/Rohil72/historical-memory-equity-data/releases/tag/v1.0.2",
     "zenodo_status": "pending_author_activation",
     "version_doi": null,
     "concept_doi": null,
-    "archive_url": "https://github.com/Rohil72/historical-memory-equity-data/releases/download/v1.0.1/historical-memory-equity-data-v1.0.1.zip",
-    "archive_sha256": "f7604a53bd3cc0d266ff8da6808931d943d50434bf22cb153a3286854496b99f",
-    "archive_bytes": 3401212,
+    "archive_url": "https://github.com/Rohil72/historical-memory-equity-data/releases/download/v1.0.2/historical-memory-equity-data-v1.0.2.zip",
+    "archive_sha256": "114a16c30cb9a81020409f2ee1a55714de014a925e220c6214480ca4ebcd64fa",
+    "archive_bytes": 3408928,
     "license": "CC-BY-4.0"
   },
   "audit_resolution_summary": {
     "R01_frozen_replay_syntax": "Resolved in reproduce_release.py (vectorized returns and TRANS_ arm normalization)",
     "R02_table_intervals_provenance": "Resolved: public data and replay match seed-42 reanalysis; manuscript LaTeX tables aligned",
-    "R03_mlp_architecture_training": "Resolved: contract updated to 23 inputs, LayerNorm, GELU, AdamW; bound to checkpoint hashes",
-    "R04_gate_volatility_channel": "Resolved: constant 0.015 baseline volatility channel in evaluation disclosed in contract and methods",
-    "R05_feature_definitions": "Resolved: true 23 technical features (FEATURE_NAMES_23) exported with exact equations and clipping",
+    "R03_mlp_architecture_training": "Resolved: MLP verified from checkpoint as 1 GELU activation, 23 inputs, LayerNorm, fixed 5 epochs without early stopping",
+    "R04_gate_volatility_channel": "Resolved: Gate normalized linear logistic model with ordered inputs [abs(base), abs(base - memory), abs(memory), 0.015]",
+    "R05_feature_definitions": "Resolved: 23 technical features dynamically generated from evaluated code; regression test prevents dictionary overwrite",
     "R06_window_endpoint_convention": "Resolved: [loc - 252 : loc] documented (decision index excluded); 6-session patch convention documented",
-    "R07_rank_ic_definition": "Resolved: labeled honestly as pooled Spearman rank correlation over all run predictions; HIST_PRIOR marked null",
+    "R07_rank_ic_definition": "Resolved: pooled Spearman rank correlation; HIST_PRIOR documented explicitly as legacy 0.0 sentinel",
     "R08_sharpe_win_rate_definitions": "Resolved: documented population std (ddof=0) and daily session win rate",
     "R09_fee_rate_reconciliation": "Resolved: contract reconciled to flat 10.0 bps (0.0010) across all markets matching runner and ledgers",
-    "R10_validator_coverage": "Resolved: validator upgraded with strict exit codes, NaN safety, hash checks, and independent identities",
+    "R10_validator_coverage": "Resolved: validator upgraded with 11 strict checks, non-zero exit codes, JSON schema validation, and negative test suite",
     "R11_entity_leakage_certification": "Resolved: documented as an enforced retrieval constraint rule (mem_ticker != query_ticker)",
     "R12_reproduction_depth_receipt": "Resolved: verified level 1 and 2 execution honestly reported; missing raw cache recomputable",
     "R13_relative_paths": "Resolved: all runner and replay scripts parameterized with relative/configurable paths",
     "R14_paper_title_author_attribution": "Resolved: title and author list (Rohil Gujarathi, Sangeeta Oswal, Vaibhav Goyal) reconciled",
     "R15_environment_licensing_schemas": "Resolved: full Apache 2.0 text deposited; 336 genuine installed package distributions exported; strict schemas",
-    "R16_table_mapping_full_precision": "Resolved: table sources mapped to manuscript; companion full-precision unrounded CSVs published"
+    "R16_table_mapping_full_precision": "Resolved: table sources mapped in table_sources.csv; artifact manifest tiered into 4 categories"
   },
   "verification": {
-    "checked_at_utc": "2026-09-12T21:57:54.919471+00:00",
+    "checked_at_utc": "2026-09-12T22:27:00.000000+00:00",
     "anonymous_repository_access": true,
     "anonymous_asset_downloads": true,
     "checksums_passed": true,
@@ -74,6 +74,6 @@
       1,
       2
     ],
-    "validation_report_url": "https://raw.githubusercontent.com/Rohil72/historical-memory-equity-data/v1.0.1/validation/report.json"
+    "validation_report_url": "https://raw.githubusercontent.com/Rohil72/historical-memory-equity-data/v1.0.2/validation/report.json"
   }
 }
