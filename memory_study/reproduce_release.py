@@ -189,8 +189,7 @@ def reproduce(bundle_dir: Path, output_dir: Path):
                 
         if L_name == "primary_4w":
             for cid, _, _, _ in all_contrasts_def:
-                draws_storage[f"delta_sharpe_{cid}"] = delta_sr_draws[cid]
-                draws_storage[f"delta_ret_{cid}"] = delta_ret_draws[cid]
+                draws_storage[cid] = delta_sr_draws[cid]
 
         res_L = {}
         for cid, cand, comp, lbl in all_contrasts_def:
@@ -403,6 +402,23 @@ def reproduce(bundle_dir: Path, output_dir: Path):
     summary = {
         "status": "completed",
         "n_boot": N_BOOT,
+        "bootstrap_method": "First-order centered calendar-aligned weekly block bootstrap (non-wrapping blocks of 2, 4, and 8 weeks)",
+        "recomputed_fields": [
+            "annualized_return",
+            "sharpe_ratio",
+            "primary_contrasts (point estimates, 95% CIs, raw p-values, Holm-adjusted p-values)",
+            "secondary_contrasts (point estimates, 95% CIs, unadjusted p-values)",
+            "block_length_sensitivity (2w, 4w, 8w)",
+            "bootstrap_draws (10,000 draws)"
+        ],
+        "carried_forward_reference_fields": [
+            "max_drawdown",
+            "win_rate",
+            "turnover",
+            "avg_exposure",
+            "forecast_mse",
+            "rank_ic"
+        ],
         "primary_contrasts_verified": 5,
         "secondary_contrasts_verified": 4,
         "master_arms_verified": len(display_order)

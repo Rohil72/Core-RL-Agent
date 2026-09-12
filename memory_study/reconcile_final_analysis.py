@@ -694,7 +694,7 @@ Comparison of two-sided p-values and 95% confidence intervals across block lengt
    - **Simple Hybrid Challenger:** `MLP_MIX_SELECTED` (Fixed 50/50 mixture with development-selected $\lambda^*=0.50$).
    - **Predictive Challenger:** `MLP_GATE` (Uncertainty-conditioned selective trust gate).
 
-*No deployment claims are made; these frozen configurations serve as frozen pre-registered specifications for subsequent out-of-sample confirmation.*
+*No deployment claims are made; these frozen configurations serve as frozen prospective specifications for subsequent out-of-sample confirmation.*
 """
 
     with open(OUTPUT_DIR / "corrected_summary.md", "w", encoding="utf-8") as f:

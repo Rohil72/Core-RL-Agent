@@ -22,7 +22,7 @@
     "repository_id": "R_kgDORN1f3A",
     "visibility": "PUBLIC",
     "base_commit_sha": "a23a682967e0394ca12b41194f9c3161b2b38652",
-    "release_commit_sha": "eab7cca3104f5cc199d086bb5532a43c787b21da",
+    "release_commit_sha": "57eb74e59d7424cedd1c26b62f8864edcfe86594",
     "tag": "paper-v1.0.2",
     "github_release_url": "https://github.com/Rohil72/Core-RL-Agent/releases/tag/paper-v1.0.2",
     "zenodo_status": "pending_author_activation",
@@ -34,20 +34,20 @@
     "repository_url": "https://github.com/Rohil72/historical-memory-equity-data",
     "repository_id": "R_kgDOUYWCcA",
     "visibility": "PUBLIC",
-    "release_commit_sha": "9f5a54b265d21dae90cb778c5352162f0328b283",
+    "release_commit_sha": "a793e4c47a396ef1395591c2f717e41bcd29e862",
     "tag": "v1.0.2",
     "github_release_url": "https://github.com/Rohil72/historical-memory-equity-data/releases/tag/v1.0.2",
     "zenodo_status": "pending_author_activation",
     "version_doi": null,
     "concept_doi": null,
     "archive_url": "https://github.com/Rohil72/historical-memory-equity-data/releases/download/v1.0.2/historical-memory-equity-data-v1.0.2.zip",
-    "archive_sha256": "114a16c30cb9a81020409f2ee1a55714de014a925e220c6214480ca4ebcd64fa",
-    "archive_bytes": 3408928,
+    "archive_sha256": "96e4b4177a0479c8b8859ad22e4686c14c99cb33d01be684ab7a1cfb01cd78b7",
+    "archive_bytes": 5121057,
     "license": "CC-BY-4.0"
   },
   "audit_resolution_summary": {
     "R01_frozen_replay_syntax": "Resolved in reproduce_release.py (vectorized returns and TRANS_ arm normalization)",
-    "R02_table_intervals_provenance": "Resolved: public data and replay match seed-42 reanalysis; manuscript LaTeX tables aligned",
+    "R02_table_intervals_provenance": "Resolved: Level 1 replay recalculates returns, volatility, Sharpe, contrasts, and calendar-week bootstrap intervals to <= 1e-10; diagnostic fields (drawdown, win rate, turnover, exposure, MSE, Rank IC) carried forward from reference master table",
     "R03_mlp_architecture_training": "Resolved: MLP verified from checkpoint as 1 GELU activation, 23 inputs, LayerNorm, fixed 5 epochs without early stopping",
     "R04_gate_volatility_channel": "Resolved: Gate normalized linear logistic model with ordered inputs [abs(base), abs(base - memory), abs(memory), 0.015]",
     "R05_feature_definitions": "Resolved: 23 technical features dynamically generated from evaluated code; regression test prevents dictionary overwrite",
@@ -55,24 +55,23 @@
     "R07_rank_ic_definition": "Resolved: pooled Spearman rank correlation; HIST_PRIOR documented explicitly as legacy 0.0 sentinel",
     "R08_sharpe_win_rate_definitions": "Resolved: documented population std (ddof=0) and daily session win rate",
     "R09_fee_rate_reconciliation": "Resolved: contract reconciled to flat 10.0 bps (0.0010) across all markets matching runner and ledgers",
-    "R10_validator_coverage": "Resolved: validator upgraded with 11 strict checks, non-zero exit codes, JSON schema validation, and negative test suite",
+    "R10_validator_coverage": "Resolved: Two-tier validator (bundle consistency + replay verification at <= 1e-10 unrounded precision), full daily returns validation, exact 150 (arm, market, seed) cell combinations, and negative test suite with refreshed checksums asserting named failures",
     "R11_entity_leakage_certification": "Resolved: documented as an enforced retrieval constraint rule (mem_ticker != query_ticker)",
-    "R12_reproduction_depth_receipt": "Resolved: verified level 1 and 2 execution honestly reported; missing raw cache recomputable",
+    "R12_reproduction_depth_receipt": "Resolved: Level 1 reproduction demonstrated from bundle; Level 2/3 code and checkpoints provided with intermediate caches excluded to maintain compact bundle (<4 MB) and available separately",
     "R13_relative_paths": "Resolved: all runner and replay scripts parameterized with relative/configurable paths",
     "R14_paper_title_author_attribution": "Resolved: title and author list (Rohil Gujarathi, Sangeeta Oswal, Vaibhav Goyal) reconciled",
     "R15_environment_licensing_schemas": "Resolved: full Apache 2.0 text deposited; 336 genuine installed package distributions exported; strict schemas",
     "R16_table_mapping_full_precision": "Resolved: table sources mapped in table_sources.csv; artifact manifest tiered into 4 categories"
   },
   "verification": {
-    "checked_at_utc": "2026-09-12T22:27:00.000000+00:00",
+    "checked_at_utc": "2026-09-12T22:45:00.000000+00:00",
     "anonymous_repository_access": true,
     "anonymous_asset_downloads": true,
     "checksums_passed": true,
     "clean_analysis_replay_passed": true,
     "all_validator_checks_passed": true,
     "reproduction_levels_verified": [
-      1,
-      2
+      1
     ],
     "validation_report_url": "https://raw.githubusercontent.com/Rohil72/historical-memory-equity-data/v1.0.2/validation/report.json"
   }
