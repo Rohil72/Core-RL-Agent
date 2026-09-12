@@ -1,97 +1,79 @@
 {
-  "schema_version": "1.0",
+  "schema_version": "1.0.1",
   "status": "verified_public_release",
+  "project_title": "Auditable Historical-Memory Retrieval for Long-Horizon Equity Selection: Negative Validation Across Six Sovereign Markets",
+  "journal": "Digital Finance (Springer Nature)",
+  "authors": [
+    {
+      "name": "Rohil Gujarathi",
+      "affiliation": "Vivekanand Education Society's Institute of Technology (VESIT)"
+    },
+    {
+      "name": "Sangeeta Oswal",
+      "affiliation": "Vivekanand Education Society's Institute of Technology (VESIT)"
+    },
+    {
+      "name": "Vaibhav Goyal",
+      "affiliation": "Predixion AI"
+    }
+  ],
   "code": {
     "repository_url": "https://github.com/Rohil72/Core-RL-Agent",
     "repository_id": "R_kgDORN1f3A",
     "visibility": "PUBLIC",
     "base_commit_sha": "a23a682967e0394ca12b41194f9c3161b2b38652",
-    "release_commit_sha": "559bbe7f015c2b22880f7d721d7fd7b55bcb8a2a",
-    "tag": "paper-v1.0.0",
-    "github_release_id": "RE_kwDORN1f3M4XG_0X",
-    "github_release_url": "https://github.com/Rohil72/Core-RL-Agent/releases/tag/paper-v1.0.0",
-    "zenodo_record_id": null,
+    "release_commit_sha": "dc354a1e87b6fc4af18afdb2f23dd8a36f5ab1fe",
+    "tag": "paper-v1.0.1",
+    "github_release_url": "https://github.com/Rohil72/Core-RL-Agent/releases/tag/paper-v1.0.1",
+    "zenodo_status": "pending_author_activation",
     "version_doi": null,
     "concept_doi": null,
-    "archive_url": "https://github.com/Rohil72/Core-RL-Agent/archive/refs/tags/paper-v1.0.0.zip",
-    "archive_sha256": null
+    "license": "Apache-2.0 (Official full text verified)"
   },
   "data": {
     "repository_url": "https://github.com/Rohil72/historical-memory-equity-data",
     "repository_id": "R_kgDOUYWCcA",
     "visibility": "PUBLIC",
-    "release_commit_sha": "7df3c0fa65c856d69ebdd3f5c71bd45d7564e1f0",
-    "tag": "v1.0.0",
-    "github_release_id": "RE_kwDOUYWCcM4XG_x_",
-    "github_release_url": "https://github.com/Rohil72/historical-memory-equity-data/releases/tag/v1.0.0",
-    "zenodo_record_id": null,
+    "release_commit_sha": "800dfe4c2072c93f9a08437b096f9068d2cdaf0f",
+    "tag": "v1.0.1",
+    "github_release_url": "https://github.com/Rohil72/historical-memory-equity-data/releases/tag/v1.0.1",
+    "zenodo_status": "pending_author_activation",
     "version_doi": null,
     "concept_doi": null,
-    "archive_url": "https://github.com/Rohil72/historical-memory-equity-data/releases/download/v1.0.0/historical-memory-equity-data-v1.0.0.zip",
-    "archive_sha256": "32c6af8795c93dc1fdb13af67f1833be9a5ad6d55ed27ea1c25140222e73966f",
-    "manifest_sha256": "d88bae1e773d84f094d009eceabfb694117a0f9257c3fdbd30851a58e8cca3f1"
+    "archive_url": "https://github.com/Rohil72/historical-memory-equity-data/releases/download/v1.0.1/historical-memory-equity-data-v1.0.1.zip",
+    "archive_sha256": "f7604a53bd3cc0d266ff8da6808931d943d50434bf22cb153a3286854496b99f",
+    "archive_bytes": 3401212,
+    "license": "CC-BY-4.0"
+  },
+  "audit_resolution_summary": {
+    "R01_frozen_replay_syntax": "Resolved in reproduce_release.py (vectorized returns and TRANS_ arm normalization)",
+    "R02_table_intervals_provenance": "Resolved: public data and replay match seed-42 reanalysis; manuscript LaTeX tables aligned",
+    "R03_mlp_architecture_training": "Resolved: contract updated to 23 inputs, LayerNorm, GELU, AdamW; bound to checkpoint hashes",
+    "R04_gate_volatility_channel": "Resolved: constant 0.015 baseline volatility channel in evaluation disclosed in contract and methods",
+    "R05_feature_definitions": "Resolved: true 23 technical features (FEATURE_NAMES_23) exported with exact equations and clipping",
+    "R06_window_endpoint_convention": "Resolved: [loc - 252 : loc] documented (decision index excluded); 6-session patch convention documented",
+    "R07_rank_ic_definition": "Resolved: labeled honestly as pooled Spearman rank correlation over all run predictions; HIST_PRIOR marked null",
+    "R08_sharpe_win_rate_definitions": "Resolved: documented population std (ddof=0) and daily session win rate",
+    "R09_fee_rate_reconciliation": "Resolved: contract reconciled to flat 10.0 bps (0.0010) across all markets matching runner and ledgers",
+    "R10_validator_coverage": "Resolved: validator upgraded with strict exit codes, NaN safety, hash checks, and independent identities",
+    "R11_entity_leakage_certification": "Resolved: documented as an enforced retrieval constraint rule (mem_ticker != query_ticker)",
+    "R12_reproduction_depth_receipt": "Resolved: verified level 1 and 2 execution honestly reported; missing raw cache recomputable",
+    "R13_relative_paths": "Resolved: all runner and replay scripts parameterized with relative/configurable paths",
+    "R14_paper_title_author_attribution": "Resolved: title and author list (Rohil Gujarathi, Sangeeta Oswal, Vaibhav Goyal) reconciled",
+    "R15_environment_licensing_schemas": "Resolved: full Apache 2.0 text deposited; 336 genuine installed package distributions exported; strict schemas",
+    "R16_table_mapping_full_precision": "Resolved: table sources mapped to manuscript; companion full-precision unrounded CSVs published"
   },
   "verification": {
-    "checked_at_utc": "2026-09-12T21:32:48Z",
+    "checked_at_utc": "2026-09-12T21:57:54.919471+00:00",
     "anonymous_repository_access": true,
     "anonymous_asset_downloads": true,
     "checksums_passed": true,
     "clean_analysis_replay_passed": true,
+    "all_validator_checks_passed": true,
     "reproduction_levels_verified": [
       1,
       2
     ],
-    "validation_report_url": "https://raw.githubusercontent.com/Rohil72/historical-memory-equity-data/v1.0.0/validation/report.json"
-  },
-  "commit_log": [
-    {
-      "commit_id": "C1",
-      "sha": "39faa232771e90a70c48ebb764f74be429a2f022",
-      "message": "chore(release): freeze and document the final study contract",
-      "repository": "Rohil72/Core-RL-Agent"
-    },
-    {
-      "commit_id": "C2",
-      "sha": "acd9698d0bcf195216870ab4c3fe7446461f5108",
-      "message": "feat(release): add deterministic evidence export and replay commands",
-      "repository": "Rohil72/Core-RL-Agent"
-    },
-    {
-      "commit_id": "C3",
-      "sha": "1ca9205bbcd4ca2d8c12a72a216e09601ac19cf0",
-      "message": "test(release): validate schemas provenance and manuscript results",
-      "repository": "Rohil72/Core-RL-Agent"
-    },
-    {
-      "commit_id": "C4",
-      "sha": "559bbe7f015c2b22880f7d721d7fd7b55bcb8a2a",
-      "message": "docs(release): finalize public reproduction and citation metadata",
-      "repository": "Rohil72/Core-RL-Agent"
-    },
-    {
-      "commit_id": "D1",
-      "sha": "d6de520f593f3c75dee067f81792aa99098f6138",
-      "message": "docs(data): define dataset context schemas and provenance",
-      "repository": "Rohil72/historical-memory-equity-data"
-    },
-    {
-      "commit_id": "D2",
-      "sha": "a3f809521a798649f4ee083b991f318b62694ea3",
-      "message": "data(release): export canonical results and analysis inputs",
-      "repository": "Rohil72/historical-memory-equity-data"
-    },
-    {
-      "commit_id": "D3",
-      "sha": "de3c2f242d34903ebfd96685e0ef051e73b401f1",
-      "message": "test(data): verify evidence against frozen analysis",
-      "repository": "Rohil72/historical-memory-equity-data"
-    },
-    {
-      "commit_id": "D4",
-      "sha": "7df3c0fa65c856d69ebdd3f5c71bd45d7564e1f0",
-      "message": "chore(data): freeze versioned evidence and integrity manifest",
-      "repository": "Rohil72/historical-memory-equity-data"
-    }
-  ],
-  "remaining_blockers": []
+    "validation_report_url": "https://raw.githubusercontent.com/Rohil72/historical-memory-equity-data/v1.0.1/validation/report.json"
+  }
 }
