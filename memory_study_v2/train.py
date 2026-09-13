@@ -116,6 +116,8 @@ class TrainingState:
     torch_cuda_rng_state: Optional[List[torch.Tensor]]
     numpy_rng_state: Any
     python_rng_state: Any
+    generator_state: Optional[Dict[str, Any]] = None
+    epoch_val_losses: List[float] = field(default_factory=list)
     sampler_cursor: int = 0
 
 
@@ -127,11 +129,15 @@ def capture_training_state(
     macro_step: int = 0,
     micro_step: int = 0,
     sampler_cursor: int = 0,
+    generator: Optional[np.random.Generator] = None,
+    epoch_val_losses: Optional[List[float]] = None,
 ) -> TrainingState:
-    """Capture complete state including CUDA, Python, NumPy RNGs and cursor (R06)."""
+    """Capture complete state including CUDA, Python, NumPy RNGs, Generator, and cursor (R06)."""
     cuda_state = None
     if torch.cuda.is_available():
         cuda_state = torch.cuda.get_rng_state_all()
+
+    gen_state = generator.bit_generator.state if generator is not None else None
 
     return TrainingState(
         epoch=epoch,
@@ -146,6 +152,8 @@ def capture_training_state(
         torch_cuda_rng_state=cuda_state,
         numpy_rng_state=np.random.get_state(),
         python_rng_state=random.getstate(),
+        generator_state=gen_state,
+        epoch_val_losses=list(epoch_val_losses) if epoch_val_losses is not None else [],
         sampler_cursor=sampler_cursor,
     )
 
@@ -155,6 +163,7 @@ def restore_training_state(
     model: nn.Module,
     optimizer: torch.optim.Optimizer,
     selector: EarlyStoppingSelector,
+    generator: Optional[np.random.Generator] = None,
 ) -> int:
     """Restore complete state into model, optimizer, selector, and RNGs (R06)."""
     model.load_state_dict(state.model_state)
@@ -168,6 +177,9 @@ def restore_training_state(
         torch.cuda.set_rng_state_all(state.torch_cuda_rng_state)
     np.random.set_state(state.numpy_rng_state)
     random.setstate(state.python_rng_state)
+
+    if state.generator_state is not None and generator is not None:
+        generator.bit_generator.state = state.generator_state
 
     return state.epoch + 1
 
@@ -215,6 +227,8 @@ def train_backbone_model(
     val_markets: np.ndarray,
     seed: int = 7,
     lr: float = 1e-3,
+    weight_decay: float = 0.01,
+    grad_clip_norm: float = 1.0,
     micro_batch_size: int = 64,
     effective_batch_size: int = 512,
     min_epochs: int = 5,
@@ -223,20 +237,24 @@ def train_backbone_model(
     device: Optional[torch.device] = None,
     checkpoint_dir: Optional[Union[str, Path]] = None,
     interrupt_at_epoch: Optional[int] = None,
+    resume_from_checkpoint: Optional[Union[str, Path]] = None,
 ) -> Tuple[nn.Module, TrainingSummary]:
     """Complete integrated dataset-to-epoch training runner (R02).
 
     Features:
-    - Microbatch accumulation to match effective_batch_size.
+    - Microbatch accumulation to match effective_batch_size without epoch boundary drift.
     - Equal-market sample weighting.
     - EarlyStoppingSelector with earliest-best tie rule.
-    - Checkpoint persistence to disk with full RNG state (R06).
+    - Checkpoint persistence to disk with full RNG state and Generator state (R06).
+    - Bitwise exact checkpoint resume capability.
+    - AdamW with explicit weight decay (0.01) and gradient clipping (1.0).
+    - Streamed validation batches to bound peak memory.
     """
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     model.to(device)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
     selector = EarlyStoppingSelector(min_epochs=min_epochs, max_epochs=max_epochs, patience=patience)
 
     N_train = len(train_y)
@@ -246,7 +264,6 @@ def train_backbone_model(
     unique_mkts, counts = np.unique(train_markets, return_counts=True)
     samples_per_market = {str(m): int(c) for m, c in zip(unique_mkts, counts)}
 
-    accum_steps = max(1, effective_batch_size // micro_batch_size)
     macro_step = 0
     micro_step = 0
     epoch_val_losses: List[float] = []
@@ -254,48 +271,74 @@ def train_backbone_model(
     # Local RNG for dataset shuffling
     rng = np.random.default_rng(seed)
 
+    start_epoch = 1
+    if resume_from_checkpoint is not None:
+        chk_file = Path(resume_from_checkpoint)
+        if not chk_file.is_file() and chk_file.is_dir():
+            chk_file = chk_file / "last_checkpoint.pt"
+        if chk_file.exists():
+            state = torch.load(chk_file, weights_only=False)
+            start_epoch = restore_training_state(state, model, optimizer, selector, generator=rng)
+            macro_step = state.macro_step
+            micro_step = state.micro_step
+            epoch_val_losses = list(getattr(state, "epoch_val_losses", []))
+    else:
+        torch.manual_seed(seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(seed)
+
     if checkpoint_dir is not None:
         chk_path = Path(checkpoint_dir)
         chk_path.mkdir(parents=True, exist_ok=True)
 
-    for epoch in range(1, max_epochs + 1):
+    for epoch in range(start_epoch, max_epochs + 1):
         model.train()
-        # Shuffled indices for this epoch
         indices = rng.permutation(N_train)
 
-        # Microbatch training loop
-        optimizer.zero_grad()
-        accum_loss = 0.0
+        # Macro-batch accumulation loop
+        for macro_start in range(0, N_train, effective_batch_size):
+            macro_end = min(macro_start + effective_batch_size, N_train)
+            macro_len = macro_end - macro_start
+            if macro_len <= 0:
+                continue
 
-        for start_idx in range(0, N_train, micro_batch_size):
-            end_idx = min(start_idx + micro_batch_size, N_train)
-            batch_idx = indices[start_idx:end_idx]
-            b_size = len(batch_idx)
+            optimizer.zero_grad()
+            for micro_start in range(macro_start, macro_end, micro_batch_size):
+                micro_end = min(micro_start + micro_batch_size, macro_end)
+                batch_idx = indices[micro_start:micro_end]
+                b_size = len(batch_idx)
+                if b_size <= 0:
+                    continue
 
-            bx = train_x[batch_idx].to(device)
-            by = train_y[batch_idx].to(device)
-            bw = train_w[batch_idx].to(device)
+                bx = train_x[batch_idx].to(device)
+                by = train_y[batch_idx].to(device)
+                bw = train_w[batch_idx].to(device)
 
-            pred = model(bx)
-            loss_unreduced = (pred - by) ** 2
-            loss_weighted = torch.mean(loss_unreduced * bw)
+                pred = model(bx)
+                loss_unreduced = (pred - by) ** 2
+                loss_weighted = torch.mean(loss_unreduced * bw)
 
-            # Scale loss for gradient accumulation
-            loss_scaled = loss_weighted * (b_size / effective_batch_size)
-            loss_scaled.backward()
-            accum_loss += loss_scaled.item()
-            micro_step += 1
+                # Scale loss by actual micro-batch fraction of macro-batch
+                loss_scaled = loss_weighted * (b_size / macro_len)
+                loss_scaled.backward()
+                micro_step += 1
 
-            if micro_step % accum_steps == 0 or end_idx == N_train:
-                optimizer.step()
-                optimizer.zero_grad()
-                macro_step += 1
+            if grad_clip_norm > 0.0:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=grad_clip_norm)
+            optimizer.step()
+            optimizer.zero_grad()
+            macro_step += 1
 
-        # Validation at end of epoch
+        # Validation streamed in micro-batches
         model.eval()
+        val_preds_list = []
         with torch.no_grad():
-            vx = val_x.to(device)
-            val_preds = model(vx).cpu().numpy()
+            for v_start in range(0, len(val_y), micro_batch_size):
+                v_end = min(v_start + micro_batch_size, len(val_y))
+                bx = val_x[v_start:v_end].to(device)
+                bp = model(bx).cpu().numpy()
+                val_preds_list.append(bp)
+            val_preds = np.concatenate(val_preds_list, axis=0) if val_preds_list else np.array([], dtype=np.float32)
             val_targets = val_y.cpu().numpy()
             val_loss = compute_equal_market_val_mse(val_preds, val_targets, val_markets)
 
@@ -305,7 +348,15 @@ def train_backbone_model(
         # Save checkpoint if directory supplied
         if checkpoint_dir is not None:
             state = capture_training_state(
-                model, optimizer, selector, epoch, macro_step, micro_step, start_idx
+                model=model,
+                optimizer=optimizer,
+                selector=selector,
+                epoch=epoch,
+                macro_step=macro_step,
+                micro_step=micro_step,
+                sampler_cursor=0,
+                generator=rng,
+                epoch_val_losses=epoch_val_losses,
             )
             torch.save(state, Path(checkpoint_dir) / "last_checkpoint.pt")
             if is_best:

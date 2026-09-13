@@ -40,3 +40,18 @@ def test_venue_calendar_gap_invalidates_target():
     res = compute_target_labels(df, venue_sessions=scheduled)
     # Origin 0 spans across the missing session S15 -> valid_63 must be False!
     assert res["valid_63"].iloc[0] == False
+
+
+def test_missing_venue_calendar_entry_fails_closed():
+    """Verify that if a bar's session is missing from venue_sessions, it fails closed (valid=False)."""
+    # venue_sessions only lists sessions 0..60, missing target session at t+63
+    scheduled = [f"2020-01-{i+1:02d}" for i in range(60)]
+    df = pd.DataFrame({
+        "session": [f"2020-01-{i+1:02d}" for i in range(70)],
+        "tr_close": np.full(70, 100.0),
+        "is_valid_bar": True,
+    })
+    res = compute_target_labels(df, venue_sessions=scheduled)
+    # Origin 0 has target session 2020-01-64 which is NOT in scheduled calendar -> must be False!
+    assert res["valid_63"].iloc[0] == False
+

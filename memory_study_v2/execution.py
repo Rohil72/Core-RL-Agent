@@ -22,7 +22,6 @@ import numpy as np
 @dataclass
 class CorporateAction:
     split_ratio: float = 1.0      # S: old shares become old * S
-    dividend_cash: float = 0.0
     cash_dividend: float = 0.0    # D: cash dividend per pre-split share
 
 
@@ -51,7 +50,7 @@ class TradeRecord:
     session: str
     security_id: str
     side: str                     # "BUY", "SELL_STOP", "SELL_AGE", "TERMINAL_SELL"
-    quantity: int
+    quantity: float
     raw_price: float
     fill_price: float
     gross_notional: float
@@ -129,19 +128,23 @@ class PortfolioAccount:
         - Adjust last_valid_price: max(1e-9, (old_last_valid - D) / S) (R05).
         """
         for sec_id, act in actions.items():
+            if hasattr(act, "dividend_cash") and getattr(act, "dividend_cash", 0.0) != 0.0 and getattr(act, "cash_dividend", 0.0) == 0.0:
+                raise ValueError(
+                    f"Conflicting/deprecated field 'dividend_cash' found on action for {sec_id}. Use canonical 'cash_dividend'."
+                )
             if sec_id in self.positions:
                 pos = self.positions[sec_id]
                 old_qty = pos.quantity
                 S = act.split_ratio
-                D = getattr(act, "dividend_cash", getattr(act, "cash_dividend", 0.0))
+                D = getattr(act, "cash_dividend", 0.0)
 
                 # 1. Credit dividend cash
                 if D > 0.0:
                     self.cash += old_qty * D
 
-                # 2. Split adjustment
+                # 2. Split adjustment (retain action-created fractional shares)
                 if S > 0.0 and S != 1.0:
-                    pos.quantity = int(math.floor(old_qty * S))
+                    pos.quantity = float(old_qty * S)
                     pos.cost_basis = pos.cost_basis / S
 
                 # 3. Peak adjustment
@@ -309,13 +312,13 @@ class PortfolioAccount:
                 pos.stale_sessions += 1
                 holdings_value += pos.quantity * pos.last_valid_price
 
+            # Increment age (at close, position has completed another holding session)
+            pos.age_sessions += 1
+
             # Check age rule: age >= 63 queues exit
             if pos.age_sessions >= self.max_holding_sessions:
                 if sec_id not in self.pending_exits:
                     self.pending_exits[sec_id] = "MAX_AGE"
-
-            # Increment age
-            pos.age_sessions += 1
 
         total_nav = self.cash + holdings_value
         executed_notional = sum(
@@ -367,10 +370,18 @@ class PortfolioAccount:
         self,
         session: str,
         close_prices: Dict[str, float],
-    ) -> None:
-        """Synthetic terminal liquidation at final valid session close (Section 8.3)."""
+    ) -> float:
+        """Synthetic terminal liquidation at final valid session close (Section 8.3).
+
+        Strictly requires valid close price for each held position.
+        Deducts commission and slippage to determine final realized cash NAV.
+        """
         for sec_id, pos in list(self.positions.items()):
-            c = close_prices.get(sec_id, pos.last_valid_price)
+            if sec_id not in close_prices or not np.isfinite(close_prices[sec_id]) or close_prices[sec_id] <= 0.0:
+                raise ValueError(
+                    f"Missing or non-positive terminal close price for held position '{sec_id}' at terminal session {session}."
+                )
+            c = float(close_prices[sec_id])
             sell_fill = c * (1.0 - self.slippage)
             gross = pos.quantity * sell_fill
             comm = self.commission * gross
@@ -390,3 +401,20 @@ class PortfolioAccount:
                 reason="TERMINAL",
             ))
             del self.positions[sec_id]
+
+        final_nav = self.cash
+        if self.daily_history and self.daily_history[-1].session == session:
+            prev_eq = self.daily_history[-2].total_nav if len(self.daily_history) > 1 else self.initial_capital
+            terminal_ret = (final_nav / prev_eq) - 1.0 if prev_eq > 0.0 else 0.0
+            total_turnover = sum(t.gross_notional for t in self.trades if t.session == session)
+            self.daily_history[-1] = DailyLedgerState(
+                session=session,
+                cash=final_nav,
+                holdings_value=0.0,
+                total_nav=final_nav,
+                daily_return=terminal_ret,
+                turnover_notional=total_turnover,
+                num_positions=0,
+            )
+            self.prev_equity = final_nav
+        return final_nav

@@ -88,8 +88,10 @@ def compute_target_labels(
 
             # Check venue calendar continuity if supplied
             calendar_continuous_63 = True
-            if venue_idx_map and origin_sess in venue_idx_map and target_sess in venue_idx_map:
-                if venue_idx_map[target_sess] - venue_idx_map[origin_sess] != 63:
+            if venue_idx_map is not None:
+                if origin_sess not in venue_idx_map or target_sess not in venue_idx_map:
+                    calendar_continuous_63 = False
+                elif venue_idx_map[target_sess] - venue_idx_map[origin_sess] != 63:
                     calendar_continuous_63 = False
 
             if same_segment_63 and all_intermediate_valid_63 and all_closes_positive_63 and calendar_continuous_63:
@@ -107,8 +109,10 @@ def compute_target_labels(
             all_closes_positive_126 = bool(np.all(np.isfinite(tr_close[t : t + 127])) and np.all(tr_close[t : t + 127] > 0.0))
 
             calendar_continuous_126 = True
-            if venue_idx_map and origin_sess in venue_idx_map and mat_sess in venue_idx_map:
-                if venue_idx_map[mat_sess] - venue_idx_map[origin_sess] != 126:
+            if venue_idx_map is not None:
+                if origin_sess not in venue_idx_map or mat_sess not in venue_idx_map:
+                    calendar_continuous_126 = False
+                elif venue_idx_map[mat_sess] - venue_idx_map[origin_sess] != 126:
                     calendar_continuous_126 = False
 
             if same_segment_126 and all_intermediate_valid_126 and all_closes_positive_126 and calendar_continuous_126:

@@ -152,13 +152,28 @@ class SealedEvaluationLabels:
                 f"Prediction artifact evaluation year mismatch: expected {self.evaluation_year}, got {meta_year}"
             )
 
-        self._sealed = False
-        return self._labels_df.copy()
+        # Check expected query IDs coverage if specified
+        if self.expected_query_ids:
+            try:
+                preds_json = json.loads(payload_bytes.decode("utf-8"))
+                items = preds_json if isinstance(preds_json, list) else preds_json.get("queries", [])
+                found_qids = set()
+                for p in items:
+                    if isinstance(p, dict):
+                        if "query_id" in p:
+                            found_qids.add(p["query_id"])
+                        elif "fold_year" in p and "security_id" in p and "session_origin" in p:
+                            found_qids.add(f"{p['fold_year']}_{p['security_id']}_{p['session_origin']}")
+                missing = set(self.expected_query_ids) - found_qids
+                if missing:
+                    raise LabelIsolationViolationError(
+                        f"Prediction artifact missing {len(missing)} required query IDs."
+                    )
+            except Exception as e:
+                if isinstance(e, LabelIsolationViolationError):
+                    raise
+                raise LabelIsolationViolationError(f"Failed to inspect prediction query IDs: {e}")
 
-    def unlock_for_final_scoring(self, authorization_token: str) -> pd.DataFrame:
-        """Fallback token-based unlock for tests."""
-        if authorization_token != "EVALUATION_PREDICTIONS_SEALED":
-            raise LabelIsolationViolationError("Invalid authorization token to unlock evaluation labels.")
         self._sealed = False
         return self._labels_df.copy()
 
@@ -179,7 +194,7 @@ def get_fold_boundaries(evaluation_year: int) -> FoldBoundaries:
         dev_end=f"{y-1}-12-31",
         eval_start=f"{y}-01-01",
         eval_end=f"{y}-12-31",
-        bank_cutoff=f"{y-1}-12-31",
+        bank_cutoff=f"{y-3}-12-31",
     )
 
 

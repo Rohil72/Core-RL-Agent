@@ -10,14 +10,16 @@ Acceptance criteria addressed:
 
 from __future__ import annotations
 
+import glob
 import json
+import math
 import os
 import platform
 import shutil
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import psutil
@@ -36,14 +38,61 @@ from memory_study_v2.retrieval import retrieve_mem_sim
 from memory_study_v2.train import compute_equal_market_weights
 
 
+class PeakMemoryTracker:
+    """Tracks resident set size (RSS) high watermark across workload phases."""
+
+    def __init__(self, process: psutil.Process):
+        self.process = process
+        self.peak_rss_bytes = 0
+        self.update()
+
+    def update(self) -> None:
+        try:
+            mi = self.process.memory_info()
+            self.peak_rss_bytes = max(self.peak_rss_bytes, mi.rss, getattr(mi, "peak_wset", 0))
+        except Exception:
+            pass
+
+    @property
+    def peak_rss_mb(self) -> float:
+        self.update()
+        return round(self.peak_rss_bytes / (1024 ** 2), 2)
+
+
+# Measured dimensions across all 6 walk-forward folds (2020..2025)
+# Derived from 103 canonical securities (332,273 bars) in cache
+MEASURED_FOLD_DIMENSIONS: List[Dict[str, int]] = [
+    {"year": 2020, "train_samples": 126667, "val_samples": 25646, "dev_samples": 25639, "eval_queries": 25853, "bank_samples": 126667},
+    {"year": 2021, "train_samples": 152313, "val_samples": 25639, "dev_samples": 25853, "eval_queries": 25766, "bank_samples": 152313},
+    {"year": 2022, "train_samples": 177952, "val_samples": 25853, "dev_samples": 25766, "eval_queries": 25707, "bank_samples": 177952},
+    {"year": 2023, "train_samples": 203805, "val_samples": 25766, "dev_samples": 25707, "eval_queries": 25588, "bank_samples": 203805},
+    {"year": 2024, "train_samples": 229571, "val_samples": 25707, "dev_samples": 25588, "eval_queries": 25753, "bank_samples": 229571},
+    {"year": 2025, "train_samples": 255278, "val_samples": 25588, "dev_samples": 25753, "eval_queries": 25654, "bank_samples": 255278},
+]
+
+
+def to_native_types(obj: Any) -> Any:
+    """Recursively convert NumPy scalars to native Python types for JSON serialization."""
+    if isinstance(obj, dict):
+        return {str(k): to_native_types(v) for k, v in obj.items()}
+    elif isinstance(obj, (list, tuple)):
+        return [to_native_types(v) for v in obj]
+    elif isinstance(obj, (np.bool_, bool)):
+        return bool(obj)
+    elif isinstance(obj, (np.floating, float)):
+        return float(obj)
+    elif isinstance(obj, (np.integer, int)):
+        return int(obj)
+    return obj
+
 def run_operational_pilot() -> Dict[str, Any]:
-    """Execute realistic local workload profiling and cap-based budget projection (R01)."""
+    """Execute realistic local workload profiling and cap-based budget projection (R01, B6)."""
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     if torch.cuda.is_available():
         torch.cuda.reset_peak_memory_stats()
 
     process = psutil.Process(os.getpid())
-    t_start = time.perf_counter()
+    mem_tracker = PeakMemoryTracker(process)
 
     report: Dict[str, Any] = {
         "status": "LOCAL_PILOT_COMPLETE",
@@ -75,7 +124,7 @@ def run_operational_pilot() -> Dict[str, Any]:
 
     # Microbatches on device
     mlp = MLPAnnual(seed=7).to(device)
-    opt_mlp = torch.optim.AdamW(mlp.parameters(), lr=1e-3)
+    opt_mlp = torch.optim.AdamW(mlp.parameters(), lr=1e-3, weight_decay=0.01)
     x_mlp_micro = torch.randn(micro_batch, 966, device=device)
     y_micro = torch.randn(micro_batch, device=device)
     w_micro = torch.ones(micro_batch, device=device)
@@ -86,9 +135,11 @@ def run_operational_pilot() -> Dict[str, Any]:
         for _ in range(accum_steps):
             loss = torch.mean(((mlp(x_mlp_micro) - y_micro) ** 2) * w_micro) * (micro_batch / effective_batch)
             loss.backward()
+        torch.nn.utils.clip_grad_norm_(mlp.parameters(), max_norm=1.0)
         opt_mlp.step()
     if torch.cuda.is_available():
         torch.cuda.synchronize()
+    mem_tracker.update()
 
     # Time 10 macro updates (80 micro steps)
     t0 = time.perf_counter()
@@ -97,14 +148,16 @@ def run_operational_pilot() -> Dict[str, Any]:
         for _ in range(accum_steps):
             loss = torch.mean(((mlp(x_mlp_micro) - y_micro) ** 2) * w_micro) * (micro_batch / effective_batch)
             loss.backward()
+        torch.nn.utils.clip_grad_norm_(mlp.parameters(), max_norm=1.0)
         opt_mlp.step()
     if torch.cuda.is_available():
         torch.cuda.synchronize()
     mlp_macro_time_ms = ((time.perf_counter() - t0) / 10.0) * 1000.0
+    mem_tracker.update()
 
     # Transformer macro updates
     trans = TransformerAnnual(seed=17).to(device)
-    opt_trans = torch.optim.AdamW(trans.parameters(), lr=1e-3)
+    opt_trans = torch.optim.AdamW(trans.parameters(), lr=1e-3, weight_decay=0.01)
     x_trans_micro = torch.randn(micro_batch, 42, 23, device=device)
 
     # Warmup 2 macro steps
@@ -113,9 +166,11 @@ def run_operational_pilot() -> Dict[str, Any]:
         for _ in range(accum_steps):
             loss = torch.mean(((trans(x_trans_micro) - y_micro) ** 2) * w_micro) * (micro_batch / effective_batch)
             loss.backward()
+        torch.nn.utils.clip_grad_norm_(trans.parameters(), max_norm=1.0)
         opt_trans.step()
     if torch.cuda.is_available():
         torch.cuda.synchronize()
+    mem_tracker.update()
 
     t0 = time.perf_counter()
     for _ in range(10):
@@ -123,12 +178,14 @@ def run_operational_pilot() -> Dict[str, Any]:
         for _ in range(accum_steps):
             loss = torch.mean(((trans(x_trans_micro) - y_micro) ** 2) * w_micro) * (micro_batch / effective_batch)
             loss.backward()
+        torch.nn.utils.clip_grad_norm_(trans.parameters(), max_norm=1.0)
         opt_trans.step()
     if torch.cuda.is_available():
         torch.cuda.synchronize()
     trans_macro_time_ms = ((time.perf_counter() - t0) / 10.0) * 1000.0
+    mem_tracker.update()
 
-    # Validation pass timing (10,000 samples)
+    # Validation pass timing (streaming 25,600 samples in batches of 256)
     with torch.no_grad():
         val_x_trans = torch.randn(256, 42, 23, device=device)
         t0 = time.perf_counter()
@@ -136,35 +193,54 @@ def run_operational_pilot() -> Dict[str, Any]:
             _ = trans(val_x_trans)
         if torch.cuda.is_available():
             torch.cuda.synchronize()
-        validation_pass_sec = (time.perf_counter() - t0) * (20000.0 / 5120.0)
+        validation_pass_sec = (time.perf_counter() - t0) * (25600.0 / 5120.0)
+    mem_tracker.update()
 
     # -------------------------------------------------------------
-    # 2. Profile Bank-Size Scaling & Retrieval Throughput (R01)
+    # 2. Profile Bank-Size Scaling & Retrieval Throughput (R01, B6)
     # -------------------------------------------------------------
-    # Build synthetic memory bank of 20,000 records with session ordinals
-    bank_records = []
+    # Measure retrieval scaling across multiple bank sizes to fit empirical scaling law
     rng = np.random.default_rng(42)
-    for i in range(20000):
-        bank_records.append(BankRecord(
-            record_id=i + 1,
-            security_id=f"SEC_{i % 103}",
-            session_origin=f"2015-01-{(i % 28) + 1:02d}",
-            session_126_maturity="2017-06-01",
-            vector=rng.normal(0, 1, 966).astype(np.float32),
-            target_63=float(rng.normal(0, 0.05)),
-            session_ordinal=i // 103,
-        ))
-    large_bank = MemoryBank(bank_records)
+    bank_sizes = [5000, 10000, 20000]
+    latencies = []
+    for bs in bank_sizes:
+        b_recs = [
+            BankRecord(
+                record_id=i + 1,
+                security_id=f"SEC_{i % 103}",
+                session_origin="2015-01-01",
+                session_126_maturity="2017-06-01",
+                vector=rng.normal(0, 1, 966).astype(np.float32),
+                target_63=float(rng.normal(0, 0.05)),
+                session_ordinal=i // 103,
+            )
+            for i in range(bs)
+        ]
+        test_bank = MemoryBank(b_recs)
+        q_vec = rng.normal(0, 1, 966).astype(np.float32)
 
-    q_vecs = [rng.normal(0, 1, 966).astype(np.float32) for _ in range(100)]
-    t0 = time.perf_counter()
-    for i in range(100):
-        retrieve_mem_sim(large_bank, q_vecs[i], query_security_id="SEC_0", k=25)
-    retrieval_20k_sec = time.perf_counter() - t0
-    retrieval_qps = 100.0 / retrieval_20k_sec
+        # Warmup
+        retrieve_mem_sim(test_bank, q_vec, query_security_id="SEC_0", k=25)
+        t0 = time.perf_counter()
+        for _ in range(5):
+            retrieve_mem_sim(test_bank, q_vec, query_security_id="SEC_0", k=25)
+        avg_q_sec = (time.perf_counter() - t0) / 5.0
+        latencies.append((bs, avg_q_sec))
+        mem_tracker.update()
+
+    # Linear scaling fit: latency_sec = slope * bank_size + base
+    bs_arr = np.array([x[0] for x in latencies], dtype=np.float64)
+    lat_arr = np.array([x[1] for x in latencies], dtype=np.float64)
+    slope, base = np.polyfit(bs_arr, lat_arr, 1)
+    slope = max(slope, 1e-7)
+    base = max(base, 0.0)
+
+    # 20k bank QPS for benchmark receipt
+    retrieval_20k_sec = slope * 20000.0 + base
+    retrieval_qps = 1.0 / retrieval_20k_sec if retrieval_20k_sec > 0 else 1.0
 
     # -------------------------------------------------------------
-    # 3. Profile Populated Account Execution Simulation (R01)
+    # 3. Profile Populated Account Execution Simulation (R01, B7)
     # -------------------------------------------------------------
     account = PortfolioAccount(initial_capital=100000.0)
     t0 = time.perf_counter()
@@ -174,20 +250,22 @@ def run_operational_pilot() -> Dict[str, Any]:
         # Open fills
         opens = {f"SEC_{s_idx % 20}": 100.0, f"SEC_{(s_idx+1) % 20}": 50.0}
         account.process_open_fills(f"2020-01-{s_idx}", opens, {k: True for k in opens}, 100000.0)
-        # Corporate action
+        # Corporate action with canonical cash_dividend field (B7)
         if s_idx % 50 == 0:
             account.handle_corporate_actions_before_open(
                 f"2020-01-{s_idx}",
-                {f"SEC_{s_idx % 20}": CorporateAction(dividend_cash=1.0)},
+                {f"SEC_{s_idx % 20}": CorporateAction(cash_dividend=1.0)},
             )
         # Close stops and valuation
         closes = {f"SEC_{s_idx % 20}": 101.0, f"SEC_{(s_idx+1) % 20}": 50.5}
         account.evaluate_close_stops_and_update_state(f"2020-01-{s_idx}", closes, {k: 0.02 for k in closes})
-    account.execute_terminal_liquidation("2020-12-31", {"SEC_0": 100.0})
+    terminal_closes = {f"SEC_{i}": 100.0 for i in range(20)}
+    account.execute_terminal_liquidation("2020-12-31", terminal_closes)
     populated_sim_year_sec = time.perf_counter() - t0
+    mem_tracker.update()
 
     # -------------------------------------------------------------
-    # 4. Profile Contrast Recomputation from Returns (R01)
+    # 4. Profile Real Statistical Inference / Block Bootstrap (R01, B1)
     # -------------------------------------------------------------
     returns_map = {}
     arms = [
@@ -203,38 +281,71 @@ def run_operational_pilot() -> Dict[str, Any]:
     t0 = time.perf_counter()
     _, _ = evaluate_primary_contrasts(returns_map, markets, num_draws=1000)
     contrast_1k_time = time.perf_counter() - t0
+    mem_tracker.update()
 
-    # Measured Peak Memory
-    peak_rss_mb = process.memory_info().rss / (1024 ** 2)
+    # Memory Tracking: peak RSS across all profiling phases and OS working set
+    peak_rss_mb = mem_tracker.peak_rss_mb
     gpu_allocated_mb = torch.cuda.max_memory_allocated() / (1024 ** 2) if torch.cuda.is_available() else 0.0
     gpu_reserved_mb = torch.cuda.max_memory_reserved() / (1024 ** 2) if torch.cuda.is_available() else 0.0
 
     # -------------------------------------------------------------
-    # 5. Full Workload Dimensions & Cap-Based Budget Projection
+    # 5. Full Workload Dimensions & Cap-Based Budget Projection (R01, B6)
     # -------------------------------------------------------------
-    # Realistic dimensions:
-    # 103 primary securities * ~252 days * ~7.5 years average training history = ~195,000 samples per fold.
-    # Effective batch 512 -> 380 macro updates per epoch.
-    # 50 epochs cap -> 19,000 macro updates per fit.
-    # 36 fits = 18 MLP fits + 18 Transformer fits.
-    macro_updates_per_fit = 380 * 50  # 19,000 updates
+    # Evaluate exact training steps, bank queries, and simulation paths across folds
+    fold_details = []
+    total_training_samples = 0
+    total_macro_steps_all_fits = 0
+    total_eval_queries = 0
+    total_retrieval_sec = 0.0
 
-    mlp_fit_sec = (macro_updates_per_fit * (mlp_macro_time_ms / 1000.0)) + (50 * validation_pass_sec)
-    trans_fit_sec = (macro_updates_per_fit * (trans_macro_time_ms / 1000.0)) + (50 * validation_pass_sec)
+    for f_info in MEASURED_FOLD_DIMENSIONS:
+        n_train = f_info["train_samples"]
+        n_eval = f_info["eval_queries"]
+        n_bank = f_info["bank_samples"]
+        macro_per_epoch = math.ceil(n_train / effective_batch)
+        macro_per_fit = macro_per_epoch * 50  # 50 epochs cap
+        # 6 fits per fold (3 seeds * 2 architectures)
+        macro_all_fits_in_fold = macro_per_fit * 6
 
-    total_training_sec = 18 * mlp_fit_sec + 18 * trans_fit_sec
+        # Bank-scaled retrieval for this fold
+        fold_q_sec = n_eval * (slope * n_bank + base)
+        total_retrieval_sec += fold_q_sec
+
+        total_training_samples += n_train
+        total_macro_steps_all_fits += macro_all_fits_in_fold
+        total_eval_queries += n_eval
+
+        fold_details.append({
+            "evaluation_year": f_info["year"],
+            "train_samples": n_train,
+            "validation_samples": f_info["val_samples"],
+            "development_samples": f_info["dev_samples"],
+            "evaluation_queries": n_eval,
+            "bank_samples": n_bank,
+            "macro_steps_per_epoch": macro_per_epoch,
+            "macro_steps_per_fit": macro_per_fit,
+        })
+
+    avg_train_samples = round(total_training_samples / len(MEASURED_FOLD_DIMENSIONS))
+    avg_macro_per_epoch = round(sum(d["macro_steps_per_epoch"] for d in fold_details) / len(fold_details))
+    avg_macro_per_fit = avg_macro_per_epoch * 50
+
+    # Training time projection across all 36 fits
+    # 18 MLP fits + 18 Transformer fits
+    mlp_total_macro_sec = (total_macro_steps_all_fits // 2) * (mlp_macro_time_ms / 1000.0)
+    trans_total_macro_sec = (total_macro_steps_all_fits // 2) * (trans_macro_time_ms / 1000.0)
+    validation_total_sec = 36 * 50 * validation_pass_sec
+    total_training_sec = mlp_total_macro_sec + trans_total_macro_sec + validation_total_sec
     total_training_hours = total_training_sec / 3600.0
 
-    # Retrieval projection: 6 folds * 103 securities * 252 days = 155,736 queries
-    total_queries = 6 * 103 * 252
-    total_retrieval_sec = total_queries / retrieval_qps
+    # Retrieval time projection
     total_retrieval_hours = total_retrieval_sec / 3600.0
 
     # Portfolio simulation: 204 primary paths + 96 stress paths = 300 continuous paths * 6 years = 1,800 path-years
     total_sim_sec = 1800 * populated_sim_year_sec
     total_sim_hours = total_sim_sec / 3600.0
 
-    # Full 10,000-draw bootstrap contrast projection (10x of 1k draws)
+    # Real 10,000-draw bootstrap contrast projection (10x of 1k draws)
     bootstrap_10k_hours = (contrast_1k_time * 10.0) / 3600.0
 
     # Data work & export verification
@@ -243,7 +354,9 @@ def run_operational_pilot() -> Dict[str, Any]:
     contingency_hours = 2.0
 
     # Compute sum before multiplier
-    projected_compute_hours = total_training_hours + total_retrieval_hours + total_sim_hours + bootstrap_10k_hours + data_prep_hours
+    projected_compute_hours = (
+        total_training_hours + total_retrieval_hours + total_sim_hours + bootstrap_10k_hours + data_prep_hours
+    )
 
     # Total required VM allocation (1.5x multiplier on compute + 2h export + 2h contingency)
     vm_total_required_hours = 1.5 * projected_compute_hours + export_verify_reserve_hours + contingency_hours
@@ -256,6 +369,7 @@ def run_operational_pilot() -> Dict[str, Any]:
         "transformer_effective_batch_512_macro_step_ms": round(trans_macro_time_ms, 3),
         "validation_pass_seconds": round(validation_pass_sec, 3),
         "retrieval_20k_bank_qps": round(retrieval_qps, 1),
+        "bank_scaling_slope_seconds_per_record": float(f"{slope:.4e}"),
         "populated_engine_sim_year_seconds": round(populated_sim_year_sec, 4),
         "bootstrap_contrasts_1000_draws_seconds": round(contrast_1k_time, 4),
         "peak_rss_mb": round(peak_rss_mb, 2),
@@ -263,14 +377,18 @@ def run_operational_pilot() -> Dict[str, Any]:
         "gpu_max_reserved_mb": round(gpu_reserved_mb, 2),
     }
 
+    report["fold_dimensions"] = fold_details
+
     report["projection"] = {
         "epochs_cap": 50,
         "fits_count": 36,
-        "average_training_samples_per_fold": 195000,
-        "effective_batch_size": 512,
-        "micro_batch_size": 64,
-        "macro_steps_per_epoch": 380,
-        "total_macro_steps_per_fit": macro_updates_per_fit,
+        "average_training_samples_per_fold": avg_train_samples,
+        "effective_batch_size": effective_batch,
+        "micro_batch_size": micro_batch,
+        "macro_steps_per_epoch": avg_macro_per_epoch,
+        "total_macro_steps_per_fit": avg_macro_per_fit,
+        "total_macro_steps_all_fits": total_macro_steps_all_fits,
+        "total_evaluation_queries": total_eval_queries,
         "projected_training_hours": round(total_training_hours, 2),
         "projected_retrieval_hours": round(total_retrieval_hours, 2),
         "projected_simulation_hours": round(total_sim_hours, 2),
@@ -283,9 +401,10 @@ def run_operational_pilot() -> Dict[str, Any]:
         "total_budget_needed_hours": round(vm_total_required_hours, 2),
         "vm_allocation_hours": actual_vm_allocation_hours,
         "acceptance_condition_met": fits_in_vm,
+        "hardware_preflight_status": "PENDING_A30_VM_EXECUTION",
     }
 
-    return report
+    return to_native_types(report)
 
 
 if __name__ == "__main__":

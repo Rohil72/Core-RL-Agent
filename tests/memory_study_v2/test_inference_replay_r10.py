@@ -69,3 +69,39 @@ def test_replay_detects_deliberate_draw_corruption(tmp_path):
 
     with pytest.raises(ReplayVerificationError, match="Replay mismatch"):
         replay_analysis_bundle(bundle_dir)
+
+
+def test_replay_detects_deliberate_returns_corruption(tmp_path):
+    import json
+    rng = np.random.default_rng(42)
+    returns_map = {}
+    arms = [
+        "MEM_SIM", "KNN_PLAIN", "MEM_RANDOM", "HIST_PRIOR", "RIDGE_ANNUAL",
+        "MLP_BASE", "TRANS_BASE", "MLP_MIX_SR", "TRANS_MIX_SR", "MLP_GATE", "TRANS_GATE"
+    ]
+    markets = ["US", "IN", "CN", "FR", "GB", "BR"]
+    for arm in arms:
+        for mkt in markets:
+            returns_map[(arm, mkt, None)] = rng.normal(0.0004, 0.01, 252)
+
+    contrast_results, draw_matrix = evaluate_primary_contrasts(returns_map, markets, num_draws=100)
+    bundle_dir = export_analysis_bundle(
+        {f"{k[0]}_{k[1]}_{k[2]}": list(v) for k, v in returns_map.items()},
+        contrast_results,
+        draw_matrix,
+        tmp_path / "bundle_ret_tamper",
+    )
+
+    # Corrupt a single return in daily_returns.json on disk
+    ret_path = bundle_dir / "daily_returns.json"
+    with open(ret_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    first_key = list(data.keys())[0]
+    data[first_key][0] += 0.05  # Tamper with single return value
+    with open(ret_path, "w", encoding="utf-8") as f:
+        json.dump(data, f)
+
+    # Replay must fail because recomputing from tampered returns diverges from stored draws/theta
+    with pytest.raises(ReplayVerificationError, match="Replay mismatch"):
+        replay_analysis_bundle(bundle_dir)
+

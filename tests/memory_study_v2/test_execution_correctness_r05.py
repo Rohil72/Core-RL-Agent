@@ -45,3 +45,43 @@ def test_zero_empty_slots_immediate_return_no_entries_queued():
     # An exit queued for tomorrow still occupies a slot today!
     # No new entries can be queued!
     assert len(account.pending_entries) == 0, f"Expected 0 pending entries, got {account.pending_entries}"
+
+
+def test_missing_terminal_quote_raises_error():
+    account = PortfolioAccount(initial_capital=10000.0)
+    account.positions["SEC_A"] = Position("SEC_A", 10.0, 100.0, 100.0, 100.0)
+
+    with pytest.raises(ValueError, match="Missing or non-positive terminal close price"):
+        account.execute_terminal_liquidation("2025-12-31", {})
+
+
+def test_terminal_liquidation_deducts_costs_from_nav():
+    account = PortfolioAccount(initial_capital=0.0, commission=0.001, slippage=0.0005)
+    account.cash = 0.0
+    account.positions["SEC_A"] = Position("SEC_A", 10.0, 100.0, 100.0, 100.0)
+
+    # Establish daily history
+    account.evaluate_close_stops_and_update_state("2025-12-30", {"SEC_A": 100.0}, {})
+
+    final_nav = account.execute_terminal_liquidation("2025-12-30", {"SEC_A": 100.0})
+    # sell_fill = 100 * (1 - 0.0005) = 99.95
+    # gross = 10 * 99.95 = 999.5
+    # comm = 0.001 * 999.5 = 0.9995
+    # net_cash = 999.5 - 0.9995 = 998.5005
+    expected_nav = 998.5005
+    assert pytest.approx(final_nav, rel=1e-6) == expected_nav
+    assert pytest.approx(account.daily_history[-1].total_nav, rel=1e-6) == expected_nav
+    assert account.daily_history[-1].num_positions == 0
+
+
+def test_conflicting_dividend_alias_raises_error():
+    from memory_study_v2.execution import CorporateAction
+    account = PortfolioAccount(initial_capital=10000.0)
+    account.positions["SEC_A"] = Position("SEC_A", 10.0, 100.0, 100.0, 100.0)
+
+    class DeprecatedAction:
+        split_ratio = 1.0
+        dividend_cash = 2.5
+
+    with pytest.raises(ValueError, match="Conflicting/deprecated field 'dividend_cash'"):
+        account.handle_corporate_actions_before_open("2020-01-05", {"SEC_A": DeprecatedAction()})

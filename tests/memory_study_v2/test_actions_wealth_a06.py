@@ -66,3 +66,31 @@ def test_simultaneous_split_and_dividend_conserves_wealth():
     assert tr_df.loc[0, "tr_close"] == 100.0
     assert pytest.approx(tr_df.loc[1, "tr_close"], rel=1e-9) == 100.0
     assert pytest.approx(tr_df.loc[1, "normalized_volume"], rel=1e-9) == 1000.0
+
+
+def test_fractional_split_quantity_retained_in_portfolio():
+    """Verify that a 3-for-2 split (S=1.5) transforms 3 shares into 4.5 shares without flooring."""
+    from memory_study_v2.execution import PortfolioAccount, Position, CorporateAction as ExecCorporateAction
+
+    account = PortfolioAccount(initial_capital=1000.0)
+    account.positions["SEC_X"] = Position(
+        security_id="SEC_X",
+        quantity=3.0,
+        cost_basis=100.0,
+        peak_price=100.0,
+        last_valid_price=100.0,
+    )
+
+    # Apply 3-for-2 split: S=1.5
+    action = ExecCorporateAction(split_ratio=1.5, cash_dividend=0.0)
+    account.handle_corporate_actions_before_open("2023-01-03", {"SEC_X": action})
+
+    pos = account.positions["SEC_X"]
+    # Must retain exact fractional quantity 4.5 (not floored to 4)
+    assert pos.quantity == 4.5
+    assert pytest.approx(pos.cost_basis, rel=1e-9) == 100.0 / 1.5
+
+    # Total wealth conserved at post-split price
+    post_split_price = 100.0 / 1.5
+    equity = account.current_equity({"SEC_X": post_split_price})
+    assert pytest.approx(equity, rel=1e-9) == 1000.0 + 3.0 * 100.0
