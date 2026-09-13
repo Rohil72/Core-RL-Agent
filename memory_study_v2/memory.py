@@ -101,3 +101,113 @@ class MemoryBank:
                 pass
 
         return sorted_indices[:actual_k]
+
+    def precompute_bank_norms(self) -> np.ndarray:
+        """Pre-compute and cache squared L2 norms of all bank vectors (Finding 5 / C6).
+
+        Must be called once after bank construction to enable batched distance computation.
+        Returns the cached norms array (shape: N,) for inspection or testing.
+
+        The identity ||q - v||^2 = ||q||^2 - 2·q·V^T + ||v||^2 allows the bank-side
+        term ||v||^2 to be computed once.  Queries then only need their own norm and the
+        matrix product q·V^T, reducing per-query flops from O(N·D) additions+squarings
+        to O(D) (norm of q) + O(N·D) (dot-products, BLAS-optimised) — same asymptotic
+        cost but with much lower constant because numpy's dot path is cache-friendly.
+
+        Parity guarantee: results must be bitwise identical to compute_squared_euclidean_reference
+        for any single query (tested by test_retrieval_reference_a17.py and the new batch tests).
+        """
+        v_64 = self.vectors.astype(np.float64)
+        self._bank_norms_sq: np.ndarray = np.einsum("ij,ij->i", v_64, v_64)  # shape (N,)
+        return self._bank_norms_sq
+
+    def compute_squared_euclidean_batched(
+        self,
+        query_batch: np.ndarray,
+    ) -> np.ndarray:
+        """Compute exact float64 squared Euclidean distances for a batch of Q queries (Finding 5 / C6).
+
+        Requires precompute_bank_norms() to have been called first.
+
+        Uses the identity:
+            ||q_j - v_i||^2 = ||q_j||^2 - 2·q_j·v_i + ||v_i||^2
+
+        Args:
+            query_batch: float32 or float64 array of shape (Q, D) where D = bank vector dimension.
+
+        Returns:
+            dist_sq: float64 array of shape (Q, N) — exact squared distances.
+
+        Raises:
+            RuntimeError: if precompute_bank_norms() has not been called.
+            ValueError:   if query vector dimension does not match bank vector dimension.
+        """
+        if not hasattr(self, "_bank_norms_sq"):
+            raise RuntimeError(
+                "compute_squared_euclidean_batched requires precompute_bank_norms() to be called first. "
+                "Call bank.precompute_bank_norms() once after bank construction."
+            )
+        q_64 = np.asarray(query_batch, dtype=np.float64)
+        if q_64.ndim != 2 or q_64.shape[1] != self.vectors.shape[1]:
+            raise ValueError(
+                f"query_batch must have shape (Q, D={self.vectors.shape[1]}), "
+                f"got shape {q_64.shape}"
+            )
+
+        v_64 = self.vectors.astype(np.float64)
+
+        # q_norms[j] = ||q_j||^2, shape (Q,)
+        q_norms_sq = np.einsum("ij,ij->i", q_64, q_64)  # (Q,)
+
+        # cross[j, i] = q_j · v_i, shape (Q, N)  — BLAS dot product
+        cross = q_64 @ v_64.T  # (Q, N)
+
+        # dist_sq[j, i] = q_norms_sq[j] - 2·cross[j,i] + bank_norms_sq[i]
+        dist_sq = q_norms_sq[:, np.newaxis] - 2.0 * cross + self._bank_norms_sq[np.newaxis, :]
+
+        # Clamp tiny negative values from floating-point arithmetic to zero
+        np.maximum(dist_sq, 0.0, out=dist_sq)
+        return dist_sq
+
+    def propose_candidates_batched(
+        self,
+        query_batch: np.ndarray,
+        buffer_size: int,
+    ) -> list:
+        """Propose candidate record indices for each query in *query_batch* (Finding 5 / C6).
+
+        Uses the batched distance computation when bank norms are pre-computed;
+        falls back to per-query reference distances otherwise (transparent correctness).
+
+        Args:
+            query_batch: float32 or float64 array of shape (Q, D).
+            buffer_size: number of candidate indices to return per query.
+
+        Returns:
+            List of Q numpy arrays, each of shape (min(buffer_size, N),),
+            containing sorted candidate indices (primary: dist ascending,
+            secondary: record_id ascending) — identical ordering to propose_candidates().
+        """
+        if hasattr(self, "_bank_norms_sq"):
+            dist_matrix = self.compute_squared_euclidean_batched(query_batch)
+        else:
+            dist_matrix = np.vstack(
+                [self.compute_squared_euclidean_reference(q) for q in query_batch]
+            )
+
+        actual_k = min(buffer_size, self.N)
+        results = []
+        for dist_row in dist_matrix:
+            sorted_idx = np.lexsort((self.record_ids, dist_row))
+            results.append(sorted_idx[:actual_k])
+        return results
+
+    def verify_batched_vs_reference(self, query_batch: np.ndarray, tol: float = 1e-6) -> bool:
+        """Verify that batched distance computation matches reference distances within tol (Finding 5 / C6)."""
+        batched = self.compute_squared_euclidean_batched(query_batch)
+        ref = np.vstack([self.compute_squared_euclidean_reference(q) for q in query_batch])
+        max_diff = float(np.max(np.abs(batched - ref)))
+        if max_diff > tol:
+            raise ValueError(f"Batched vs reference distance mismatch: max_diff={max_diff} > {tol}")
+        return True
+

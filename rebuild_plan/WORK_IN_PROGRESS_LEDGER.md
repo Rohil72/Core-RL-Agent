@@ -113,19 +113,67 @@ Production Status: `production_authorized: false` strictly enforced in `rebuild_
     - `cloud_persistent_storage_io`: UNMEASURED_LOCALLY (pending measurement of VM network egress to backup storage).
     - `multi_worker_parallel_retrieval`: UNMEASURED_LOCALLY (multi-core scale-out pending on 103 securities).
     - `hardware_preflight_status`: `"PENDING_A30_VM_EXECUTION"`.
-- **Verification**: `tests/memory_study_v2/test_operational_pilot_a32.py` (2/2 passed).
+- **Verification**: `tests/memory_study_v2/test_operational_pilot_a32.py` (4/4 passed).
 
 ---
 
-## 3. Evidence Verification Summary
+## 3. Post-Review Findings 1–5 Remediation (14 September 2026)
+
+### Finding 1: Independent Venue Calendar (C1 Continuation)
+- Generated canonical fixture `data/fixtures/us_trading_sessions.csv` containing 4,279 NYSE sessions (2010–2026).
+- Created `memory_study_v2/venue_calendar.py` providing `VenueCalendar`:
+  - Three-state session classification: `CLOSED`, `VALID`, `MISSING`.
+  - Monotonic session ordinals derived from calendar, not dataset indices.
+  - Schedule reindexing and window validation.
+- Wired `connected_pilot.py` to use `VenueCalendar` instead of file-intersection heuristics.
+- Acceptance tests: `tests/memory_study_v2/test_connected_pilot_r12.py` (5/5 passed).
+
+### Finding 2: Canonical Mask for Point Estimates & Replay (C2 Continuation)
+- In `memory_study_v2/inference.py`:
+  - Point estimates now strictly filter by `canonical_mask` identical to the weekly sufficient statistics accumulator.
+  - Added fail-closed guard: missing returns on open sessions raise `ValueError`.
+  - `export_analysis_bundle` serializes `open_session_mask` into `daily_returns.json`.
+  - `replay_analysis_bundle` reads, validates, and forwards `open_session_mask` to prevent unmasked re-evaluation.
+- Acceptance tests: `tests/memory_study_v2/test_inference_replay_r10.py` (18/18 passed including Sharpe math oracle).
+
+### Finding 3: Admissible Sample Counts from Loader/Bank Functions (C6 Continuation)
+- Rewrote `scripts/generate_fold_manifest.py` to call `partition_fold` from `memory_study_v2.folds` across all 103 canonical market securities for all 6 walk-forward evaluation folds (2020..2025).
+- Sourced all 6 required per-fold population counts:
+  - `train_samples` (and `train_query_samples`): 120,178 to 248,789.
+  - `validation_samples` (and `val_query_samples`): 19,099 to 19,364.
+  - `development_samples` (and `dev_query_samples`): 19,099 to 19,364.
+  - `evaluation_queries` (and `eval_query_samples`): 25,588 to 25,853.
+  - `scored_eval_query_samples`: 25,588 to 25,853 (in 2025: 19,165, strictly separating decision-time query eligibility from future target maturity).
+  - `bank_samples` (and `bank_record_samples`): 113,689 to 242,300 (strictly strictly reflecting 126-session maturity vs 63-session training maturity).
+- Persisted per-fold query IDs under `rebuild_plan/sample_ids/`.
+- Updated `load_measured_fold_dimensions()` in `pilot.py` to fail closed in acceptance/production mode.
+- Re-executed `pilot.py` to update `rebuild_plan/pilot_report.json` with matching manifest hash.
+- Acceptance tests: `tests/memory_study_v2/test_operational_pilot_a32.py` (4/4 passed).
+
+### Finding 4: Complete Production Configuration Boundary (C3 Continuation)
+- Added `REQUIRED_NEURAL_KEYS` schema validator in `load_neural_config()`.
+- Validated stopping rule overrides (`min_epochs`, `max_epochs`, `patience`) alongside optimizer parameters in production mode.
+- Replaced all validation `assert` statements with explicit `raise ValueError`.
+- Added canonical JSON SHA-256 config hash stored in checkpoint states and verified on resume.
+- Acceptance tests: `tests/memory_study_v2/test_resume_parity_a16.py` (10/10 passed).
+
+### Finding 5: Batched Retrieval Optimization & A30 Preflight (C6 Continuation)
+- Added `precompute_bank_norms()` and `compute_squared_euclidean_batched()` to `MemoryBank` in `memory_study_v2/memory.py` using BLAS-optimized $\|q\|^2 + \|b\|^2 - 2q^T b$ formula.
+- Added `retrieve_mem_sim_batch()` in `memory_study_v2/retrieval.py` preserving exact tie-breaking, spacing ($\ge 21$), and cap ($\le 3$) rules.
+- Sourced dedicated A30 VM benchmark preflight script `scripts/benchmark_retrieval_a30.py`.
+- Acceptance tests: `tests/memory_study_v2/test_retrieval_reference_a17.py` (6/6 passed).
+
+---
+
+## 4. Evidence Verification Summary
 
 | Suite | Tests | Result | Execution Time |
 |---|:---:|:---:|:---:|
-| `tests/memory_study_v2/` | 118 | **118 / 118 PASSED** | 14.59s |
-| Complete Repository (`tests/`) | 408 | **408 / 408 PASSED** | ~160s |
+| `tests/memory_study_v2/` | 136 | **136 / 136 PASSED** | 15.15s |
+| Complete Repository (`tests/`) | 426 | **426 / 426 PASSED** | ~132s |
 | Connected Pilot CLI (`python -m memory_study_v2.connected_pilot`) | End-to-End | **SUCCESS** | 6.5s |
 | Operational Pilot CLI (`python -m memory_study_v2.pilot`) | End-to-End | **SUCCESS** | 8.8s |
-| Manifest Generator CLI (`python scripts/generate_fold_manifest.py`) | 103 Securities | **SUCCESS** | 1.8s |
+| Manifest Generator CLI (`python scripts/generate_fold_manifest.py`) | 103 Securities | **SUCCESS** | 11.2s |
 
 **Production Guard Verification**:
 - `rebuild_plan/config.proposed.json`: `"production_authorized": false` strictly maintained.

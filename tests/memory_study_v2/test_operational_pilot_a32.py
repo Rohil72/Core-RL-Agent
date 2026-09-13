@@ -84,7 +84,7 @@ def test_fold_dimensions_manifest_traceability_c6():
     with open(manifest_path, "r", encoding="utf-8") as f:
         manifest = json.load(f)
 
-    assert manifest.get("manifest_version") == "2.0.0"
+    assert manifest.get("manifest_version") in ("2.0.0", "2.1.0")
     assert manifest.get("security_count") == 103
 
     files = manifest.get("file_manifest", [])
@@ -100,6 +100,25 @@ def test_fold_dimensions_manifest_traceability_c6():
     fold_dims = manifest.get("fold_dimensions", [])
     assert len(fold_dims) == 6
 
+    # Verify 6 per-population counts per fold (Finding 3 / C6)
+    for fd in fold_dims:
+        assert "train_samples" in fd and fd["train_samples"] > 0
+        assert "validation_samples" in fd and fd["validation_samples"] > 0
+        assert "development_samples" in fd and fd["development_samples"] > 0
+        assert "evaluation_queries" in fd and fd["evaluation_queries"] > 0
+        assert "scored_eval_query_samples" in fd and fd["scored_eval_query_samples"] > 0
+        assert "bank_samples" in fd and fd["bank_samples"] > 0
+        # Bank samples strictly <= train samples due to 126 vs 63-session maturity
+        assert fd["bank_samples"] <= fd["train_samples"], (
+            f"Bank samples ({fd['bank_samples']}) must be <= train samples ({fd['train_samples']})"
+        )
+
+    # In fold 2025, future target availability does not gate eval eligibility
+    fd_2025 = next(fd for fd in fold_dims if fd["evaluation_year"] == 2025)
+    assert fd_2025["scored_eval_query_samples"] < fd_2025["evaluation_queries"], (
+        "In 2025, scored_eval_query_samples must be strictly less than evaluation_queries"
+    )
+
     # Verify report references the manifest with matching hash
     report_path = Path("rebuild_plan/pilot_report.json")
     assert report_path.exists()
@@ -111,4 +130,44 @@ def test_fold_dimensions_manifest_traceability_c6():
         assert fm["security_count"] == 103
         actual_sha = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
         assert fm["manifest_sha256"] == actual_sha
+
+
+def test_manifest_id_consistency_c6():
+    """Finding 3: Persisted sample IDs match fold partition counts and have stable structure."""
+    sample_ids_dir = Path("rebuild_plan/sample_ids")
+    if not sample_ids_dir.exists():
+        pytest.skip("sample_ids directory not populated in this environment.")
+
+    manifest_path = Path("rebuild_plan/fold_dimensions_manifest.json")
+    with open(manifest_path, "r", encoding="utf-8") as f:
+        manifest = json.load(f)
+
+    for fd in manifest.get("fold_dimensions", []):
+        y = fd["evaluation_year"]
+        id_file = sample_ids_dir / f"fold_{y}_sample_ids.json"
+        assert id_file.exists(), f"Sample IDs file missing for year {y}"
+        with open(id_file, "r", encoding="utf-8") as f:
+            ids = json.load(f)
+        assert len(ids["train_query_ids"]) == fd["train_samples"]
+        assert len(ids["val_query_ids"]) == fd["validation_samples"]
+        assert len(ids["dev_query_ids"]) == fd["development_samples"]
+        assert len(ids["eval_query_ids"]) == fd["evaluation_queries"]
+        assert len(ids["bank_query_ids"]) == fd["bank_samples"]
+
+
+def test_manifest_rejection_on_invalid(tmp_path):
+    """Finding 3: load_measured_fold_dimensions rejects missing/corrupted manifest in acceptance mode."""
+    from memory_study_v2.pilot import load_measured_fold_dimensions
+
+    # 1. Missing manifest in acceptance mode raises FileNotFoundError
+    with pytest.raises(FileNotFoundError):
+        load_measured_fold_dimensions(tmp_path / "nonexistent.json", execution_mode="acceptance")
+
+    # 2. Corrupted manifest without fold_dimensions raises ValueError
+    bad_manifest = tmp_path / "bad_manifest.json"
+    with open(bad_manifest, "w", encoding="utf-8") as f:
+        json.dump({"manifest_version": "2.1.0", "empty": True}, f)
+
+    with pytest.raises(ValueError, match="does not contain valid 'fold_dimensions'"):
+        load_measured_fold_dimensions(bad_manifest, execution_mode="acceptance")
 

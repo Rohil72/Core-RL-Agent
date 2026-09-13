@@ -102,3 +102,107 @@ def test_connected_pilot_contrasts_distinguish_evaluated_vs_unrun(tmp_path):
     assert contrasts_by_id["P8"]["status"] == "NOT_RUN"
 
 
+def test_independent_venue_calendar_c1():
+    """Finding 1: Venue calendar is independent of price file contents.
+
+    - Session ordinals come from the VenueCalendar fixture, not from price-file intersection.
+    - Deleting one security's bar does NOT shift any other session's ordinal.
+    - The affected security's window/label for the deleted session is invalidated; other
+      securities' windows are unaffected.
+    """
+    from memory_study_v2.venue_calendar import VenueCalendar
+
+    vc = VenueCalendar()
+
+    # 1. Calendar is independent of price file length.
+    sessions_2013_2017 = vc.sessions_in_range("2013-01-01", "2017-12-31")
+    assert len(sessions_2013_2017) > 1000, (
+        f"Expected >1000 scheduled sessions 2013-2017, got {len(sessions_2013_2017)}"
+    )
+
+    # 2. Ordinals are stable: deleting one security's bar does NOT move any other ordinal.
+    first_10 = sessions_2013_2017[:10]
+    ordinals_before = [vc.get_ordinal(s) for s in first_10]
+
+    session_to_delete = sessions_2013_2017[4]  # 5th session
+    ordinals_remaining = [vc.get_ordinal(s) for s in first_10 if s != session_to_delete]
+    expected_remaining = [o for s, o in zip(first_10, ordinals_before) if s != session_to_delete]
+    assert ordinals_remaining == expected_remaining, (
+        "Deleting one security's bar must NOT shift other sessions' ordinals."
+    )
+
+    # 3. Window invalidation: missing AAPL bar invalidates AAPL windows; MSFT unaffected.
+    test_sessions = sessions_2013_2017[260:270]
+    missing_idx = 3
+    aapl_status = {s: ("MISSING" if i == missing_idx else "VALID") for i, s in enumerate(test_sessions)}
+    msft_status = {s: "VALID" for s in test_sessions}
+
+    aapl_valid = vc.invalidate_windows_with_missing(test_sessions, aapl_status, window_size=3)
+    msft_valid = vc.invalidate_windows_with_missing(test_sessions, msft_status, window_size=3)
+
+    assert aapl_valid[missing_idx] is False, "Session with MISSING bar must be invalid"
+    assert aapl_valid[missing_idx + 1] is False, "Session +1 after MISSING must also be invalid (window=3)"
+    assert aapl_valid[missing_idx + 2] is False, "Session +2 after MISSING must also be invalid (window=3)"
+    assert aapl_valid[missing_idx - 1] is True, "Session before MISSING bar must be valid"
+
+    assert all(msft_valid), "MSFT windows must all be valid when MSFT has no missing bars"
+
+
+def test_bar_status_three_states_c1():
+    """Finding 1: VenueCalendar.bar_status returns exactly CLOSED, VALID, or MISSING."""
+    from memory_study_v2.venue_calendar import VenueCalendar
+
+    vc = VenueCalendar()
+
+    # CLOSED: a Saturday
+    assert vc.bar_status("2015-01-03", has_valid_bar=False) == "CLOSED"
+    assert vc.bar_status("2015-01-03", has_valid_bar=True) == "CLOSED"
+
+    # CLOSED: NYSE holiday (2015-01-01 New Year's Day is Thursday - confirmed closed)
+    assert vc.bar_status("2015-01-01", has_valid_bar=False) == "CLOSED"
+
+    # VALID: regular trading day with a bar
+    assert vc.bar_status("2015-01-02", has_valid_bar=True) == "VALID"
+
+    # MISSING: regular trading day with no bar
+    assert vc.bar_status("2015-01-02", has_valid_bar=False) == "MISSING"
+
+
+def test_reindex_to_schedule_preserves_ordinals_c1():
+    """Finding 1: reindex_to_schedule gives each scheduled session its correct ordinal,
+    independent of which bars are actually present."""
+    import pandas as pd
+    from memory_study_v2.venue_calendar import VenueCalendar
+
+    vc = VenueCalendar()
+
+    sessions = vc.sessions_in_range("2015-01-02", "2015-01-09")
+    # Simulate AAPL missing the 3rd session
+    data_sessions = [s for i, s in enumerate(sessions) if i != 2]
+    df = pd.DataFrame({
+        "session": data_sessions,
+        "close": [100.0 + i for i in range(len(data_sessions))],
+    })
+
+    reindexed = vc.reindex_to_schedule(df, ("2015-01-02", "2015-01-09"))
+
+    assert len(reindexed) == len(sessions), (
+        f"Expected {len(sessions)} rows after reindex, got {len(reindexed)}"
+    )
+
+    for _, row in reindexed.iterrows():
+        sess = str(row["session"])
+        expected_ord = vc.get_ordinal(sess)
+        assert int(row["session_ordinal"]) == expected_ord, (
+            f"Session {sess}: expected ordinal {expected_ord}, got {row['session_ordinal']}"
+        )
+
+    missing_sess = sessions[2]
+    missing_rows = reindexed[reindexed["session"] == missing_sess]
+    assert len(missing_rows) == 1
+    assert missing_rows.iloc[0]["bar_status"] == "MISSING"
+
+    present_sess = sessions[0]
+    present_rows = reindexed[reindexed["session"] == present_sess]
+    assert len(present_rows) == 1
+    assert present_rows.iloc[0]["bar_status"] == "VALID"

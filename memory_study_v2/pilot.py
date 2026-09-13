@@ -72,29 +72,43 @@ MEASURED_FOLD_DIMENSIONS: List[Dict[str, int]] = [
 ]
 
 
-def load_measured_fold_dimensions(manifest_path: str = "rebuild_plan/fold_dimensions_manifest.json") -> Tuple[List[Dict[str, int]], Optional[str]]:
-    """Load fold dimensions from hashed manifest if available, else use verified constants (C6)."""
+def load_measured_fold_dimensions(
+    manifest_path: str = "rebuild_plan/fold_dimensions_manifest.json",
+    execution_mode: str = "pilot",
+) -> Tuple[List[Dict[str, int]], Optional[str]]:
+    """Load fold dimensions from hashed manifest if available, else use verified constants (C6, Finding 3).
+
+    In 'acceptance' or 'production' mode, a missing or invalid manifest raises RuntimeError/FileNotFoundError.
+    """
     p = Path(manifest_path)
-    if p.exists():
-        try:
-            with open(p, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            dims = []
-            for fd in data.get("fold_dimensions", []):
-                dims.append({
-                    "year": fd["evaluation_year"],
-                    "train_samples": fd["train_samples"],
-                    "val_samples": fd["validation_samples"],
-                    "dev_samples": fd["development_samples"],
-                    "eval_queries": fd["evaluation_queries"],
-                    "bank_samples": fd["bank_samples"],
-                })
-            manifest_sha = hashlib.sha256(p.read_bytes()).hexdigest()
-            if dims:
-                return dims, manifest_sha
-        except Exception:
-            pass
+    if not p.exists():
+        if execution_mode in ("acceptance", "production"):
+            raise FileNotFoundError(f"Fold dimensions manifest '{manifest_path}' is mandatory in {execution_mode} mode.")
+        return MEASURED_FOLD_DIMENSIONS, None
+
+    try:
+        with open(p, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if "fold_dimensions" not in data or not data["fold_dimensions"]:
+            raise ValueError(f"Manifest '{manifest_path}' does not contain valid 'fold_dimensions'.")
+        dims = []
+        for fd in data.get("fold_dimensions", []):
+            dims.append({
+                "year": fd["evaluation_year"],
+                "train_samples": fd["train_samples"],
+                "val_samples": fd["validation_samples"],
+                "dev_samples": fd["development_samples"],
+                "eval_queries": fd.get("evaluation_queries", fd.get("eval_query_samples", 0)),
+                "bank_samples": fd["bank_samples"],
+            })
+        manifest_sha = hashlib.sha256(p.read_bytes()).hexdigest()
+        if dims:
+            return dims, manifest_sha
+    except Exception as e:
+        if execution_mode in ("acceptance", "production"):
+            raise ValueError(f"Failed to load fold dimensions manifest '{manifest_path}' in {execution_mode} mode: {e}")
     return MEASURED_FOLD_DIMENSIONS, None
+
 
 
 def to_native_types(obj: Any) -> Any:

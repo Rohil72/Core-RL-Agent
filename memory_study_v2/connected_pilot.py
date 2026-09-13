@@ -43,6 +43,7 @@ import torch
 
 from memory_study_v2.backbones import MLPAnnual, TransformerAnnual
 from memory_study_v2.canonical_data import align_to_venue_calendar, build_total_return_bars, validate_raw_bars, CorporateAction
+from memory_study_v2.venue_calendar import VenueCalendar
 from memory_study_v2.contracts import to_canonical_json
 from memory_study_v2.execution import PortfolioAccount
 from memory_study_v2.features import compute_technical_features, fit_scaler
@@ -108,10 +109,18 @@ def run_connected_restricted_pilot(output_dir: Path) -> Dict[str, Any]:
     df_aapl_raw["session"] = df_aapl_raw["session"].astype(str)
     df_msft_raw["session"] = df_msft_raw["session"].astype(str)
 
-    # Align against verified venue calendar sessions (C1)
-    common_sessions = sorted(list(set(df_aapl_raw["session"]).intersection(set(df_msft_raw["session"]))))
-    venue_sessions = [s for s in common_sessions if "2013-01-01" <= s <= "2017-12-31"]
+    # Load venue schedule independently of price files (Finding 1 / C1)
+    # This guarantees ordinals and session sets are NOT derived from whatever
+    # files happen to be present.
+    from memory_study_v2.venue_calendar import _FIXTURE_SHA256 as _VC_SHA256
+    _vc = VenueCalendar()
+    venue_sessions = _vc.sessions_in_range("2013-01-01", "2017-12-31")
+    report["venue_calendar_sha"] = _VC_SHA256
 
+    # Reindex each security onto the authoritative venue schedule.
+    # Sessions where a security's bar is absent get NaN rows (status = "MISSING").
+    # We then pass only sessions from the schedule to align_to_venue_calendar
+    # so that the existing validation pipeline still works on the aligned frames.
     df0 = align_to_venue_calendar(df_aapl_raw, venue_sessions)
     df1 = align_to_venue_calendar(df_msft_raw, venue_sessions)
 

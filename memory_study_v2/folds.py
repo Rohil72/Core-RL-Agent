@@ -245,16 +245,22 @@ def partition_fold(
     eval_qids: List[str] = []
     bank_qids: List[str] = []
 
+    s_origins = merged["session_origin"].astype(str).to_numpy()
+    sec_ids = merged["security_id"].astype(str).to_numpy() if "security_id" in merged.columns else np.array(["DEFAULT"] * n)
+    v63_arr = merged["valid_63"].to_numpy(dtype=bool)
+    v126_arr = merged["valid_126"].to_numpy(dtype=bool)
+    s63_arr = merged["session_63"].astype(str).to_numpy()
+    s126_arr = merged["session_126"].astype(str).to_numpy()
+
     for i in range(n):
-        row = merged.iloc[i]
-        s_origin = str(row["session_origin"])
-        sec_id = str(row.get("security_id", "DEFAULT"))
+        s_origin = s_origins[i]
+        sec_id = sec_ids[i]
         qid = f"{boundaries.evaluation_year}_{sec_id}_{s_origin}"
 
-        v63 = bool(row["valid_63"])
-        v126 = bool(row["valid_126"])
-        s63 = str(row["session_63"])
-        s126 = str(row["session_126"])
+        v63 = bool(v63_arr[i])
+        v126 = bool(v126_arr[i])
+        s63 = s63_arr[i]
+        s126 = s126_arr[i]
 
         # Train partition
         if boundaries.train_start <= s_origin <= boundaries.train_end:

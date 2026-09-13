@@ -374,3 +374,154 @@ def test_replay_detects_nan_corrupted_stored_draws(tmp_path):
     with pytest.raises(ReplayVerificationError, match="contains non-finite"):
         replay_analysis_bundle(bundle_dir)
 
+
+# ---------------------------------------------------------------------------
+# Finding 2 / C2: Canonical mask acceptance tests
+# ---------------------------------------------------------------------------
+
+def _make_minimal_returns_map(n_sessions=60, seed=7):
+    """Helper: minimal returns map with MEM_SIM and MLP_BASE for US market only."""
+    rng = np.random.default_rng(seed)
+    arms = ["MEM_SIM", "MLP_BASE", "TRANS_BASE", "MEM_RANDOM", "HIST_PRIOR",
+            "RIDGE_ANNUAL", "KNN_PLAIN", "MLP_GATE", "TRANS_GATE", "MLP_MIX_SR", "TRANS_MIX_SR"]
+    markets = ["US", "IN", "CN", "FR", "GB", "BR"]
+    m = {}
+    for arm in arms:
+        for mkt in markets:
+            m[(arm, mkt, None)] = rng.normal(0.0004, 0.01, n_sessions)
+    return m, markets
+
+
+def test_sharpe_math_oracle_c2():
+    """Finding 2: Verify Sharpe formula matches auditor's two-row illustration.
+
+    Input:        [0.01, 0.02, 0.00, -0.01]  → annualized Sharpe ≈ 7.0993
+    Masked (3rd): [0.01, 0.02, -0.01]        → annualized Sharpe ≈ 8.4853
+    """
+    from memory_study_v2.inference import compute_sharpe_ratio
+    import math
+
+    r4 = np.array([0.01, 0.02, 0.00, -0.01], dtype=np.float64)
+    r3 = np.array([0.01, 0.02, -0.01], dtype=np.float64)
+
+    sr4 = compute_sharpe_ratio(r4)
+    sr3 = compute_sharpe_ratio(r3)
+
+    assert abs(sr4 - 7.0993) < 1e-3, f"4-obs Sharpe expected 7.0993, got {sr4:.4f}"
+    assert abs(sr3 - 8.4853) < 1e-3, f"3-obs Sharpe expected 8.4853, got {sr3:.4f}"
+    assert sr3 > sr4, "Excluding the zero-return session must increase Sharpe"
+
+
+def test_masked_out_session_change_does_not_affect_estimates_c2(tmp_path):
+    """Finding 2 (a): Changing a return where valid_mask=False must NOT change point estimate or draws."""
+    returns_map, markets = _make_minimal_returns_map(n_sessions=60, seed=11)
+    n_sessions = 60
+
+    # Create a mask that excludes session 5 (closed-market placeholder)
+    valid_mask = np.ones(n_sessions, dtype=bool)
+    valid_mask[5] = False
+
+    # Baseline evaluation with original returns
+    contrasts_orig, draws_orig, weeks_orig = evaluate_primary_contrasts(
+        returns_map, markets, valid_mask=valid_mask, num_draws=100, allow_reduced_arms=True
+    )
+    theta_orig = {c.contrast_id: c.theta for c in contrasts_orig if c.status == "COMPLETED"}
+
+    # Change a masked-out return (session 5) in every series → must be irrelevant
+    returns_map_changed = {k: v.copy() for k, v in returns_map.items()}
+    for k in returns_map_changed:
+        returns_map_changed[k][5] = 999.0  # large change to masked session
+
+    contrasts_changed, draws_changed, _ = evaluate_primary_contrasts(
+        returns_map_changed, markets, valid_mask=valid_mask,
+        draw_week_indices=weeks_orig, num_draws=100, allow_reduced_arms=True
+    )
+
+    # Point estimates must be identical
+    for cid, th in theta_orig.items():
+        ch_theta = next(c.theta for c in contrasts_changed if c.contrast_id == cid)
+        assert abs(th - ch_theta) < 1e-12, (
+            f"Contrast {cid}: changing a masked-out return changed theta {th:.6f} → {ch_theta:.6f}"
+        )
+
+    # Bootstrap draws must be identical
+    np.testing.assert_array_equal(draws_orig, draws_changed,
+        err_msg="Changing a masked-out return must not affect any bootstrap draw")
+
+
+def test_valid_return_change_affects_estimates_c2():
+    """Finding 2 (b): Changing a valid return (valid_mask=True) must affect point estimate and draws."""
+    returns_map, markets = _make_minimal_returns_map(n_sessions=60, seed=13)
+    n_sessions = 60
+    valid_mask = np.ones(n_sessions, dtype=bool)
+
+    contrasts_orig, draws_orig, weeks_orig = evaluate_primary_contrasts(
+        returns_map, markets, valid_mask=valid_mask, num_draws=100, allow_reduced_arms=True
+    )
+    theta_orig = {c.contrast_id: c.theta for c in contrasts_orig if c.status == "COMPLETED"}
+
+    # Change session 10 (an open session) to an extreme value in ALL series
+    returns_map_changed = {k: v.copy() for k, v in returns_map.items()}
+    for k in returns_map_changed:
+        returns_map_changed[k][10] = 9.9  # extreme change
+
+    contrasts_changed, draws_changed, _ = evaluate_primary_contrasts(
+        returns_map_changed, markets, valid_mask=valid_mask,
+        draw_week_indices=weeks_orig, num_draws=100, allow_reduced_arms=True
+    )
+
+    # At least one theta must have changed
+    any_changed = any(
+        abs(theta_orig.get(c.contrast_id, 0.0) - c.theta) > 1e-12
+        for c in contrasts_changed if c.status == "COMPLETED"
+    )
+    assert any_changed, "Changing a valid return must affect at least one point estimate"
+
+
+def test_mask_corruption_detected_in_replay_c2(tmp_path):
+    """Finding 2 (c): Corrupting the stored mask must cause replay to raise ReplayVerificationError."""
+    returns_map, markets = _make_minimal_returns_map(n_sessions=60, seed=17)
+    n_sessions = 60
+    valid_mask = np.ones(n_sessions, dtype=bool)
+    valid_mask[3] = False
+
+    contrasts, draws, weeks = evaluate_primary_contrasts(
+        returns_map, markets, valid_mask=valid_mask, num_draws=50, allow_reduced_arms=True
+    )
+    bundle_dir = export_analysis_bundle(
+        {f"{k[0]}__{k[1]}__{k[2]}": list(v) for k, v in returns_map.items()},
+        contrasts, draws, weeks,
+        tmp_path / "bundle_mask",
+        valid_mask=valid_mask,
+        markets=markets,
+        num_draws=50,
+        allow_reduced_arms=True,
+    )
+
+    # Corrupt the stored mask in daily_returns.json
+    import json as _json
+    with open(bundle_dir / "daily_returns.json", "r", encoding="utf-8") as f:
+        payload = _json.load(f)
+    # Replace with a mask of wrong type to trigger corruption detection
+    payload["open_session_mask"] = "corrupted_value_not_a_list"
+    with open(bundle_dir / "daily_returns.json", "w", encoding="utf-8") as f:
+        _json.dump(payload, f)
+
+    with pytest.raises(ReplayVerificationError):
+        replay_analysis_bundle(bundle_dir)
+
+
+def test_open_session_missing_return_raises_c2():
+    """Finding 2 (d): valid_mask=True but return is NaN must raise ValueError."""
+    returns_map, markets = _make_minimal_returns_map(n_sessions=60, seed=19)
+    n_sessions = 60
+
+    # Mark session 7 as open, but inject NaN into the first series
+    valid_mask = np.ones(n_sessions, dtype=bool)
+    first_key = list(returns_map.keys())[0]
+    returns_map[first_key][7] = float("nan")  # NaN on open session
+
+    with pytest.raises(ValueError, match="unexpected missing"):
+        evaluate_primary_contrasts(
+            returns_map, markets, valid_mask=valid_mask, num_draws=50, allow_reduced_arms=True
+        )

@@ -323,10 +323,36 @@ def evaluate_primary_contrasts(
 
     ret_matrix = np.array([returns_by_arm_market_realization[k] for k in keys], dtype=np.float64)
 
-    # 1. Point estimates: compute headline Sharpe per arm on original returns
+    # Build the canonical per-session open mask (same mask used in bootstrap accumulator)
+    # This ensures point estimates and bootstrap draws share an identical observation population.
+    if valid_mask is None:
+        canonical_mask = np.isfinite(ret_matrix)  # shape (K, T)
+    else:
+        # valid_mask may be shape (T,) or (K, T); broadcast to (K, T)
+        vm = np.asarray(valid_mask, dtype=bool)
+        if vm.ndim == 1:
+            vm = np.broadcast_to(vm[np.newaxis, :], ret_matrix.shape).copy()
+        canonical_mask = vm & np.isfinite(ret_matrix)
+
+        # Guard: an unexpected missing return on an open session is an error (Finding 2 / C2)
+        # Open = valid_mask True; if the return is also not finite, that is unexpected.
+        open_but_missing = vm & ~np.isfinite(ret_matrix)
+        if np.any(open_but_missing):
+            bad_coords = list(zip(*np.where(open_but_missing)))[:5]  # show up to 5
+            raise ValueError(
+                f"Unexpected missing (non-finite) return on an open-market session. "
+                f"An unexpected missing return is an error, not automatically a holiday. "
+                f"First offending (series_idx, session_idx) pairs: {bad_coords}"
+            )
+
+    # 1. Point estimates: compute headline Sharpe per arm on mask-filtered returns
+    #    Uses the same mask as the weekly sufficient statistics accumulator.
     arm_market_sharpes: Dict[str, Dict[str, List[float]]] = {}
     for idx, (arm, mkt, seed_val) in enumerate(keys):
-        sr = compute_sharpe_ratio(ret_matrix[idx])
+        # Apply canonical_mask for this series (same formula as bootstrap accumulator)
+        series_mask = canonical_mask[idx]
+        r_masked = ret_matrix[idx][series_mask]
+        sr = compute_sharpe_ratio(r_masked)
         arm_market_sharpes.setdefault(arm, {}).setdefault(mkt, []).append(sr)
 
     headline_sharpes: Dict[str, float] = {}
@@ -343,6 +369,7 @@ def evaluate_primary_contrasts(
         cand_sr = headline_sharpes.get(cand, 0.0)
         comp_sr = headline_sharpes.get(comp, 0.0)
         thetas[cid] = float(cand_sr - comp_sr)
+
 
     # 2. Assign sessions to calendar weeks
     session_weeks, session_years, unique_yw = build_calendar_weeks_mapping(session_dates, T)
@@ -450,20 +477,34 @@ def export_analysis_bundle(
     draw_week_indices: np.ndarray,
     export_dir: Union[str, Path],
     session_dates: Optional[List[str]] = None,
+    valid_mask: Optional[np.ndarray] = None,
     markets: Optional[List[str]] = None,
     num_draws: int = 1000,
     block_length_weeks: int = 4,
     seed: int = 42,
     allow_reduced_arms: bool = False,
 ) -> Path:
-    """Export return series, contrast summary, draw matrix, and sampled week blocks to disk artifacts (R10, C2)."""
+    """Export return series, contrast summary, draw matrix, and sampled week blocks to disk artifacts (R10, C2).
+
+    Also exports the open_session_mask alongside returns so that replay_analysis_bundle
+    can reconstruct the identical observation population (Finding 2 / C2).
+    """
     p = Path(export_dir)
     p.mkdir(parents=True, exist_ok=True)
 
-    # 1. Export returns and session dates
+    # 1. Export returns, session dates, and canonical open-session mask
+    mask_serialized: Optional[List[List[bool]]] = None
+    if valid_mask is not None:
+        vm = np.asarray(valid_mask, dtype=bool)
+        if vm.ndim == 1:
+            mask_serialized = vm.tolist()
+        else:
+            mask_serialized = vm.tolist()
+
     returns_payload = {
         "session_dates": session_dates if session_dates is not None else [],
         "returns": returns_by_key,
+        "open_session_mask": mask_serialized,
     }
     with open(p / "daily_returns.json", "w", encoding="utf-8") as f:
         f.write(to_canonical_json(returns_payload))
@@ -524,9 +565,23 @@ def replay_analysis_bundle(
     if isinstance(returns_payload, dict) and "returns" in returns_payload:
         stored_returns = returns_payload["returns"]
         session_dates = returns_payload.get("session_dates", None)
+        # Load and validate the canonical open-session mask (Finding 2 / C2)
+        stored_mask_raw = returns_payload.get("open_session_mask", None)
+        if stored_mask_raw is not None:
+            try:
+                replay_valid_mask = np.asarray(stored_mask_raw, dtype=bool)
+                if replay_valid_mask.ndim not in (1, 2):
+                    raise ValueError(f"open_session_mask has unexpected ndim={replay_valid_mask.ndim}")
+            except Exception as e:
+                raise ReplayVerificationError(
+                    f"Stored open_session_mask is corrupted or wrong shape: {e}"
+                )
+        else:
+            replay_valid_mask = None
     else:
         stored_returns = returns_payload
         session_dates = None
+        replay_valid_mask = None
 
     with open(contrasts_path, "r", encoding="utf-8") as f:
         stored_contrasts = json.load(f)
@@ -564,12 +619,14 @@ def replay_analysis_bundle(
         else:
             reconstructed_map[(key_str, "US", None)] = np.array(vals, dtype=np.float64)
 
-    # Re-evaluate primary contrasts directly from returns and persisted sampled weeks
+    # Re-evaluate primary contrasts from returns + persisted sampled weeks + canonical mask
+    # Pass the stored valid_mask so the observation population is identical to the original run.
     recomputed_contrasts, recomputed_draws, _ = evaluate_primary_contrasts(
         returns_by_arm_market_realization=reconstructed_map,
         markets=markets,
         session_dates=session_dates if session_dates else None,
         draw_week_indices=stored_weeks_matrix,
+        valid_mask=replay_valid_mask,
         num_draws=num_draws,
         block_length_weeks=block_length,
         seed=seed,
@@ -577,6 +634,7 @@ def replay_analysis_bundle(
     )
 
     # 1. Structural count and shape checks
+
     if len(stored_contrasts) != len(recomputed_contrasts):
         raise ReplayVerificationError(
             f"Stored contrast count ({len(stored_contrasts)}) != recomputed count ({len(recomputed_contrasts)})"

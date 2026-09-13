@@ -117,6 +117,107 @@ def retrieve_mem_sim(
     )
 
 
+def retrieve_mem_sim_batch(
+    bank: MemoryBank,
+    query_vectors: np.ndarray,
+    query_security_ids: List[str],
+    k: int = 25,
+    max_per_security: int = 3,
+    min_spacing_sessions: int = 21,
+    start_buffer_size: int = 250,
+) -> List[RetrievalResult]:
+    """Execute constrained similarity precedent retrieval for a batch of queries (Finding 5 / C6).
+
+    Batches candidate distance computation using bank.compute_squared_euclidean_batched,
+    while strictly preserving all exact eligibility, spacing, cap, and tie-breaking rules per query.
+    """
+    Q = len(query_security_ids)
+    if Q == 0:
+        return []
+
+    # Ensure bank norms are cached
+    if not hasattr(bank, "_bank_norms_sq"):
+        bank.precompute_bank_norms()
+
+    # Precompute distances for all Q queries across all N bank records in one BLAS operation
+    dist_matrix = bank.compute_squared_euclidean_batched(query_vectors)
+
+    results: List[RetrievalResult] = []
+    for q_idx in range(Q):
+        query_vec = query_vectors[q_idx]
+        query_sec = query_security_ids[q_idx]
+        dist_row = dist_matrix[q_idx]
+
+        buffer_size = min(start_buffer_size, bank.N)
+        accepted_indices: List[int] = []
+        sec_counts: Dict[str, int] = {}
+        sec_ordinals: Dict[str, List[int]] = {}
+
+        while True:
+            # Sorted indices using exact tie-breaking: primary dist ascending, secondary record_id ascending
+            sorted_indices = np.lexsort((bank.record_ids, dist_row))[:buffer_size]
+
+            accepted_indices.clear()
+            sec_counts.clear()
+            sec_ordinals.clear()
+
+            for idx in sorted_indices:
+                sec_id = bank.security_ids[idx]
+
+                # 1. Exclude exact canonical security
+                if sec_id == query_sec:
+                    continue
+
+                # 2. Check per-security cap
+                count = sec_counts.get(sec_id, 0)
+                if count >= max_per_security:
+                    continue
+
+                # 3. Check spacing rule: native exchange session ordinals within this security (R03)
+                cand_ord = int(bank.session_ordinals[idx])
+                past_ords = sec_ordinals.get(sec_id, [])
+                too_close = any(abs(cand_ord - p_ord) < min_spacing_sessions for p_ord in past_ords)
+                if too_close:
+                    continue
+
+                # Accept candidate
+                accepted_indices.append(idx)
+                sec_counts[sec_id] = count + 1
+                if sec_id not in sec_ordinals:
+                    sec_ordinals[sec_id] = []
+                sec_ordinals[sec_id].append(cand_ord)
+
+                if len(accepted_indices) == k:
+                    break
+
+            if len(accepted_indices) == k or buffer_size >= bank.N:
+                break
+
+            buffer_size = min(buffer_size * 2, bank.N)
+
+        if len(accepted_indices) < k:
+            results.append(RetrievalResult(
+                prediction=bank.unconditional_mean,
+                neighbor_ids=[int(bank.record_ids[i]) for i in accepted_indices],
+                neighbor_distances=[],
+                is_fallback=True,
+                policy="MEM_SIM",
+            ))
+        else:
+            targets = bank.targets_63[accepted_indices]
+            dist_sq = dist_row[accepted_indices]
+            pred = float(np.mean(targets))
+            results.append(RetrievalResult(
+                prediction=pred,
+                neighbor_ids=[int(bank.record_ids[i]) for i in accepted_indices],
+                neighbor_distances=[float(d) for d in dist_sq],
+                is_fallback=False,
+                policy="MEM_SIM",
+            ))
+
+    return results
+
+
 def retrieve_knn_plain(
     bank: MemoryBank,
     query_vector: np.ndarray,

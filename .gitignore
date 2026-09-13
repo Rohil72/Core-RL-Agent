@@ -34,6 +34,8 @@ data/**
 !data/examples/sample_prices.csv
 !data/manifests/
 !data/manifests/**
+!data/fixtures/
+!data/fixtures/**
 !data/cache/
 !data/cache/ohlcv/
 !data/cache/ohlcv/*.parquet

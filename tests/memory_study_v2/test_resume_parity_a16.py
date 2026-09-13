@@ -390,8 +390,23 @@ def test_fail_closed_production_config_enforcement(tmp_path):
         )
 
     # 3. Unapproved hyperparameter override in production mode raises ValueError
+    full_neural_test = {
+        "learning_rate": 0.001,
+        "weight_decay": 0.0001,
+        "betas": [0.9, 0.999],
+        "epsilon": 1e-08,
+        "effective_batch": 32,
+        "max_epochs": 3,
+        "min_epochs": 2,
+        "early_stop_patience": 5,
+        "minimum_improvement": 1e-06,
+        "gradient_norm_clip": 1.0,
+        "optimizer": "AdamW",
+        "architectures": ["MLP"],
+        "seeds": [7],
+    }
     with open(fake_config, "w", encoding="utf-8") as f:
-        json.dump({"production_authorized": True, "neural": {"learning_rate": 0.001, "weight_decay": 0.0001}}, f)
+        json.dump({"production_authorized": True, "neural": full_neural_test}, f)
 
     with pytest.raises(ValueError, match="Unapproved hyperparameter override"):
         train_backbone_model(
@@ -399,5 +414,139 @@ def test_fail_closed_production_config_enforcement(tmp_path):
             config_path=fake_config,
             execution_mode="production",
             lr=0.05,  # Unapproved override
+        )
+
+
+# ---------------------------------------------------------------------------
+# Finding 4: Complete production configuration boundary acceptance tests
+# ---------------------------------------------------------------------------
+
+def _make_full_neural_config(tmp_path, overrides=None):
+    """Build a minimal valid production config file."""
+    cfg = {
+        "production_authorized": True,
+        "neural": {
+            "learning_rate": 0.001,
+            "weight_decay": 0.0001,
+            "betas": [0.9, 0.999],
+            "epsilon": 1e-08,
+            "effective_batch": 32,
+            "max_epochs": 2,
+            "min_epochs": 2,
+            "early_stop_patience": 5,
+            "minimum_improvement": 1e-06,
+            "gradient_norm_clip": 1.0,
+            "optimizer": "AdamW",
+            "architectures": ["MLP"],
+            "seeds": [7],
+        },
+    }
+    if overrides:
+        cfg["neural"].update(overrides)
+    p = tmp_path / "prod_config.json"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    with open(p, "w", encoding="utf-8") as f:
+        json.dump(cfg, f)
+    return p
+
+
+def test_production_missing_neural_section_raises_c4(tmp_path):
+    """Finding 4: Missing neural config section raises ValueError before training starts."""
+    m = MLPAnnual(seed=7)
+    train_x = torch.randn(16, 966)
+    train_y = torch.randn(16)
+    train_mkts = np.array(["US"] * 16)
+    val_x = torch.randn(8, 966)
+    val_y = torch.randn(8)
+    val_mkts = np.array(["US"] * 8)
+
+    p = tmp_path / "no_neural.json"
+    with open(p, "w", encoding="utf-8") as f:
+        json.dump({"production_authorized": True}, f)
+
+    with pytest.raises((ValueError, KeyError)):
+        train_backbone_model(
+            m, train_x, train_y, train_mkts, val_x, val_y, val_mkts,
+            config_path=p,
+            execution_mode="production",
+        )
+
+
+def test_production_changed_patience_raises_c4(tmp_path):
+    """Finding 4: Changing patience in production mode raises ValueError."""
+    m = MLPAnnual(seed=7)
+    train_x = torch.randn(16, 966)
+    train_y = torch.randn(16)
+    train_mkts = np.array(["US"] * 16)
+    val_x = torch.randn(8, 966)
+    val_y = torch.randn(8)
+    val_mkts = np.array(["US"] * 8)
+
+    cfg_path = _make_full_neural_config(tmp_path)
+
+    with pytest.raises(ValueError, match="Unapproved hyperparameter override"):
+        train_backbone_model(
+            m, train_x, train_y, train_mkts, val_x, val_y, val_mkts,
+            config_path=cfg_path,
+            execution_mode="production",
+            patience=99,  # Different from config's early_stop_patience=5
+        )
+
+
+def test_production_changed_effective_batch_raises_c4(tmp_path):
+    """Finding 4: Changing effective_batch_size in production mode raises ValueError."""
+    m = MLPAnnual(seed=7)
+    train_x = torch.randn(16, 966)
+    train_y = torch.randn(16)
+    train_mkts = np.array(["US"] * 16)
+    val_x = torch.randn(8, 966)
+    val_y = torch.randn(8)
+    val_mkts = np.array(["US"] * 8)
+
+    cfg_path = _make_full_neural_config(tmp_path)  # effective_batch=32
+
+    with pytest.raises(ValueError, match="Unapproved hyperparameter override"):
+        train_backbone_model(
+            m, train_x, train_y, train_mkts, val_x, val_y, val_mkts,
+            config_path=cfg_path,
+            execution_mode="production",
+            effective_batch_size=512,  # Different from config's effective_batch=32
+        )
+
+
+def test_checkpoint_config_hash_mismatch_raises_c4(tmp_path):
+    """Finding 4: Mismatched checkpoint config hash raises ValueError on resume."""
+    m = MLPAnnual(seed=7)
+    train_x = torch.randn(32, 966)
+    train_y = torch.randn(32)
+    train_mkts = np.array(["US"] * 32)
+    val_x = torch.randn(8, 966)
+    val_y = torch.randn(8)
+    val_mkts = np.array(["US"] * 8)
+
+    cfg_path = _make_full_neural_config(tmp_path)
+
+    # 1. Train for 2 epochs and save a checkpoint (matches config's min_epochs=2, max_epochs=2)
+    m1 = MLPAnnual(seed=7)
+    train_backbone_model(
+        m1, train_x, train_y, train_mkts, val_x, val_y, val_mkts,
+        config_path=cfg_path,
+        execution_mode="production",
+        checkpoint_dir=tmp_path / "chk",
+        min_epochs=2, max_epochs=2,
+    )
+
+    # 2. Modify the config (change learning_rate) — this changes config_hash
+    cfg_changed_path = _make_full_neural_config(tmp_path / "v2", overrides={"learning_rate": 0.002})
+
+    # 3. Attempt resume with the changed config → must raise ValueError
+    m2 = MLPAnnual(seed=7)
+    with pytest.raises(ValueError, match="config hash mismatch"):
+        train_backbone_model(
+            m2, train_x, train_y, train_mkts, val_x, val_y, val_mkts,
+            config_path=cfg_changed_path,
+            execution_mode="production",
+            resume_from_checkpoint=tmp_path / "chk",
+            min_epochs=2, max_epochs=2,
         )
 

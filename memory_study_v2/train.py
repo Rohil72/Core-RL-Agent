@@ -11,6 +11,7 @@ Acceptance criteria addressed:
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import os
 import random
@@ -121,6 +122,7 @@ class TrainingState:
     epoch_val_losses: List[float] = field(default_factory=list)
     sampler_cursor: int = 0
     epoch_permutation: Optional[List[int]] = None
+    config_hash: Optional[str] = None  # SHA-256 of resolved neural config (Finding 4 / C4)
 
 
 def capture_training_state(
@@ -134,8 +136,9 @@ def capture_training_state(
     generator: Optional[np.random.Generator] = None,
     epoch_val_losses: Optional[List[float]] = None,
     epoch_permutation: Optional[List[int]] = None,
+    config_hash: Optional[str] = None,
 ) -> TrainingState:
-    """Capture complete state including CUDA, Python, NumPy RNGs, Generator, and cursor (R06)."""
+    """Capture complete state including CUDA, Python, NumPy RNGs, Generator, cursor, and config hash (R06, Finding 4)."""
     cuda_state = None
     if torch.cuda.is_available():
         cuda_state = torch.cuda.get_rng_state_all()
@@ -159,6 +162,7 @@ def capture_training_state(
         epoch_val_losses=list(epoch_val_losses) if epoch_val_losses is not None else [],
         sampler_cursor=sampler_cursor,
         epoch_permutation=list(epoch_permutation) if epoch_permutation is not None else None,
+        config_hash=config_hash,
     )
 
 
@@ -223,14 +227,35 @@ class TrainingSummary:
     early_stopped: bool
 
 
+# Required neural configuration fields that must ALL be present in production mode (Finding 4 / C4).
+REQUIRED_NEURAL_KEYS = [
+    "learning_rate", "weight_decay", "betas", "epsilon", "effective_batch",
+    "max_epochs", "min_epochs", "early_stop_patience", "minimum_improvement",
+    "gradient_norm_clip", "optimizer", "architectures", "seeds",
+]
+
+
+def _compute_config_hash(neural_cfg: Dict[str, Any]) -> str:
+    """Compute a deterministic SHA-256 hash of the resolved neural config dict (Finding 4 / C4)."""
+    canonical = json.dumps(neural_cfg, sort_keys=True, ensure_ascii=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
 def load_neural_config(
     config_path: Optional[Union[str, Path]] = None,
     execution_mode: str = "pilot",
-) -> Dict[str, Any]:
-    """Load and validate neural training configuration from config.proposed.json (C3).
+) -> Tuple[Dict[str, Any], str]:
+    """Load and validate neural training configuration from config.proposed.json (C3, Finding 4).
+
+    Returns:
+        (neural_cfg, config_hash): neural section dict and SHA-256 of resolved config.
 
     In permissive 'pilot' mode, missing config files use standard defaults.
-    In fail-closed 'production' mode, the config file is mandatory and production_authorized must be true.
+    In fail-closed 'production' mode:
+      - The config file is mandatory (FileNotFoundError if absent).
+      - production_authorized must be true (PermissionError otherwise).
+      - All REQUIRED_NEURAL_KEYS must be present (ValueError if any missing).
+      - Uses explicit ValueError/PermissionError/FileNotFoundError, not assert.
     """
     if config_path is None:
         p = Path("rebuild_plan/config.proposed.json")
@@ -240,7 +265,7 @@ def load_neural_config(
     if not p.exists():
         if execution_mode == "production":
             raise FileNotFoundError(f"In production mode, configuration file '{p}' is mandatory.")
-        return {
+        default_cfg = {
             "learning_rate": 0.001,
             "weight_decay": 0.0001,
             "betas": [0.9, 0.999],
@@ -251,7 +276,11 @@ def load_neural_config(
             "early_stop_patience": 5,
             "minimum_improvement": 1e-06,
             "gradient_norm_clip": 1.0,
+            "optimizer": "AdamW",
+            "architectures": [],
+            "seeds": [],
         }
+        return default_cfg, _compute_config_hash(default_cfg)
 
     with open(p, "r", encoding="utf-8") as f:
         data = json.load(f)
@@ -260,7 +289,17 @@ def load_neural_config(
         if not data.get("production_authorized", False):
             raise PermissionError("Production execution rejected: production_authorized is false.")
 
-    return data.get("neural", {})
+    neural_cfg = data.get("neural", {})
+
+    if execution_mode == "production":
+        missing_keys = [k for k in REQUIRED_NEURAL_KEYS if k not in neural_cfg]
+        if missing_keys:
+            raise ValueError(
+                f"Production mode: neural configuration is missing required fields: {missing_keys}. "
+                "All required scientific settings must be explicitly present in the config file."
+            )
+
+    return neural_cfg, _compute_config_hash(neural_cfg)
 
 
 def train_backbone_model(
@@ -303,16 +342,20 @@ def train_backbone_model(
     - Fail-closed production configuration validation (C3).
     - Macro-boundary interruption handling (C5).
     """
-    # 1. Bind configuration from config.proposed.json (C3)
-    n_cfg = load_neural_config(config_path, execution_mode=execution_mode)
+    # 1. Bind configuration from config.proposed.json (C3, Finding 4)
+    n_cfg, config_hash = load_neural_config(config_path, execution_mode=execution_mode)
     cfg_lr = float(n_cfg.get("learning_rate", 0.001))
     cfg_wd = float(n_cfg.get("weight_decay", 0.0001))
     cfg_clip = float(n_cfg.get("gradient_norm_clip", 1.0))
     cfg_betas = tuple(n_cfg.get("betas", [0.9, 0.999]))
     cfg_eps = float(n_cfg.get("epsilon", 1e-08))
     cfg_eb = int(n_cfg.get("effective_batch", 512))
+    cfg_min_epochs = int(n_cfg.get("min_epochs", 5))
+    cfg_max_epochs = int(n_cfg.get("max_epochs", 50))
+    cfg_patience = int(n_cfg.get("early_stop_patience", 5))
 
     if execution_mode == "production":
+        # Optimizer hyperparameters
         if lr is not None and lr != cfg_lr:
             raise ValueError(f"Unapproved hyperparameter override in production mode: lr={lr} vs config={cfg_lr}")
         if weight_decay is not None and weight_decay != cfg_wd:
@@ -325,6 +368,13 @@ def train_backbone_model(
             raise ValueError(f"Unapproved hyperparameter override in production mode: eps={eps} vs config={cfg_eps}")
         if effective_batch_size is not None and effective_batch_size != cfg_eb:
             raise ValueError(f"Unapproved hyperparameter override in production mode: effective_batch_size={effective_batch_size} vs config={cfg_eb}")
+        # Stopping rules — also validated (Finding 4)
+        if min_epochs is not None and min_epochs != cfg_min_epochs:
+            raise ValueError(f"Unapproved hyperparameter override in production mode: min_epochs={min_epochs} vs config={cfg_min_epochs}")
+        if max_epochs is not None and max_epochs != cfg_max_epochs:
+            raise ValueError(f"Unapproved hyperparameter override in production mode: max_epochs={max_epochs} vs config={cfg_max_epochs}")
+        if patience is not None and patience != cfg_patience:
+            raise ValueError(f"Unapproved hyperparameter override in production mode: patience={patience} vs config={cfg_patience}")
 
     if lr is None:
         lr = cfg_lr
@@ -339,25 +389,31 @@ def train_backbone_model(
     if effective_batch_size is None:
         effective_batch_size = cfg_eb
     if min_epochs is None:
-        min_epochs = int(n_cfg.get("min_epochs", 5))
+        min_epochs = cfg_min_epochs
     if max_epochs is None:
-        max_epochs = int(n_cfg.get("max_epochs", 50))
+        max_epochs = cfg_max_epochs
     if patience is None:
-        patience = int(n_cfg.get("early_stop_patience", 5))
+        patience = cfg_patience
 
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     model.to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr, betas=betas, eps=eps, weight_decay=weight_decay)
-    # Assert optimizer parameter groups strictly match approved configuration (C3)
+    # Validate optimizer parameter groups strictly match approved configuration (C3, Finding 4)
+    # Uses explicit ValueError, not assert, per auditor requirement.
     for pg in optimizer.param_groups:
-        assert pg["lr"] == lr, f"Optimizer lr mismatch: {pg['lr']} vs {lr}"
-        assert pg["weight_decay"] == weight_decay, f"Optimizer weight_decay mismatch: {pg['weight_decay']} vs {weight_decay}"
-        assert pg["betas"] == betas, f"Optimizer betas mismatch: {pg['betas']} vs {betas}"
-        assert pg["eps"] == eps, f"Optimizer eps mismatch: {pg['eps']} vs {eps}"
+        if pg["lr"] != lr:
+            raise ValueError(f"Optimizer lr mismatch: {pg['lr']} vs {lr}")
+        if pg["weight_decay"] != weight_decay:
+            raise ValueError(f"Optimizer weight_decay mismatch: {pg['weight_decay']} vs {weight_decay}")
+        if pg["betas"] != betas:
+            raise ValueError(f"Optimizer betas mismatch: {pg['betas']} vs {betas}")
+        if pg["eps"] != eps:
+            raise ValueError(f"Optimizer eps mismatch: {pg['eps']} vs {eps}")
 
     selector = EarlyStoppingSelector(min_epochs=min_epochs, max_epochs=max_epochs, patience=patience)
+
 
     N_train = len(train_y)
     weights_np = compute_equal_market_weights(train_markets, target_num_markets=len(np.unique(train_markets)))
@@ -383,6 +439,16 @@ def train_backbone_model(
         if not chk_file.exists():
             raise FileNotFoundError(f"Requested resume checkpoint does not exist: {chk_file}")
         state = torch.load(chk_file, weights_only=False)
+        # Config hash check: verify resume config matches checkpoint config BEFORE loading model state
+        # (Finding 4 / C4)
+        stored_hash = getattr(state, "config_hash", None)
+        if stored_hash is not None and stored_hash != config_hash:
+            raise ValueError(
+                f"Checkpoint config hash mismatch on resume: "
+                f"checkpoint={stored_hash!r} vs current={config_hash!r}. "
+                "The resolved neural configuration has changed since this checkpoint was saved. "
+                "Cannot safely resume training with a different configuration."
+            )
         start_epoch = restore_training_state(state, model, optimizer, selector, generator=rng)
         macro_step = state.macro_step
         micro_step = state.micro_step
@@ -390,12 +456,17 @@ def train_backbone_model(
         if initial_cursor > 0 and getattr(state, "epoch_permutation", None) is not None:
             resumed_permutation = np.array(state.epoch_permutation, dtype=int)
         epoch_val_losses = list(getattr(state, "epoch_val_losses", []))
-        # Validate restored optimizer parameter groups against current optimizer config (C3, C5)
+        # Validate restored optimizer parameter groups against current optimizer config (C3, C5, Finding 4)
+        # Uses explicit ValueError, not assert.
         for pg in optimizer.param_groups:
-            assert pg["lr"] == lr, f"Restored optimizer lr mismatch: {pg['lr']} vs {lr}"
-            assert pg["weight_decay"] == weight_decay, f"Restored optimizer weight_decay mismatch: {pg['weight_decay']} vs {weight_decay}"
-            assert pg["betas"] == betas, f"Restored optimizer betas mismatch: {pg['betas']} vs {betas}"
-            assert pg["eps"] == eps, f"Restored optimizer eps mismatch: {pg['eps']} vs {eps}"
+            if pg["lr"] != lr:
+                raise ValueError(f"Restored optimizer lr mismatch: {pg['lr']} vs {lr}")
+            if pg["weight_decay"] != weight_decay:
+                raise ValueError(f"Restored optimizer weight_decay mismatch: {pg['weight_decay']} vs {weight_decay}")
+            if pg["betas"] != betas:
+                raise ValueError(f"Restored optimizer betas mismatch: {pg['betas']} vs {betas}")
+            if pg["eps"] != eps:
+                raise ValueError(f"Restored optimizer eps mismatch: {pg['eps']} vs {eps}")
     else:
         torch.manual_seed(seed)
         if torch.cuda.is_available():
@@ -467,6 +538,7 @@ def train_backbone_model(
                             generator=rng,
                             epoch_val_losses=epoch_val_losses,
                             epoch_permutation=list(indices),
+                            config_hash=config_hash,
                         )
                         torch.save(interrupted_state, Path(checkpoint_dir) / "last_checkpoint.pt")
                     interrupted_mid_epoch = True
@@ -500,6 +572,7 @@ def train_backbone_model(
                             sampler_cursor=0,
                             generator=rng,
                             epoch_val_losses=epoch_val_losses,
+                            config_hash=config_hash,
                         )
                         torch.save(state, Path(checkpoint_dir) / "last_checkpoint.pt")
                         if is_best:
@@ -558,6 +631,7 @@ def train_backbone_model(
                 sampler_cursor=0,
                 generator=rng,
                 epoch_val_losses=epoch_val_losses,
+                config_hash=config_hash,
             )
             torch.save(state, Path(checkpoint_dir) / "last_checkpoint.pt")
             if is_best:
