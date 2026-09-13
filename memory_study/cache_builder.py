@@ -11,6 +11,7 @@ Saves arrays in .npy and metadata in .parquet / .csv.
 
 import json
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Tuple, Any
 
@@ -25,6 +26,11 @@ from memory_study.backbones import (
     load_transformer_checkpoint,
     load_mlp_checkpoint,
     ensure_mlp_checkpoints,
+)
+from memory_study.shared_representation import (
+    extract_six_session_mean_patch,
+    compute_patch_matrix_and_mlp_input,
+    MLP_REPRESENTATION_ID,
 )
 
 PROJECT_ROOT = Path("c:/Users/rohil/OneDrive/Desktop/Core-RL-Agent")
@@ -133,6 +139,7 @@ def compute_23_features(df_ohlcv: pd.DataFrame) -> pd.DataFrame:
 def build_caches(force_rebuild: bool = False) -> Dict[str, Any]:
     """
     Constructs and persists all query, memory, and outcome caches.
+    Ensures MLP input representation parity with patchTST final patch.
     """
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -146,15 +153,23 @@ def build_caches(force_rebuild: bool = False) -> Dict[str, Any]:
     n_patches = cfg["n_patches"]
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # Check if already built
+    # Check if already built and compatible
     mem_meta_p = CACHE_DIR / "memory_meta.parquet"
     query_meta_p = CACHE_DIR / "query_meta.parquet"
-    if not force_rebuild and mem_meta_p.exists() and query_meta_p.exists():
-        print(f"[+] Reusing existing caches from {CACHE_DIR}")
-        return {"cache_dir": str(CACHE_DIR), "reused": True}
+    prov_p = CACHE_DIR / "cache_provenance.json"
+    if not force_rebuild and mem_meta_p.exists() and query_meta_p.exists() and prov_p.exists():
+        try:
+            with open(prov_p, "r") as pf:
+                prov = json.load(pf)
+            if prov.get("representation_id") == MLP_REPRESENTATION_ID:
+                print(f"[+] Reusing existing compatible caches from {CACHE_DIR} ({MLP_REPRESENTATION_ID})")
+                return {"cache_dir": str(CACHE_DIR), "reused": True}
+        except Exception:
+            pass
 
     print("=" * 80)
     print(f"BUILDING CACHES FOR MEMORY-CENTRIC EQUITY SELECTION (Device: {device})")
+    print(f"MLP Representation: {MLP_REPRESENTATION_ID}")
     print("=" * 80)
 
     # 1. Ingest market data
@@ -221,9 +236,15 @@ def build_caches(force_rebuild: bool = False) -> Dict[str, Any]:
                 patch_mat = w_slice.reshape(n_patches, patch_size, 23).mean(axis=1)  # shape (42, 23)
                 flat_window = patch_mat.reshape(-1)  # shape (966,)
 
+                # Extract 6-session mean patch strictly covering t-6 to t-1
+                mlp_input = extract_six_session_mean_patch(feat_norm, i)
+                # Mathematical parity guarantee: final patch of 42-patch sequence is identical to mlp_input
+                if not np.allclose(mlp_input, patch_mat[-1], atol=1e-6):
+                    raise ValueError(f"Parity failure at market {m}, ticker {tkr}, session {i}")
+
                 r_idx = len(mem_records)
                 mem_raw_windows.append(flat_window)
-                mem_raw_last_list.append(feat_norm[i - 1])
+                mem_raw_last_list.append(mlp_input)
                 r63_val = float(ret63[i]) if not np.isnan(ret63[i]) else 0.0
                 mem_ret63_list.append(r63_val)
 
@@ -254,6 +275,8 @@ def build_caches(force_rebuild: bool = False) -> Dict[str, Any]:
         train_y=np.array(mem_ret63_list, dtype=np.float32),
         seeds=backbone_seeds,
         device=device,
+        force_retrain=True,
+        representation_id=MLP_REPRESENTATION_ID,
     )
 
     # 5. Encode Memory Latents on GPU for Transformer and MLP
@@ -276,7 +299,7 @@ def build_caches(force_rebuild: bool = False) -> Dict[str, Any]:
 
         # MLP
         print(f"   * Encoding MLP latents (seed {s})...")
-        mlp_model = load_mlp_checkpoint(s, device)
+        mlp_model = load_mlp_checkpoint(s, device, expected_rep_id=MLP_REPRESENTATION_ID)
         mlp_lats = []
         with torch.no_grad():
             for b_i in range(0, len(mem_last_feat_tensor), 4096):
@@ -362,7 +385,7 @@ def build_caches(force_rebuild: bool = False) -> Dict[str, Any]:
     # 7. Compute Base Predictions and Latents for Queries
     print("\n[Step 7] Computing base predictions and latents for all queries...")
     q_patches_tensor = torch.tensor(query_raw_arr.reshape(-1, n_patches, 23), dtype=torch.float32, device=device)
-    # Extract last patch feature for MLP
+    # Extract last patch feature for MLP (shape: N, 23)
     q_last_feat_tensor = q_patches_tensor[:, -1, :]
 
     for s in backbone_seeds:
@@ -382,7 +405,7 @@ def build_caches(force_rebuild: bool = False) -> Dict[str, Any]:
 
         # MLP
         print(f"   * Query inference for MLP (seed {s})...")
-        mlp_model = load_mlp_checkpoint(s, device)
+        mlp_model = load_mlp_checkpoint(s, device, expected_rep_id=MLP_REPRESENTATION_ID)
         mlp_preds = []
         mlp_lats = []
         with torch.no_grad():
@@ -393,6 +416,23 @@ def build_caches(force_rebuild: bool = False) -> Dict[str, Any]:
                 mlp_preds.append(pred.squeeze(1).cpu())
         np.save(CACHE_DIR / f"query_latents_mlp_seed_{s}.npy", torch.cat(mlp_lats, dim=0).numpy())
         np.save(CACHE_DIR / f"query_preds_mlp_seed_{s}.npy", torch.cat(mlp_preds, dim=0).numpy())
+
+    # 8. Record Cache Provenance
+    provenance = {
+        "cache_build_utc": datetime.now(timezone.utc).isoformat(),
+        "representation_id": MLP_REPRESENTATION_ID,
+        "representation_description": "Six-session mean of standardized and clipped features strictly covering t-6 to t-1",
+        "mlp_input_dim": 23,
+        "n_memory_precedents": len(mem_df),
+        "n_queries": len(query_df),
+        "backbone_seeds": backbone_seeds,
+        "markets": list(markets.keys()),
+        "target_horizon": 63,
+        "pre_2021_cutoff": "2020-12-31",
+    }
+    with open(CACHE_DIR / "cache_provenance.json", "w") as pf:
+        json.dump(provenance, pf, indent=2)
+    print(f"   [+] Saved cache provenance to {CACHE_DIR / 'cache_provenance.json'}")
 
     print(f"\n[+] All caches successfully built and persisted in {CACHE_DIR}")
     return {"cache_dir": str(CACHE_DIR), "reused": False, "n_memory": len(mem_df), "n_queries": len(query_df)}

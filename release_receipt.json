@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.0.2",
+  "schema_version": "1.0.3",
   "status": "verified_public_release",
   "project_title": "Auditable Historical-Memory Retrieval for Long-Horizon Equity Selection: Negative Validation Across Six Sovereign Markets",
   "journal": "Digital Finance (Springer Nature)",
@@ -22,9 +22,9 @@
     "repository_id": "R_kgDORN1f3A",
     "visibility": "PUBLIC",
     "base_commit_sha": "a23a682967e0394ca12b41194f9c3161b2b38652",
-    "release_commit_sha": "897924ece199cfb341a92b1f423d58972c3d382c",
-    "tag": "paper-v1.0.2",
-    "github_release_url": "https://github.com/Rohil72/Core-RL-Agent/releases/tag/paper-v1.0.2",
+    "release_commit_sha": null,
+    "tag": "paper-v1.0.3",
+    "github_release_url": "https://github.com/Rohil72/Core-RL-Agent/releases/tag/paper-v1.0.3",
     "zenodo_status": "pending_author_activation",
     "version_doi": null,
     "concept_doi": null,
@@ -34,15 +34,15 @@
     "repository_url": "https://github.com/Rohil72/historical-memory-equity-data",
     "repository_id": "R_kgDOUYWCcA",
     "visibility": "PUBLIC",
-    "release_commit_sha": "a793e4c47a396ef1395591c2f717e41bcd29e862",
-    "tag": "v1.0.2",
-    "github_release_url": "https://github.com/Rohil72/historical-memory-equity-data/releases/tag/v1.0.2",
+    "release_commit_sha": "0dba6f88504fffc802e915ff240177b515a2d8b9",
+    "tag": "v1.0.3",
+    "github_release_url": "https://github.com/Rohil72/historical-memory-equity-data/releases/tag/v1.0.3",
     "zenodo_status": "pending_author_activation",
     "version_doi": null,
     "concept_doi": null,
-    "archive_url": "https://github.com/Rohil72/historical-memory-equity-data/releases/download/v1.0.2/historical-memory-equity-data-v1.0.2.zip",
-    "archive_sha256": "96e4b4177a0479c8b8859ad22e4686c14c99cb33d01be684ab7a1cfb01cd78b7",
-    "archive_bytes": 5121057,
+    "archive_url": "https://github.com/Rohil72/historical-memory-equity-data/releases/download/v1.0.3/historical-memory-equity-data-v1.0.3.zip",
+    "archive_sha256": "43753023ecc69797d5e37098fa1cd5ad0f43406d57fda6679956d2bc9447e596",
+    "archive_bytes": 4963342,
     "license": "CC-BY-4.0"
   },
   "audit_resolution_summary": {
@@ -61,10 +61,11 @@
     "R13_relative_paths": "Resolved: all runner and replay scripts parameterized with relative/configurable paths",
     "R14_paper_title_author_attribution": "Resolved: title and author list (Rohil Gujarathi, Sangeeta Oswal, Vaibhav Goyal) reconciled",
     "R15_environment_licensing_schemas": "Resolved: full Apache 2.0 text deposited; 336 genuine installed package distributions exported; strict schemas",
-    "R16_table_mapping_full_precision": "Resolved: table sources mapped in table_sources.csv; artifact manifest tiered into 4 categories"
+    "R16_table_mapping_full_precision": "Resolved: table sources mapped in table_sources.csv; artifact manifest tiered into 4 categories",
+    "R17_mlp_representation_parity": "Resolved: MLP retrained and evaluated using exact six-session mean patch formula x_{i,t}^{MLP} = 1/6 sum_{a=1}^6 x_{i,t-a} strictly covering sessions t-6 to t-1; query and training parity verified; selective trust gates refitted on H2 2021; 54 MLP cells resimulated; all 150 cells verified within $0.10 penny accounting; replay verified to <= 1e-10"
   },
   "verification": {
-    "checked_at_utc": "2026-09-12T22:45:00.000000+00:00",
+    "checked_at_utc": "2026-09-13T00:03:00.000000+00:00",
     "anonymous_repository_access": true,
     "anonymous_asset_downloads": true,
     "checksums_passed": true,
@@ -73,6 +74,6 @@
     "reproduction_levels_verified": [
       1
     ],
-    "validation_report_url": "https://raw.githubusercontent.com/Rohil72/historical-memory-equity-data/v1.0.2/validation/report.json"
+    "validation_report_url": "https://raw.githubusercontent.com/Rohil72/historical-memory-equity-data/v1.0.3/validation/report.json"
   }
 }

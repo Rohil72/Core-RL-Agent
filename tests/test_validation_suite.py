@@ -28,7 +28,7 @@ from memory_study.validate_release import validate_release
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 BUNDLE_PATH = Path(os.environ.get("RELEASE_BUNDLE_PATH", REPO_ROOT.parent / "historical-memory-equity-data"))
-REPLAY_PATH = BUNDLE_PATH / "validation" / "replay_output"
+REPLAY_PATH = BUNDLE_PATH / "replay" if (BUNDLE_PATH / "replay").exists() else (BUNDLE_PATH / "validation" / "replay_output")
 
 
 def refresh_fixture_checksums(bundle_dir: Path):

@@ -217,9 +217,11 @@ def execute_reanalysis():
     ]
     master_perf_df = master_perf_df.set_index("arm").reindex(display_order).reset_index()
     master_perf_df.to_csv(OUTPUT_DIR / "master_performance.csv", index=False)
+    master_perf_df.to_csv(OUTPUT_DIR / "master_performance_full_precision.csv", index=False)
     runs_df.to_csv(OUTPUT_DIR / "metrics_by_run.csv", index=False)
     market_df.to_csv(OUTPUT_DIR / "market_performance.csv", index=False)
-    print(f"   [+] Saved master_performance.csv, metrics_by_run.csv, market_performance.csv to {OUTPUT_DIR}")
+    market_df.to_csv(OUTPUT_DIR / "market_performance_full_precision.csv", index=False)
+    print(f"   [+] Saved master_performance.csv, metrics_by_run.csv, market_performance.csv (and full precision) to {OUTPUT_DIR}")
 
     # 3. Produce Diagnostic Table: estimand_reconciliation.csv
     print("\n[Step B] Building estimand_reconciliation.csv...")
@@ -463,6 +465,14 @@ def execute_reanalysis():
                 "ci_ret_upper": round(ci_upper_ret, 4),
                 "p_ret_raw": round(p_val_ret, 4),
                 "se_sr": round(float(np.std(draws_sr)), 4),
+                "raw_delta_original": float(orig_d_sr),
+                "raw_ci_lower": float(ci_lower),
+                "raw_ci_upper": float(ci_upper),
+                "raw_p_val": float(p_val),
+                "raw_delta_ret": float(orig_d_ret),
+                "raw_ci_ret_lower": float(ci_lower_ret),
+                "raw_ci_ret_upper": float(ci_upper_ret),
+                "raw_p_ret_val": float(p_val_ret),
             }
         boot_results_by_L[L_name] = res_L
         
@@ -504,7 +514,36 @@ def execute_reanalysis():
         })
     primary_contrasts_df = pd.DataFrame(primary_rows)
     primary_contrasts_df.to_csv(OUTPUT_DIR / "primary_contrasts.csv", index=False)
-    print(f"   [+] Saved primary_contrasts.csv to {OUTPUT_DIR}")
+    
+    primary_full_rows = []
+    for (cid, cand, comp, lbl), h_p in zip(primary_contrasts_def, primary_holm_p):
+        r = boot_results_by_L["primary_4w"][cid]
+        c_val = float(arm_metrics[cand]["sharpe"])
+        comp_val = float(arm_metrics[comp]["sharpe"])
+        diff = c_val - comp_val
+        primary_full_rows.append({
+            "contrast_id": cid,
+            "candidate": cand,
+            "comparator": comp,
+            "candidate_metric": float(T_sr_orig[cand]),
+            "comparator_metric": float(T_sr_orig[comp]),
+            "delta_original": r["raw_delta_original"],
+            "ci_lower": r["raw_ci_lower"],
+            "ci_upper": r["raw_ci_upper"],
+            "p_raw": r["raw_p_val"],
+            "p_holm": float(h_p),
+            "statistically_significant": bool(h_p <= 0.05),
+            "delta_return_original": r["raw_delta_ret"],
+            "ci_ret_lower": r["raw_ci_ret_lower"],
+            "ci_ret_upper": r["raw_ci_ret_upper"],
+            "p_ret_raw": r["raw_p_ret_val"],
+            "block_length_weeks": 4,
+            "n_markets": 6,
+            "inference_method": "First-order centered synchronized calendar-week block bootstrap (10,000 draws)",
+        })
+    primary_contrasts_full_df = pd.DataFrame(primary_full_rows)
+    primary_contrasts_full_df.to_csv(OUTPUT_DIR / "primary_contrasts_full_precision.csv", index=False)
+    print(f"   [+] Saved primary_contrasts.csv and primary_contrasts_full_precision.csv to {OUTPUT_DIR}")
 
     # Secondary contrasts (exploratory, unadjusted)
     secondary_rows = []
@@ -530,7 +569,34 @@ def execute_reanalysis():
         })
     secondary_contrasts_df = pd.DataFrame(secondary_rows)
     secondary_contrasts_df.to_csv(OUTPUT_DIR / "secondary_contrasts.csv", index=False)
-    print(f"   [+] Saved secondary_contrasts.csv to {OUTPUT_DIR}")
+    
+    secondary_full_rows = []
+    for cid, cand, comp, lbl in secondary_contrasts_def:
+        r = boot_results_by_L["primary_4w"][cid]
+        c_val = float(arm_metrics[cand]["sharpe"])
+        comp_val = float(arm_metrics[comp]["sharpe"])
+        diff = c_val - comp_val
+        secondary_full_rows.append({
+            "contrast_id": cid,
+            "candidate": cand,
+            "comparator": comp,
+            "label": lbl,
+            "candidate_metric": float(T_sr_orig[cand]),
+            "comparator_metric": float(T_sr_orig[comp]),
+            "delta_original": r["raw_delta_original"],
+            "ci_lower": r["raw_ci_lower"],
+            "ci_upper": r["raw_ci_upper"],
+            "p_raw_unadjusted": r["raw_p_val"],
+            "delta_return_original": r["raw_delta_ret"],
+            "ci_ret_lower": r["raw_ci_ret_lower"],
+            "ci_ret_upper": r["raw_ci_ret_upper"],
+            "p_ret_raw": r["raw_p_ret_val"],
+            "block_length_weeks": 4,
+            "inference_status": "Exploratory, unadjusted for multiple testing",
+        })
+    secondary_contrasts_full_df = pd.DataFrame(secondary_full_rows)
+    secondary_contrasts_full_df.to_csv(OUTPUT_DIR / "secondary_contrasts_full_precision.csv", index=False)
+    print(f"   [+] Saved secondary_contrasts.csv and secondary_contrasts_full_precision.csv to {OUTPUT_DIR}")
 
     # Sensitivity comparison table
     sens_rows = []
@@ -572,8 +638,8 @@ def execute_reanalysis():
             "multiplicity_correction": "step_down_holm_bonferroni_on_c1_c5",
         },
         "selected_mixture_coefficients": {
-            "mlp": 0.50,
-            "transformer": 0.50,
+            "mlp": float(json.load(open(SOURCE_DIR / "selected_mixture_coefficients.json"))["mlp"]["selected_lambda"]) if (SOURCE_DIR / "selected_mixture_coefficients.json").exists() else 0.0,
+            "transformer": float(json.load(open(SOURCE_DIR / "selected_mixture_coefficients.json"))["transformer"]["selected_lambda"]) if (SOURCE_DIR / "selected_mixture_coefficients.json").exists() else 0.5,
         },
     }
     with open(OUTPUT_DIR / "analysis_config.json", "w", encoding="utf-8") as f:

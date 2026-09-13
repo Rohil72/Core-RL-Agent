@@ -1,0 +1,141 @@
+{
+  "correction_title": "MLP Input-Representation Alignment (6-Session Mean Patch)",
+  "representation_id": "mlp_v2_patch6mean_2026",
+  "created_at_utc": "2026-09-13T05:22:00Z",
+  "target_journal": "Digital Finance (Springer Nature)",
+  "mlp_specification": {
+    "formula": "x^{MLP}_{i,t} = (1/6) * sum_{a=1}^6 \\tilde{x}_{i,t-a} in R^{23}",
+    "input_dim": 23,
+    "feature_names_order": [
+      "tech_return_1d",
+      "tech_momentum_3d",
+      "tech_momentum_10d",
+      "tech_momentum_21d",
+      "tech_volatility_21d",
+      "tech_volume_sma_21d",
+      "tech_volume_ratio_21d",
+      "tech_volume_change_1d",
+      "tech_intraday_range_hl",
+      "tech_drawdown_from_peak_21d",
+      "tech_trend_slope_21d",
+      "tech_close_vs_sma_50",
+      "tech_close_vs_sma_150",
+      "tech_close_vs_sma_200",
+      "tech_sma_200_trend_20",
+      "tech_pct_above_52w_low",
+      "tech_pct_from_52w_high",
+      "tech_up_down_volume_ratio_50",
+      "tech_rsi_14",
+      "tech_atr_ratio_14",
+      "tech_macd_signal_diff",
+      "tech_bollinger_bandwidth_20",
+      "tech_historical_vol_ratio_63_21"
+    ],
+    "preprocessing_order": [
+      "1. Raw technical feature computation",
+      "2. Sovereign per-market standard scaling (mean, std from pre-2021 training history)",
+      "3. Symmetric clipping to [-5.0, 5.0]",
+      "4. Six-session uniform mean pooling over sessions t-6 to t-1"
+    ],
+    "window_sessions": {
+      "start_offset": 6,
+      "end_offset": 1,
+      "current_session_t_included": false
+    },
+    "architecture": {
+      "type": "MLPEncoder",
+      "layers": [
+        {
+          "name": "linear_1",
+          "in_features": 23,
+          "out_features": 64
+        },
+        {
+          "name": "layernorm_1",
+          "features": 64
+        },
+        {
+          "name": "activation",
+          "type": "GELU"
+        },
+        {
+          "name": "linear_2",
+          "in_features": 64,
+          "out_features": 128
+        },
+        {
+          "name": "layernorm_2",
+          "features": 128
+        },
+        {
+          "name": "head",
+          "in_features": 128,
+          "out_features": 1
+        }
+      ]
+    },
+    "seeds": [
+      7,
+      17,
+      37
+    ]
+  },
+  "training_specification": {
+    "period": {
+      "start": "2013-01-01",
+      "end": "2020-12-31"
+    },
+    "target_horizon_sessions": 63,
+    "target_maturity_cutoff": "2020-12-31",
+    "target_label": "future_return_63",
+    "epochs": 5,
+    "batch_size": 4096,
+    "learning_rate": 0.001,
+    "weight_decay": 0.0001,
+    "optimizer": "AdamW",
+    "loss": "MSELoss",
+    "early_stopping": false
+  },
+  "development_specification": {
+    "period": {
+      "start": "2021-07-01",
+      "end": "2021-12-31"
+    },
+    "gate_inputs": [
+      "abs(base)",
+      "abs(base - memory)",
+      "abs(memory)",
+      "0.015"
+    ],
+    "gate_model": "SelectiveTrustGate (Linear Logistic, in_features=4)",
+    "fixed_mixture_grid": [
+      0.0,
+      0.1,
+      0.25,
+      0.5,
+      1.0
+    ],
+    "selection_metric": "Mean sovereign market Sharpe ratio"
+  },
+  "evaluation_specification": {
+    "period": {
+      "start": "2024-01-01",
+      "end": "2024-12-31"
+    },
+    "markets": [
+      "Brazil",
+      "China",
+      "France",
+      "India",
+      "UK",
+      "US"
+    ],
+    "affected_arms": [
+      "MLP_BASE",
+      "MLP_MIX_SELECTED",
+      "MLP_GATE"
+    ],
+    "affected_cells_count": 54,
+    "unaffected_cells_count": 96
+  }
+}

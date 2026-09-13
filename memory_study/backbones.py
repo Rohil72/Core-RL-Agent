@@ -9,14 +9,19 @@ Both backbones expose:
 - Decimal return predictions for 63-session horizon
 - 128-dimensional latent representations
 - Strict parameter freezing (eval mode, requires_grad=False)
+- Representation compatibility verification
 """
 
+import hashlib
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Tuple, Dict
+from typing import Tuple, Dict, Any, List
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+from memory_study.shared_representation import MLP_REPRESENTATION_ID
 
 PROJECT_ROOT = Path("c:/Users/rohil/OneDrive/Desktop/Core-RL-Agent")
 MODELS_DIR = PROJECT_ROOT / "exports" / "CORE_RL_V4_VERIFIED_GOVERNANCE_PACKAGE" / "models"
@@ -68,9 +73,14 @@ class AnnualPatchTemporalTransformer(nn.Module):
 
 
 class MLPEncoder(nn.Module):
-    """2-Layer MLP Comparator for Exp 14 and Memory Study."""
+    """
+    2-Layer MLP Comparator for Exp 14 and Memory Study.
+    Explicitly requires 2D input (batch_size, 23).
+    Rejects 3D inputs to prevent silent mismatch.
+    """
     def __init__(self, input_dim: int = 23, hidden_dim: int = 64, latent_dim: int = 128):
         super().__init__()
+        self.input_dim = input_dim
         self.net = nn.Sequential(
             nn.Linear(input_dim, hidden_dim),
             nn.LayerNorm(hidden_dim),
@@ -81,9 +91,11 @@ class MLPEncoder(nn.Module):
         self.head = nn.Linear(latent_dim, 1)
 
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        if x.dim() == 3:
-            # If passed patch sequence (B, T, D), take the last step feature
-            x = x[:, -1, :]
+        if x.dim() != 2 or x.size(1) != self.input_dim:
+            raise ValueError(
+                f"MLPEncoder explicitly requires 2D input tensor of shape (batch_size, {self.input_dim}), "
+                f"got shape {tuple(x.shape)}. 3D patch sequences must be pooled explicitly prior to forward()."
+            )
         lat = self.net(x)
         pred = self.head(lat)
         return lat, pred
@@ -112,54 +124,137 @@ def load_transformer_checkpoint(seed: int, device: torch.device) -> AnnualPatchT
     return freeze_model(model)
 
 
-def load_mlp_checkpoint(seed: int, device: torch.device) -> MLPEncoder:
-    """Loads frozen 2-layer MLP for the given seed."""
+def load_mlp_checkpoint(seed: int, device: torch.device, expected_rep_id: str = MLP_REPRESENTATION_ID) -> MLPEncoder:
+    """
+    Loads frozen 2-layer MLP for the given seed.
+    Strictly verifies representation compatibility against expected_rep_id.
+    """
     ckpt_path = LOCAL_MODELS_DIR / f"mlp_encoder_seed_{seed}.pt"
     if not ckpt_path.exists():
         raise FileNotFoundError(f"MLP checkpoint not found at {ckpt_path}. Run training first.")
+
+    loaded = torch.load(ckpt_path, map_location=device, weights_only=False)
+    if isinstance(loaded, dict) and "representation_id" in loaded:
+        rep_id = loaded.get("representation_id")
+        if expected_rep_id is not None and rep_id != expected_rep_id:
+            raise RuntimeError(
+                f"Artifact compatibility rejection: checkpoint {ckpt_path.name} has representation_id '{rep_id}', "
+                f"expected '{expected_rep_id}'. Run training to regenerate corrected weights."
+            )
+        state_dict = loaded["state_dict"]
+    elif isinstance(loaded, dict) and "net.0.weight" in loaded:
+        # Legacy untagged checkpoint without representation_id
+        if expected_rep_id is not None:
+            raise RuntimeError(
+                f"Artifact compatibility rejection: checkpoint {ckpt_path.name} is a legacy untagged checkpoint "
+                f"without representation_id metadata. Expected '{expected_rep_id}'."
+            )
+        state_dict = loaded
+    else:
+        raise ValueError(f"Unknown checkpoint format at {ckpt_path}")
+
     model = MLPEncoder(input_dim=23, hidden_dim=64, latent_dim=128).to(device)
-    model.load_state_dict(torch.load(ckpt_path, map_location=device, weights_only=True))
+    model.load_state_dict(state_dict)
     return freeze_model(model)
 
 
-def ensure_mlp_checkpoints(train_x: np.ndarray, train_y: np.ndarray, seeds: list[int], device: torch.device):
+def ensure_mlp_checkpoints(
+    train_x: np.ndarray,
+    train_y: np.ndarray,
+    seeds: List[int],
+    device: torch.device,
+    force_retrain: bool = False,
+    representation_id: str = MLP_REPRESENTATION_ID
+) -> Dict[int, Dict[str, Any]]:
     """
-    Trains and saves MLP checkpoints on pre-2021 data if they don't already exist.
-    Guarantees reproducible, persistent checkpoints on disk.
+    Trains and saves MLP checkpoints on pre-2021 data.
+    Guarantees reproducible, persistent checkpoints on disk with full provenance logging.
     """
+    if train_x.ndim != 2 or train_x.shape[1] != 23:
+        raise ValueError(f"train_x must be 2D array of shape (N, 23), got {train_x.shape}")
+    if len(train_x) != len(train_y):
+        raise ValueError(f"train_x count ({len(train_x)}) != train_y count ({len(train_y)})")
+
     X_t = torch.tensor(train_x, dtype=torch.float32, device=device)
     y_t = torch.tensor(train_y, dtype=torch.float32, device=device).unsqueeze(1)
     ds = torch.utils.data.TensorDataset(X_t, y_t)
 
+    input_hash = hashlib.sha256(train_x.tobytes()).hexdigest()
+    target_hash = hashlib.sha256(train_y.tobytes()).hexdigest()
+    train_records = {}
+
     for s in seeds:
         ckpt_path = LOCAL_MODELS_DIR / f"mlp_encoder_seed_{s}.pt"
-        if ckpt_path.exists():
-            continue
-        print(f"   [+] Fitting persistent MLP checkpoint for seed {s}...")
+        if not force_retrain and ckpt_path.exists():
+            try:
+                loaded = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+                if isinstance(loaded, dict) and loaded.get("representation_id") == representation_id:
+                    print(f"   [+] Verified compatible MLP checkpoint for seed {s} ({representation_id})")
+                    continue
+            except Exception:
+                pass
+
+        print(f"   [+] Fitting corrected MLP checkpoint for seed {s} (representation={representation_id})...")
         torch.manual_seed(s)
-        mlp = MLPEncoder().to(device)
+        mlp = MLPEncoder(input_dim=23, hidden_dim=64, latent_dim=128).to(device)
         opt = torch.optim.AdamW(mlp.parameters(), lr=1e-3, weight_decay=1e-4)
         crit = nn.MSELoss()
         dl = torch.utils.data.DataLoader(ds, batch_size=4096, shuffle=True)
 
         mlp.train()
+        loss_history = []
         for epoch in range(5):
+            ep_loss = 0.0
+            n_b = 0
             for b_x, b_y in dl:
                 opt.zero_grad()
                 _, p = mlp(b_x)
                 loss = crit(p, b_y)
                 loss.backward()
                 opt.step()
+                ep_loss += float(loss.item())
+                n_b += 1
+            avg_loss = ep_loss / max(n_b, 1)
+            loss_history.append(avg_loss)
+            print(f"       Epoch {epoch+1}/5 Loss: {avg_loss:.6f}")
+
         mlp.eval()
-        torch.save(mlp.state_dict(), ckpt_path)
-        print(f"   [+] Saved MLP checkpoint: {ckpt_path}")
+        save_dict = {
+            "representation_id": representation_id,
+            "architecture": "MLPEncoder_2Layer_GELU_23x64x128x1",
+            "seed": s,
+            "state_dict": mlp.state_dict(),
+            "train_config": {
+                "epochs": 5,
+                "batch_size": 4096,
+                "learning_rate": 1e-3,
+                "weight_decay": 1e-4,
+                "loss": "MSELoss",
+                "optimizer": "AdamW",
+                "seed": s
+            },
+            "provenance": {
+                "n_samples": len(train_x),
+                "input_dim": 23,
+                "input_sha256": input_hash,
+                "target_sha256": target_hash,
+                "loss_history": loss_history,
+                "final_loss": loss_history[-1] if loss_history else None,
+                "trained_at_utc": datetime.now(timezone.utc).isoformat()
+            }
+        }
+        torch.save(save_dict, ckpt_path)
+        print(f"   [+] Saved corrected MLP checkpoint: {ckpt_path} (Final loss: {loss_history[-1]:.6f})")
+        train_records[s] = save_dict["provenance"]
+
+    return train_records
 
 
 def load_backbone(backbone_id: str, seed: int, device: torch.device) -> nn.Module:
     """Factory function to load frozen backbone by identifier and seed."""
     if backbone_id.lower() in ("transformer", "trans"):
         return load_transformer_checkpoint(seed, device)
-    elif backbone_id.lower() in ("mlp", "mlp_encoder"):
+    elif backbone_id.lower() == "mlp":
         return load_mlp_checkpoint(seed, device)
     else:
         raise ValueError(f"Unknown backbone_id: {backbone_id}")
