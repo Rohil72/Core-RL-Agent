@@ -216,3 +216,33 @@ def build_total_return_bars(
         "cum_split_factor": cum_split,
     })
     return result
+
+
+def align_to_venue_calendar(
+    df: pd.DataFrame,
+    venue_calendar_sessions: List[str],
+) -> pd.DataFrame:
+    """Align raw session observations against official venue calendar (A04/R11).
+
+    Guarantees:
+    - Retains native exchange holidays as absent rows (never invents synthetic zero-return bars).
+    - Preserves verified venue calendar boundaries.
+    """
+    valid_sessions_set = set(venue_calendar_sessions)
+    filtered = df[df["session"].isin(valid_sessions_set)].copy()
+    sess_order = {s: i for i, s in enumerate(venue_calendar_sessions)}
+    filtered["_order"] = filtered["session"].map(sess_order)
+    filtered = filtered.sort_values("_order").drop(columns=["_order"]).reset_index(drop=True)
+    return filtered
+
+
+def check_cross_market_utc_availability(
+    query_utc: datetime,
+    source_market_close_utc: datetime,
+) -> bool:
+    """Check whether a market session's close is strictly available at query UTC timestamp (A04/R11).
+
+    Cross-market availability is governed strictly by UTC wall clock:
+    Available if and only if source_market_close_utc <= query_utc.
+    """
+    return source_market_close_utc <= query_utc

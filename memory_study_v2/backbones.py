@@ -3,7 +3,7 @@
 Architectures:
 - MLP: Linear(966, 64) -> LayerNorm(64, eps=1e-5) -> GELU -> Linear(64, 128) -> LayerNorm(128, eps=1e-5) -> Linear(128, 1)
 - Transformer: Linear(23, 64) -> sinusoidal pos enc -> 2 TransformerEncoderLayers (post-norm, 4 heads, d_ff=128, gelu, dropout=0.1) -> learned attention pool -> Linear(64, 128) -> LayerNorm(128, eps=1e-5) -> Linear(128, 1)
-- Explicit initialization: Xavier-uniform on Linear weights, zero biases, LayerNorm weight=1/bias=0.
+- Explicit initialization (R07): Xavier-uniform on all Linear and attention projection weights, zero biases, LayerNorm weight=1/bias=0 using the supplied torch.Generator.
 """
 
 from __future__ import annotations
@@ -14,6 +14,14 @@ from typing import Optional
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+
+def init_tensor_xavier(t: torch.Tensor, generator: Optional[torch.Generator] = None) -> None:
+    """Initialize a tensor with Xavier uniform or zero bias using generator."""
+    if t.dim() >= 2:
+        nn.init.xavier_uniform_(t, generator=generator)
+    else:
+        nn.init.zeros_(t)
 
 
 def init_weights_xavier(module: nn.Module, generator: Optional[torch.Generator] = None) -> None:
@@ -38,10 +46,9 @@ class SinusoidalPositionalEncoding(nn.Module):
         div_term = torch.exp(torch.arange(0, d_model, 2, dtype=torch.float32) * (-math.log(10000.0) / d_model))
         pe[:, 0::2] = torch.sin(position * div_term)
         pe[:, 1::2] = torch.cos(position * div_term)
-        self.register_buffer("pe", pe.unsqueeze(0))  # shape (1, 42, 64)
+        self.register_buffer("pe", pe.unsqueeze(0))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # x shape: (B, seq_len, d_model)
         return x + self.pe[:, : x.size(1)]
 
 
@@ -54,7 +61,6 @@ class LearnedAttentionPooling(nn.Module):
         init_weights_xavier(self.attn_proj, generator=generator)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # x shape: (B, 42, 64)
         attn_logits = self.attn_proj(x)  # (B, 42, 1)
         weights = F.softmax(attn_logits, dim=1)  # (B, 42, 1)
         pooled = torch.sum(x * weights, dim=1)  # (B, 64)
@@ -85,7 +91,6 @@ class MLPAnnual(nn.Module):
         init_weights_xavier(self.head, generator)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # x shape: (B, 966)
         if x.dim() != 2 or x.size(1) != 966:
             raise ValueError(f"MLPAnnual requires input shape (B, 966), got {x.shape}")
         h = self.act(self.ln1(self.fc1(x)))
@@ -95,7 +100,7 @@ class MLPAnnual(nn.Module):
 
 
 class TransformerAnnual(nn.Module):
-    """42x23 Transformer: Linear(23, 64) -> sinusoidal pos -> 2 Post-LN Encoder layers -> learned pool -> Head."""
+    """42x23 Transformer with strict deterministic attention weight initialization (R07)."""
 
     def __init__(self, seed: Optional[int] = None, dropout: float = 0.1):
         super().__init__()
@@ -128,12 +133,24 @@ class TransformerAnnual(nn.Module):
             norm_first=False,
         )
 
-        # Explicit initialization of encoder layers
+        # Explicit initialization of all encoder parameters including attention (R07)
         init_weights_xavier(self.input_proj, generator)
         for layer in [encoder_layer1, encoder_layer2]:
-            init_weights_xavier(layer.self_attn.in_proj_weight, generator) if hasattr(layer.self_attn, 'in_proj_weight') else None
+            # Attention in_proj
+            if hasattr(layer.self_attn, "in_proj_weight") and layer.self_attn.in_proj_weight is not None:
+                init_tensor_xavier(layer.self_attn.in_proj_weight, generator)
+            if hasattr(layer.self_attn, "in_proj_bias") and layer.self_attn.in_proj_bias is not None:
+                nn.init.zeros_(layer.self_attn.in_proj_bias)
+
+            # Attention out_proj
+            if hasattr(layer.self_attn, "out_proj"):
+                init_weights_xavier(layer.self_attn.out_proj, generator)
+
+            # FFN linear1 and linear2
             init_weights_xavier(layer.linear1, generator)
             init_weights_xavier(layer.linear2, generator)
+
+            # LayerNorms
             init_weights_xavier(layer.norm1, generator)
             init_weights_xavier(layer.norm2, generator)
 
@@ -155,7 +172,6 @@ class TransformerAnnual(nn.Module):
         init_weights_xavier(self.out_head, generator)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # x shape: (B, 42, 23)
         if x.dim() != 3 or x.size(1) != 42 or x.size(2) != 23:
             raise ValueError(f"TransformerAnnual requires input shape (B, 42, 23), got {x.shape}")
         h = self.input_proj(x)  # (B, 42, 64)

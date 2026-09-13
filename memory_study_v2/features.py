@@ -6,7 +6,9 @@ Implements the exact 23 ordered features from feature_contract.csv:
 - EMA adjust=False initialized with first valid close.
 - RSI with simple 14-session gain/loss means; flat window returns 0.5.
 - Volume change: both zero -> 0.0; previous zero & current positive -> invalid.
-- Full rolling windows required; minimum 252 contiguous valid sessions warmup.
+- Trend slope: OLS slope of close on 0..20 divided by current close (C[t] + EPS).
+- Up/Down volume: flat up volume evaluates to 0.0 / (down_vol + EPS) = 0.0.
+- Segment-aware computation: contiguous 252-bar warmup per segment; EMAs reset per segment.
 - Frozen scaler: mean and population std (ddof=0, floor 1e-4), clip [-5.0, 5.0].
 """
 
@@ -37,35 +39,26 @@ def compute_ema(values: np.ndarray, span: int) -> np.ndarray:
     return ema
 
 
-def compute_technical_features(tr_bars: pd.DataFrame) -> pd.DataFrame:
-    """Compute the 23 ordered technical features from total-return OHLC and normalized volume.
+def _compute_single_segment_features(
+    sessions: List[str],
+    C: np.ndarray,
+    H: np.ndarray,
+    L: np.ndarray,
+    O: np.ndarray,
+    V: np.ndarray,
+) -> Tuple[Dict[str, np.ndarray], np.ndarray]:
+    """Compute 23 technical features on a contiguous unbroken session segment."""
+    n = len(sessions)
+    feats: Dict[str, np.ndarray] = {name: np.full(n, np.nan, dtype=np.float64) for name in EXPECTED_FEATURES_ORDERED}
+    valid_mask = np.zeros(n, dtype=bool)
 
-    Returns DataFrame with columns:
-    session, return_1, momentum_3, momentum_10, momentum_21, volatility_21,
-    volume_mean_21, volume_ratio_21, volume_change_1, intraday_range,
-    drawdown_252, trend_slope_21, close_vs_mean_50, close_vs_mean_150,
-    close_vs_mean_200, mean_200_trend_20, above_low_252, from_high_252,
-    up_down_volume_50, rsi_14, atr_ratio_14, macd_signal_diff,
-    bollinger_width_20, vol_ratio_63_21, valid_mask
-    """
-    n = len(tr_bars)
     if n == 0:
-        cols = ["session"] + EXPECTED_FEATURES_ORDERED + ["valid_mask"]
-        return pd.DataFrame(columns=cols)
-
-    sessions = tr_bars["session"].tolist()
-    C = tr_bars["tr_close"].to_numpy(dtype=np.float64)
-    H = tr_bars["tr_high"].to_numpy(dtype=np.float64)
-    L = tr_bars["tr_low"].to_numpy(dtype=np.float64)
-    O = tr_bars["tr_open"].to_numpy(dtype=np.float64)
-    V = tr_bars["normalized_volume"].to_numpy(dtype=np.float64)
+        return feats, valid_mask
 
     # 1-day returns r[t] = C[t] / C[t-1] - 1
     r = np.full(n, np.nan, dtype=np.float64)
-    r[1:] = C[1:] / C[:-1] - 1.0
-
-    # Initialize feature arrays
-    feats: Dict[str, np.ndarray] = {name: np.full(n, np.nan, dtype=np.float64) for name in EXPECTED_FEATURES_ORDERED}
+    if n > 1:
+        r[1:] = C[1:] / C[:-1] - 1.0
 
     # Precompute EMAs for MACD
     ema12 = compute_ema(C, 12)
@@ -80,7 +73,7 @@ def compute_technical_features(tr_bars: pd.DataFrame) -> pd.DataFrame:
     for i in range(1, n):
         tr[i] = max(H[i] - L[i], abs(H[i] - C[i - 1]), abs(L[i] - C[i - 1]))
 
-    # Regression x for trend_slope_21: x = 0..20, sum((x - 10)^2) = 770
+    # Regression weights for trend_slope_21: x = 0..20, sum((x - 10)^2) = 770
     x_weights = np.arange(21, dtype=np.float64) - 10.0
     x_denom = 770.0
 
@@ -142,41 +135,43 @@ def compute_technical_features(tr_bars: pd.DataFrame) -> pd.DataFrame:
             feats["drawdown_252"][t] = (C[t] - peak) / (peak + EPS)
 
         # 10: trend_slope_21 (min bars: 21)
+        # Contract formula: OLS slope of close over 21 bars divided by current close C[t]
         if t >= 20:
             c_window_21 = C[t - 20 : t + 1]
-            c_mean_21 = np.mean(c_window_21)
             slope = np.sum(x_weights * c_window_21) / x_denom
-            feats["trend_slope_21"][t] = slope / (c_mean_21 + EPS)
+            feats["trend_slope_21"][t] = slope / (C[t] + EPS)
 
-        # 12: close_vs_mean_50 (min bars: 50)
+        # 11: close_vs_mean_50 (min bars: 50)
         if t >= 49:
             feats["close_vs_mean_50"][t] = C[t] / np.mean(C[t - 49 : t + 1]) - 1.0
 
-        # 13: close_vs_mean_150 (min bars: 150)
+        # 12: close_vs_mean_150 (min bars: 150)
         if t >= 149:
             feats["close_vs_mean_150"][t] = C[t] / np.mean(C[t - 149 : t + 1]) - 1.0
 
-        # 14: close_vs_mean_200 (min bars: 200)
+        # 13: close_vs_mean_200 (min bars: 200)
         if t >= 199:
             feats["close_vs_mean_200"][t] = C[t] / np.mean(C[t - 199 : t + 1]) - 1.0
 
-        # 15: mean_200_trend_20 (min bars: 220)
+        # 14: mean_200_trend_20 (min bars: 220)
         if t >= 219:
             m_t = sma200[t]
             m_t_20 = sma200[t - 20]
             feats["mean_200_trend_20"][t] = (m_t - m_t_20) / (m_t_20 + EPS)
 
-        # 16: above_low_252 (min bars: 252)
+        # 15: above_low_252 (min bars: 252)
         if t >= 251:
             trough = np.min(C[t - 251 : t + 1])
             feats["above_low_252"][t] = (C[t] - trough) / (trough + EPS)
 
-        # 17: from_high_252 (min bars: 252)
+        # 16: from_high_252 (min bars: 252)
         if t >= 251:
             peak = np.max(C[t - 251 : t + 1])
             feats["from_high_252"][t] = (C[t] - peak) / (peak + EPS)
 
-        # 18: up_down_volume_50 (min bars: 51, needs 50 return transitions)
+        # 17: up_down_volume_50 (min bars: 51, needs 50 return transitions)
+        # Contract formula: sum(V[s] for r[s]>0 in last 50) / (sum(V[s] for r[s]<0 in last 50) + eps)
+        # If up_vol == 0, evaluates to 0.0 / (down_vol + eps) = 0.0
         if t >= 50:
             up_vol = 0.0
             down_vol = 0.0
@@ -185,12 +180,9 @@ def compute_technical_features(tr_bars: pd.DataFrame) -> pd.DataFrame:
                     up_vol += V[i]
                 elif C[i] < C[i - 1]:
                     down_vol += V[i]
-            if up_vol == 0.0 and down_vol == 0.0:
-                feats["up_down_volume_50"][t] = 1.0
-            else:
-                feats["up_down_volume_50"][t] = up_vol / (down_vol + EPS)
+            feats["up_down_volume_50"][t] = up_vol / (down_vol + EPS)
 
-        # 19: rsi_14 (min bars: 15, needs 14 return transitions)
+        # 18: rsi_14 (min bars: 15, needs 14 return transitions)
         if t >= 14:
             gains = 0.0
             losses = 0.0
@@ -207,23 +199,23 @@ def compute_technical_features(tr_bars: pd.DataFrame) -> pd.DataFrame:
             else:
                 feats["rsi_14"][t] = mean_gain / (mean_gain + mean_loss + EPS)
 
-        # 20: atr_ratio_14 (min bars: 15)
+        # 19: atr_ratio_14 (min bars: 15)
         if t >= 13:
             atr_14 = np.mean(tr[t - 13 : t + 1])
             feats["atr_ratio_14"][t] = atr_14 / (C[t] + EPS)
 
-        # 21: macd_signal_diff (min bars: 34)
+        # 20: macd_signal_diff (min bars: 34)
         if t >= 33:
             feats["macd_signal_diff"][t] = macd_diff[t] / (C[t] + EPS)
 
-        # 22: bollinger_width_20 (min bars: 20, ddof=1)
+        # 21: bollinger_width_20 (min bars: 20, ddof=1)
         if t >= 19:
             c_window_20 = C[t - 19 : t + 1]
             std_20 = np.std(c_window_20, ddof=1)
             mean_20 = np.mean(c_window_20)
             feats["bollinger_width_20"][t] = (4.0 * std_20) / (mean_20 + EPS)
 
-        # 23: vol_ratio_63_21 (min bars: 64, 63 returns, ddof=1)
+        # 22: vol_ratio_63_21 (min bars: 64, 63 returns, ddof=1)
         if t >= 63:
             r_63 = r[t - 62 : t + 1]
             r_21 = r[t - 20 : t + 1]
@@ -231,21 +223,63 @@ def compute_technical_features(tr_bars: pd.DataFrame) -> pd.DataFrame:
             std_21 = np.std(r_21, ddof=1)
             feats["vol_ratio_63_21"][t] = std_63 / (std_21 + EPS)
 
-    # Global warm-up check: requires at least 252 contiguous bars before any feature row is accepted
-    # Also requires all 23 features to be finite (no NaNs)
-    valid_mask = np.zeros(n, dtype=bool)
+    # Contiguous 252-bar warmup within segment
     feat_matrix = np.column_stack([feats[name] for name in EXPECTED_FEATURES_ORDERED])
     for t in range(n):
         if t >= 251:
             if np.all(np.isfinite(feat_matrix[t])):
                 valid_mask[t] = True
 
-    df_result = pd.DataFrame({"session": sessions})
-    for name in EXPECTED_FEATURES_ORDERED:
-        df_result[name] = feats[name]
-    df_result["valid_mask"] = valid_mask
+    return feats, valid_mask
 
-    return df_result
+
+def compute_technical_features(tr_bars: pd.DataFrame) -> pd.DataFrame:
+    """Compute the 23 ordered technical features from total-return OHLC and normalized volume.
+
+    Handles optional 'segment_id' for non-continuous splits (R08).
+    """
+    n = len(tr_bars)
+    if n == 0:
+        cols = ["session"] + EXPECTED_FEATURES_ORDERED + ["valid_mask"]
+        return pd.DataFrame(columns=cols)
+
+    if "segment_id" in tr_bars.columns:
+        # Compute segment by segment to prevent leakage across breaks
+        segment_dfs = []
+        for seg_id, group in tr_bars.groupby("segment_id", sort=False):
+            grp_sessions = group["session"].tolist()
+            grp_C = group["tr_close"].to_numpy(dtype=np.float64)
+            grp_H = group["tr_high"].to_numpy(dtype=np.float64)
+            grp_L = group["tr_low"].to_numpy(dtype=np.float64)
+            grp_O = group["tr_open"].to_numpy(dtype=np.float64)
+            grp_V = group["normalized_volume"].to_numpy(dtype=np.float64)
+
+            grp_feats, grp_valid = _compute_single_segment_features(
+                grp_sessions, grp_C, grp_H, grp_L, grp_O, grp_V
+            )
+            df_seg = pd.DataFrame({"session": grp_sessions})
+            for name in EXPECTED_FEATURES_ORDERED:
+                df_seg[name] = grp_feats[name]
+            df_seg["valid_mask"] = grp_valid
+            df_seg["segment_id"] = seg_id
+            segment_dfs.append(df_seg)
+
+        res_df = pd.concat(segment_dfs, axis=0, ignore_index=True)
+        return res_df
+    else:
+        sessions = tr_bars["session"].tolist()
+        C = tr_bars["tr_close"].to_numpy(dtype=np.float64)
+        H = tr_bars["tr_high"].to_numpy(dtype=np.float64)
+        L = tr_bars["tr_low"].to_numpy(dtype=np.float64)
+        O = tr_bars["tr_open"].to_numpy(dtype=np.float64)
+        V = tr_bars["normalized_volume"].to_numpy(dtype=np.float64)
+
+        feats, valid_mask = _compute_single_segment_features(sessions, C, H, L, O, V)
+        df_result = pd.DataFrame({"session": sessions})
+        for name in EXPECTED_FEATURES_ORDERED:
+            df_result[name] = feats[name]
+        df_result["valid_mask"] = valid_mask
+        return df_result
 
 
 @dataclass
@@ -256,7 +290,6 @@ class FrozenScaler:
 
     def transform(self, feat_array: np.ndarray) -> np.ndarray:
         """Standardize features and clip to [-5.0, 5.0]. Returns float32."""
-        # Standardize using (x - mu) / max(std, 1e-4)
         std_floored = np.maximum(self.stds, 1e-4)
         standardized = (feat_array.astype(np.float64) - self.means) / std_floored
         clipped = np.clip(standardized, -5.0, 5.0)

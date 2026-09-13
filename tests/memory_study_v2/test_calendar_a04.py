@@ -1,30 +1,40 @@
-"""Acceptance Test A04: Native-session holidays and cross-market UTC availability boundaries."""
+"""Acceptance Test A04: Native-session holidays and cross-market UTC availability boundaries (R11)."""
 
-import pytest
 from datetime import datetime, timezone
 import pandas as pd
+import pytest
+
+from memory_study_v2.canonical_data import (
+    align_to_venue_calendar,
+    check_cross_market_utc_availability,
+)
 
 
 def test_native_holidays_not_invented_as_zero_return():
-    """Verify that native exchange holidays remain absent sessions rather than zero-return bars."""
-    # US Thanksgiving or Indian Diwali
-    us_sessions = ["2023-11-22", "2023-11-24"]  # 2023-11-23 Thanksgiving omitted
-    df_us = pd.DataFrame({"session": us_sessions, "close": [100.0, 101.0]})
-    
-    # Assert Thanksgiving session is absent
-    assert "2023-11-23" not in df_us["session"].values
-    assert len(df_us) == 2
+    """Verify that native exchange holidays remain absent sessions rather than zero-return bars (A04/R11)."""
+    # Official venue calendar for US Thanksgiving week
+    official_venue_calendar = ["2023-11-20", "2023-11-21", "2023-11-22", "2023-11-24"]  # 2023-11-23 Thanksgiving absent
+
+    # Raw feed contains trading sessions
+    raw_df = pd.DataFrame({
+        "session": ["2023-11-20", "2023-11-21", "2023-11-22", "2023-11-24"],
+        "close": [100.0, 101.0, 102.0, 103.0],
+    })
+
+    aligned = align_to_venue_calendar(raw_df, official_venue_calendar)
+
+    # Assert Thanksgiving session is absent, not filled with zero return
+    assert "2023-11-23" not in aligned["session"].values
+    assert len(aligned) == 4
 
 
 def test_cross_market_utc_availability_boundary():
-    """Verify that cross-market availability strictly uses UTC timestamp, not local date."""
+    """Verify that cross-market availability strictly uses UTC timestamp (A04/R11)."""
     # Market A (Asia, closes 07:00 UTC) vs Market B (US, closes 21:00 UTC)
-    # Market B decision at 21:00 UTC can see Market A's same-day outcome.
-    # Market A decision at 07:00 UTC CANNOT see Market B's same-day outcome (closed 14 hours later).
     t_market_a_close_utc = datetime(2023, 5, 10, 7, 0, tzinfo=timezone.utc)
     t_market_b_close_utc = datetime(2023, 5, 10, 21, 0, tzinfo=timezone.utc)
 
-    assert t_market_a_close_utc < t_market_b_close_utc
-    # Market A cannot look ahead into Market B
-    is_market_b_available_at_market_a_decision = t_market_b_close_utc <= t_market_a_close_utc
-    assert is_market_b_available_at_market_a_decision is False
+    # Market B close cannot be accessed at Market A close
+    assert check_cross_market_utc_availability(t_market_a_close_utc, t_market_b_close_utc) is False
+    # Market A close CAN be accessed at Market B close
+    assert check_cross_market_utc_availability(t_market_b_close_utc, t_market_a_close_utc) is True

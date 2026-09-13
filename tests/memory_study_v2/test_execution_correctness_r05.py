@@ -1,0 +1,47 @@
+"""Acceptance & Regression Test for R05: Action-adjusted mark for missing prices and zero-slot planning."""
+
+import pytest
+
+from memory_study_v2.execution import PortfolioAccount, Position
+
+
+def test_missing_held_price_uses_last_valid_price_not_peak():
+    account = PortfolioAccount(initial_capital=100000.0)
+    # Manually establish position: cost 100, peak was 100, last_valid fell to 80
+    account.positions["SEC_0"] = Position(
+        security_id="SEC_0",
+        quantity=100,
+        cost_basis=100.0,
+        peak_price=100.0,
+        last_valid_price=80.0,
+        stale_sessions=0,
+        age_sessions=5,
+    )
+    account.cash = 90000.0
+
+    # Valuation on session with missing close for SEC_0:
+    # Close prices dict is empty
+    nav = account.evaluate_close_stops_and_update_state("2020-01-10", {}, {})
+    # Expected holdings = 100 * 80.0 = 8000.0 (NOT 100 * 100.0 = 10000.0!)
+    expected_nav = 90000.0 + 8000.0
+    assert abs(nav - expected_nav) < 1e-6, f"Expected {expected_nav}, got {nav}"
+    assert account.positions["SEC_0"].stale_sessions == 1
+
+
+def test_zero_empty_slots_immediate_return_no_entries_queued():
+    account = PortfolioAccount(initial_capital=100000.0, max_positions=3)
+    # 3 positions occupied
+    account.positions["SEC_1"] = Position("SEC_1", 10, 100.0, 100.0, 100.0)
+    account.positions["SEC_2"] = Position("SEC_2", 10, 100.0, 100.0, 100.0)
+    account.positions["SEC_3"] = Position("SEC_3", 10, 100.0, 100.0, 100.0)
+
+    # Queue an exit for tomorrow
+    account.pending_exits["SEC_1"] = "STOP"
+
+    # Plan entries at close with unheld candidates
+    account.plan_entries_at_close(["SEC_NEW1", "SEC_NEW2"])
+
+    # Under Section 8.1 rule: empty slots at close t = 3 - 3 = 0.
+    # An exit queued for tomorrow still occupies a slot today!
+    # No new entries can be queued!
+    assert len(account.pending_entries) == 0, f"Expected 0 pending entries, got {account.pending_entries}"

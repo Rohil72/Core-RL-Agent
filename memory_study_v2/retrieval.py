@@ -1,20 +1,21 @@
-"""Retrieval algorithms, eligibility restrictions, and control baselines (v2).
+"""Constrained precedent retrieval and control mechanisms (v2).
 
 Acceptance criteria addressed:
-- A18: Canonical-security exclusions, cap 3, spacing 21, and insufficient-pool fallback verified.
-- A19: Plain kNN removes only cap/spacing; random expansion continues same permutation.
+- A17: Candidate proposal parity and tie-breaking by record ID ascending.
+- A18: Query security exclusion, cap <= 3 per security, spacing >= 21 sessions, fallback to unconditional mean.
+- A19: KNN_PLAIN (removes cap/spacing), MEM_RANDOM (deterministic PCG64 shuffling).
+- Native exchange session ordinal spacing invariant to bank row interleaving (R03).
 """
 
 from __future__ import annotations
 
 import hashlib
-import json
+import math
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Set, Tuple
 
 import numpy as np
 
-from memory_study_v2.contracts import to_canonical_json
 from memory_study_v2.memory import MemoryBank
 
 
@@ -24,29 +25,38 @@ class RetrievalResult:
     neighbor_ids: List[int]
     neighbor_distances: List[float]
     is_fallback: bool
-    policy: str  # "MEM_SIM", "KNN_PLAIN", "MEM_RANDOM", "HIST_PRIOR"
+    policy: str
 
 
 def retrieve_mem_sim(
     bank: MemoryBank,
-    query_vector_f32: np.ndarray,
+    query_vector: np.ndarray,
     query_security_id: str,
     k: int = 25,
     max_per_security: int = 3,
     min_spacing_sessions: int = 21,
     start_buffer_size: int = 250,
 ) -> RetrievalResult:
-    """Primary MEM_SIM retrieval with cap 3, spacing 21, and buffer expansion (A18)."""
+    """Execute constrained similarity precedent retrieval (MEM_SIM).
+
+    Constraints:
+    1. Exclude exact canonical security (query_security_id).
+    2. Per-security cap <= 3 precedents.
+    3. Spacing >= 21 native exchange sessions within the same security (R03).
+    4. Top k=25 nearest neighbors by squared Euclidean distance; ties broken by record ID ascending.
+    5. Fallback to unconditional mean if fewer than k valid precedents exist.
+    """
     buffer_size = min(start_buffer_size, bank.N)
     accepted_indices: List[int] = []
+    sec_counts: Dict[str, int] = {}
+    sec_ordinals: Dict[str, List[int]] = {}
 
     while True:
-        candidate_indices = bank.propose_candidates(query_vector_f32, buffer_size=buffer_size)
+        candidate_indices = bank.propose_candidates(query_vector, buffer_size=buffer_size)
 
-        # Filter candidates under MEM_SIM eligibility rules
-        accepted_indices = []
-        sec_counts: Dict[str, int] = {}
-        sec_sessions: Dict[str, List[int]] = {}  # session ordinals or session index
+        accepted_indices.clear()
+        sec_counts.clear()
+        sec_ordinals.clear()
 
         for idx in candidate_indices:
             sec_id = bank.security_ids[idx]
@@ -60,43 +70,31 @@ def retrieve_mem_sim(
             if count >= max_per_security:
                 continue
 
-            # 3. Check spacing rule (at least min_spacing_sessions separation)
-            # We use the bank index or ordinal session
-            # Since bank records for a given security are ordered chronologically:
-            past_sessions = sec_sessions.get(sec_id, [])
-            # Convert session date string YYYY-MM-DD or index
-            # Check pairwise separation against all accepted records for this security
-            sess_str = bank.sessions[idx]
-            # Approximate session distance: check if session date difference is >= min_spacing_sessions days
-            # Or record index separation
-            # To be exact with calendar: we check pairwise session distance >= min_spacing_sessions
-            too_close = False
-            for past_s in past_sessions:
-                if abs(idx - past_s) < min_spacing_sessions:
-                    too_close = True
-                    break
+            # 3. Check spacing rule: native exchange session ordinals within this security (R03)
+            cand_ord = int(bank.session_ordinals[idx])
+            past_ords = sec_ordinals.get(sec_id, [])
+            too_close = any(abs(cand_ord - p_ord) < min_spacing_sessions for p_ord in past_ords)
             if too_close:
                 continue
 
-            # Accept
+            # Accept candidate
             accepted_indices.append(idx)
             sec_counts[sec_id] = count + 1
-            if sec_id not in sec_sessions:
-                sec_sessions[sec_id] = []
-            sec_sessions[sec_id].append(idx)
+            if sec_id not in sec_ordinals:
+                sec_ordinals[sec_id] = []
+            sec_ordinals[sec_id].append(cand_ord)
 
             if len(accepted_indices) == k:
                 break
 
-        if len(accepted_indices) >= k or buffer_size >= bank.N:
+        if len(accepted_indices) == k or buffer_size >= bank.N:
             break
 
-        # Double buffer
+        # Expand buffer: double buffer size up to bank size
         buffer_size = min(buffer_size * 2, bank.N)
 
-    # Check if k neighbors survived
+    # 4. Check if at least k neighbors were accepted
     if len(accepted_indices) < k:
-        # Fallback to unconditional bank mean with flag
         return RetrievalResult(
             prediction=bank.unconditional_mean,
             neighbor_ids=[int(bank.record_ids[i]) for i in accepted_indices],
@@ -105,15 +103,15 @@ def retrieve_mem_sim(
             policy="MEM_SIM",
         )
 
-    # Simple arithmetic mean of mature 63-session targets
-    selected_targets = bank.targets[accepted_indices]
-    prediction = float(np.mean(selected_targets))
-    ref_dists = bank.compute_reference_distances(query_vector_f32, np.array(accepted_indices))
+    # 5. Arithmetic mean of k accepted target values
+    targets = bank.targets_63[accepted_indices]
+    dist_sq = bank.compute_squared_euclidean_reference(query_vector)[accepted_indices]
+    pred = float(np.mean(targets))
 
     return RetrievalResult(
-        prediction=prediction,
+        prediction=pred,
         neighbor_ids=[int(bank.record_ids[i]) for i in accepted_indices],
-        neighbor_distances=[float(d) for d in ref_dists],
+        neighbor_distances=[float(d) for d in dist_sq],
         is_fallback=False,
         policy="MEM_SIM",
     )
@@ -121,31 +119,20 @@ def retrieve_mem_sim(
 
 def retrieve_knn_plain(
     bank: MemoryBank,
-    query_vector_f32: np.ndarray,
+    query_vector: np.ndarray,
     query_security_id: str,
     k: int = 25,
-    start_buffer_size: int = 250,
 ) -> RetrievalResult:
-    """KNN_PLAIN ablation: removes per-security cap and origin spacing (A19)."""
-    buffer_size = min(max(start_buffer_size, k + 10), bank.N)
+    """Execute unconstrained k-NN control (KNN_PLAIN): no cap, no spacing."""
+    dist_sq = bank.compute_squared_euclidean_reference(query_vector)
+    sorted_indices = np.lexsort((bank.record_ids, dist_sq))
+
     accepted_indices: List[int] = []
-
-    while True:
-        candidate_indices = bank.propose_candidates(query_vector_f32, buffer_size=buffer_size)
-
-        accepted_indices = []
-        for idx in candidate_indices:
-            # Exclude query's exact security
-            if bank.security_ids[idx] == query_security_id:
-                continue
+    for idx in sorted_indices:
+        if bank.security_ids[idx] != query_security_id:
             accepted_indices.append(idx)
-            if len(accepted_indices) == k:
-                break
-
-        if len(accepted_indices) >= k or buffer_size >= bank.N:
+        if len(accepted_indices) == k:
             break
-
-        buffer_size = min(buffer_size * 2, bank.N)
 
     if len(accepted_indices) < k:
         return RetrievalResult(
@@ -156,32 +143,26 @@ def retrieve_knn_plain(
             policy="KNN_PLAIN",
         )
 
-    selected_targets = bank.targets[accepted_indices]
-    prediction = float(np.mean(selected_targets))
-    ref_dists = bank.compute_reference_distances(query_vector_f32, np.array(accepted_indices))
+    targets = bank.targets_63[accepted_indices]
+    dists = dist_sq[accepted_indices]
+    pred = float(np.mean(targets))
 
     return RetrievalResult(
-        prediction=prediction,
+        prediction=pred,
         neighbor_ids=[int(bank.record_ids[i]) for i in accepted_indices],
-        neighbor_distances=[float(d) for d in ref_dists],
+        neighbor_distances=[float(d) for d in dists],
         is_fallback=False,
         policy="KNN_PLAIN",
     )
 
 
 def derive_random_seed(bank_hash: str, fold_year: int, query_id: str, master_seed: int) -> int:
-    """Derive deterministic PCG64 seed from SHA-256 of canonical JSON metadata."""
-    payload = {
-        "bank_hash": bank_hash,
-        "fold": fold_year,
-        "master_seed": master_seed,
-        "query_id": query_id,
-    }
-    canon_bytes = to_canonical_json(payload).encode("utf-8")
-    digest = hashlib.sha256(canon_bytes).digest()
-    # First 16 bytes as little-endian integer
-    seed_int = int.from_bytes(digest[:16], byteorder="little")
-    return seed_int
+    """Derive deterministic PCG64 seed for MEM_RANDOM (Section 6.2)."""
+    raw_str = f"{bank_hash}:{fold_year}:{query_id}:{master_seed}"
+    digest = hashlib.sha256(raw_str.encode("utf-8")).hexdigest()
+    # Take lower 64 bits as unsigned integer
+    seed_64 = int(digest[:16], 16)
+    return seed_64
 
 
 def retrieve_mem_random(
@@ -195,8 +176,14 @@ def retrieve_mem_random(
     max_per_security: int = 3,
     min_spacing_sessions: int = 21,
 ) -> RetrievalResult:
-    """MEM_RANDOM control: deterministic shuffle of eligible pool with cap 3 and spacing 21 (A19)."""
-    # 1. Gather all eligible bank indices (excluding query's exact security)
+    """Execute random precedent memory control (MEM_RANDOM).
+
+    Constraints:
+    1. Filter out query_security_id.
+    2. Deterministic PCG64 shuffling of eligible records seeded by SHA-256 digest.
+    3. Apply cap <= 3 per security and spacing >= 21 native sessions (R03).
+    4. Top k=25 arithmetic mean; fallback to unconditional mean if fewer than k.
+    """
     eligible_indices = np.array([i for i in range(bank.N) if bank.security_ids[i] != query_security_id], dtype=np.int64)
 
     if len(eligible_indices) == 0:
@@ -208,17 +195,13 @@ def retrieve_mem_random(
             policy="MEM_RANDOM",
         )
 
-    # 2. Derive deterministic PCG64 generator
     seed_val = derive_random_seed(bank_hash, fold_year, query_id, master_seed)
     rng = np.random.default_rng(np.random.PCG64(seed_val))
-
-    # Shuffle eligible indices without replacement
     permuted_indices = rng.permutation(eligible_indices)
 
-    # 3. Apply cap 3 and spacing 21
     accepted_indices: List[int] = []
     sec_counts: Dict[str, int] = {}
-    sec_sessions: Dict[str, List[int]] = {}
+    sec_ordinals: Dict[str, List[int]] = {}
 
     for idx in permuted_indices:
         sec_id = bank.security_ids[idx]
@@ -227,20 +210,17 @@ def retrieve_mem_random(
         if count >= max_per_security:
             continue
 
-        past_sessions = sec_sessions.get(sec_id, [])
-        too_close = False
-        for past_s in past_sessions:
-            if abs(idx - past_s) < min_spacing_sessions:
-                too_close = True
-                break
+        cand_ord = int(bank.session_ordinals[idx])
+        past_ords = sec_ordinals.get(sec_id, [])
+        too_close = any(abs(cand_ord - p_ord) < min_spacing_sessions for p_ord in past_ords)
         if too_close:
             continue
 
         accepted_indices.append(idx)
         sec_counts[sec_id] = count + 1
-        if sec_id not in sec_sessions:
-            sec_sessions[sec_id] = []
-        sec_sessions[sec_id].append(idx)
+        if sec_id not in sec_ordinals:
+            sec_ordinals[sec_id] = []
+        sec_ordinals[sec_id].append(cand_ord)
 
         if len(accepted_indices) == k:
             break
@@ -254,11 +234,11 @@ def retrieve_mem_random(
             policy="MEM_RANDOM",
         )
 
-    selected_targets = bank.targets[accepted_indices]
-    prediction = float(np.mean(selected_targets))
+    targets = bank.targets_63[accepted_indices]
+    pred = float(np.mean(targets))
 
     return RetrievalResult(
-        prediction=prediction,
+        prediction=pred,
         neighbor_ids=[int(bank.record_ids[i]) for i in accepted_indices],
         neighbor_distances=[],
         is_fallback=False,
@@ -267,7 +247,7 @@ def retrieve_mem_random(
 
 
 def retrieve_hist_prior(bank: MemoryBank) -> RetrievalResult:
-    """HIST_PRIOR control: unconditional bank mean."""
+    """Execute unconditional historical prior baseline (HIST_PRIOR)."""
     return RetrievalResult(
         prediction=bank.unconditional_mean,
         neighbor_ids=[],

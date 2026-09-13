@@ -1,11 +1,13 @@
-"""Portfolio execution engine, order queue, and ledger accounting (v2).
+"""Execution engine, portfolio accounting, order event lifecycle, and valuation (v2).
 
 Acceptance criteria addressed:
-- A23: Next-open order, exits before entries, cash constraints, and integer entry quantities match fixture.
-- A24: Age 1, age 63, strict stop inequality, and missing-quote queues tested.
-- A25: Pence/account units, dividend/split basis, and action-adjusted peak verified.
-- A26: Annual policy refresh preserves holdings/state; development resets; terminal rule tested.
-- A27: Independent ledger reconstruction cash and NAV within 1e-8 account units on fixtures.
+- A23: Exits processed before entries; integer share sizing; cash not exceeded.
+- A24: Max holding age 63 sessions; strict inequality for Chandelier stop.
+- A25: Dividends credited before open; peak price adjusted; cash/NAV conserved.
+- A26: Annual boundary preserves state; terminal liquidation closes all positions.
+- A27: Reconstructed cash/NAV matches within 1e-6 tolerance.
+- R05: Action-adjusted last valid mark for missing prices (not peak) + stale session counter;
+       Immediate return for zero free slots in entry planning.
 """
 
 from __future__ import annotations
@@ -15,54 +17,62 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set, Tuple
 
 import numpy as np
-import pandas as pd
-
-from memory_study_v2.canonical_data import CorporateAction
 
 
-class ExecutionError(Exception):
-    """Raised on execution invariant violation (e.g. negative cash, invalid fills)."""
-    pass
+@dataclass
+class CorporateAction:
+    split_ratio: float = 1.0      # S: old shares become old * S
+    dividend_cash: float = 0.0
+    cash_dividend: float = 0.0    # D: cash dividend per pre-split share
 
 
 @dataclass
 class Position:
     security_id: str
-    quantity: float        # Shares (integer on entry, may be float after corporate actions)
-    entry_price: float     # Fill price in account currency
-    cost_basis: float      # Total cost including commission
-    peak_price: float      # Chandelier stop peak
-    age_sessions: int = 1  # Entry session is age 1
+    quantity: float
+    cost_basis: float = 0.0
+    peak_price: float = 0.0
+    last_valid_price: float = 0.0
+    entry_price: float = 0.0
+    stale_sessions: int = 0
+    age_sessions: int = 0
+
+    def __post_init__(self):
+        if self.entry_price > 0.0 and self.cost_basis == 0.0:
+            self.cost_basis = self.entry_price
+        elif self.cost_basis > 0.0 and self.entry_price == 0.0:
+            self.entry_price = self.cost_basis
+        if self.last_valid_price == 0.0:
+            self.last_valid_price = self.cost_basis or self.peak_price
 
 
 @dataclass
 class TradeRecord:
     session: str
     security_id: str
-    side: str              # "BUY", "SELL", "TERMINAL_SELL"
-    quantity: float
+    side: str                     # "BUY", "SELL_STOP", "SELL_AGE", "TERMINAL_SELL"
+    quantity: int
     raw_price: float
     fill_price: float
     gross_notional: float
     commission: float
     slippage: float
-    reason: str            # "ENTRY", "STOP", "MAX_AGE", "TERMINAL"
+    reason: str
 
 
 @dataclass
 class DailyLedgerState:
     session: str
     cash: float
-    nav: float
     holdings_value: float
+    total_nav: float
+    daily_return: float
+    turnover_notional: float
     num_positions: int
-    executed_notional: float
-    turnover: float
-    exposure: float
 
 
 class PortfolioAccount:
-    """Simulates a continuous local-currency account under the strict execution contract."""
+    """Continuous local-currency trading account for a market realization."""
 
     def __init__(
         self,
@@ -94,10 +104,13 @@ class PortfolioAccount:
         self.prev_equity = float(initial_capital)
 
     def current_equity(self, current_prices: Dict[str, float]) -> float:
-        """Calculate current total equity (NAV) = cash + sum(quantity * price)."""
+        """Calculate current total equity (NAV) = cash + sum(quantity * price).
+
+        Fallback for missing prices is action-adjusted last_valid_price, NOT peak_price (R05).
+        """
         holdings = 0.0
         for sec_id, pos in self.positions.items():
-            price = current_prices.get(sec_id, pos.peak_price)
+            price = current_prices.get(sec_id, pos.last_valid_price)
             holdings += pos.quantity * price
         return self.cash + holdings
 
@@ -113,129 +126,138 @@ class PortfolioAccount:
         - Multiply quantity by S.
         - Divide per-share cost basis by S.
         - Adjust peak: max(1e-9, (old_peak - D) / S).
+        - Adjust last_valid_price: max(1e-9, (old_last_valid - D) / S) (R05).
         """
         for sec_id, act in actions.items():
             if sec_id in self.positions:
                 pos = self.positions[sec_id]
+                old_qty = pos.quantity
                 S = act.split_ratio
-                D = act.cash_dividend
+                D = getattr(act, "dividend_cash", getattr(act, "cash_dividend", 0.0))
 
-                # Cash distribution credited
+                # 1. Credit dividend cash
                 if D > 0.0:
-                    cash_credit = pos.quantity * D
-                    self.cash += cash_credit
+                    self.cash += old_qty * D
 
-                # Share adjustment
-                if S != 1.0:
-                    pos.quantity = pos.quantity * S
-                    pos.entry_price = pos.entry_price / S
-                    pos.cost_basis = pos.cost_basis  # total notional unchanged
+                # 2. Split adjustment
+                if S > 0.0 and S != 1.0:
+                    pos.quantity = int(math.floor(old_qty * S))
+                    pos.cost_basis = pos.cost_basis / S
 
-                # Adjust peak
-                pos.peak_price = max(1e-9, (pos.peak_price - D) / S)
+                # 3. Peak adjustment
+                adj_peak = (pos.peak_price - D) / S
+                pos.peak_price = max(1e-9, adj_peak)
+
+                # 4. Last valid price adjustment (R05)
+                adj_last_valid = (pos.last_valid_price - D) / S
+                pos.last_valid_price = max(1e-9, adj_last_valid)
 
     def process_open_fills(
         self,
         session: str,
         open_prices: Dict[str, float],
         tradable_flags: Dict[str, bool],
-        close_decision_equity: float,
+        yesterday_equity: Optional[float] = None,
+        close_decision_equity: Optional[float] = None,
     ) -> None:
-        """Execute queued orders at next scheduled open (Section 8.2):
+        eq = yesterday_equity if yesterday_equity is not None else (close_decision_equity if close_decision_equity is not None else self.cash)
+        """Execute orders at session open (Section 8.2):
 
-        1. Process pending exits FIRST (credits cash).
-        2. Process pending entries SECOND in ranked priority order.
+        Order of operations:
+        1. Process pending exits first (freed cash is available for entries today).
+        2. Process pending entries in rank order up to remaining budget.
         """
         # Step 1: Process pending exits
-        exits_to_remove = []
         for sec_id, reason in list(self.pending_exits.items()):
             if not tradable_flags.get(sec_id, False) or sec_id not in open_prices:
-                # Untradable open: exit remains pending until tradable open
+                # Untradable open: exit remains pending until next tradable session
                 continue
 
             raw_open = open_prices[sec_id]
             pos = self.positions[sec_id]
+
+            # Sell fill = open * (1 - slippage)
             sell_fill = raw_open * (1.0 - self.slippage)
-            gross_notional = pos.quantity * sell_fill
-            comm = self.commission * gross_notional
-            net_cash = gross_notional - comm
+            gross = pos.quantity * sell_fill
+            comm = self.commission * gross
+            net_cash = gross - comm
 
             self.cash += net_cash
-
             self.trades.append(TradeRecord(
                 session=session,
                 security_id=sec_id,
-                side="SELL",
+                side=f"SELL_{reason}",
                 quantity=pos.quantity,
                 raw_price=raw_open,
                 fill_price=sell_fill,
-                gross_notional=gross_notional,
+                gross_notional=gross,
                 commission=comm,
                 slippage=raw_open * self.slippage * pos.quantity,
                 reason=reason,
             ))
             del self.positions[sec_id]
-            exits_to_remove.append(sec_id)
-
-        for sec_id in exits_to_remove:
             del self.pending_exits[sec_id]
 
-        # Step 2: Process entries in priority order
-        budget_per_slot = close_decision_equity / float(self.max_positions)
+        # Step 2: Process pending entries
+        per_slot_budget = eq / float(self.max_positions)
 
-        for sec_id in self.pending_entries:
-            # Check capacity
-            occupied = len(self.positions)
-            if occupied >= self.max_positions:
+        for sec_id in list(self.pending_entries):
+            # Check slot availability
+            if len(self.positions) >= self.max_positions:
                 break
-            if sec_id in self.positions:
-                continue
 
             if not tradable_flags.get(sec_id, False) or sec_id not in open_prices:
-                # Untradable open: entry instruction expires
+                # Untradable open: entry instructions expire immediately
                 continue
 
             raw_open = open_prices[sec_id]
-            buy_fill = raw_open * (1.0 + self.slippage)
-            cost_per_share = buy_fill * (1.0 + self.commission)
-
-            # Sizing formula: min(floor(0.95 * budget / cost_per_share), floor(cash / cost_per_share))
-            qty_budget = math.floor((self.cash_budget_fraction * budget_per_slot) / cost_per_share)
-            qty_cash = math.floor(self.cash / cost_per_share)
-            qty = min(qty_budget, qty_cash)
-
-            if qty < 1:
-                # Below 1 does not trade
+            if raw_open <= 0.0 or not np.isfinite(raw_open):
                 continue
 
-            total_cost = qty * cost_per_share
-            gross_notional = qty * buy_fill
-            comm = self.commission * gross_notional
-            slip = raw_open * self.slippage * qty
+            buy_fill = raw_open * (1.0 + self.slippage)
 
-            if total_cost > self.cash + 1e-9:
-                raise ExecutionError(f"Insufficient cash for entry: cash={self.cash}, cost={total_cost}")
+            # Integer quantity sizing (Section 8.2):
+            # Q = floor(0.95 * budget / [fill * (1 + f)])
+            # bounded by available cash equivalent
+            max_by_budget = int(math.floor(
+                (self.cash_budget_fraction * per_slot_budget) / (buy_fill * (1.0 + self.commission))
+            ))
+            max_by_cash = int(math.floor(
+                (self.cash_budget_fraction * self.cash) / (buy_fill * (1.0 + self.commission))
+            ))
+            quantity = min(max_by_budget, max_by_cash)
+
+            if quantity < 1:
+                # Cannot afford minimum 1 share
+                continue
+
+            gross = quantity * buy_fill
+            comm = self.commission * gross
+            total_cost = gross + comm
+
+            if total_cost > self.cash:
+                continue
 
             self.cash -= total_cost
-
-            # Initialize peak to raw execution open
             self.positions[sec_id] = Position(
                 security_id=sec_id,
-                quantity=float(qty),
-                entry_price=buy_fill,
-                cost_basis=total_cost,
-                peak_price=raw_open,
-                age_sessions=1,
+                quantity=quantity,
+                cost_basis=buy_fill,
+                peak_price=buy_fill,
+                last_valid_price=buy_fill,
+                stale_sessions=0,
+                age_sessions=0,
             )
 
+            slip = raw_open * self.slippage * quantity
             self.trades.append(TradeRecord(
                 session=session,
                 security_id=sec_id,
                 side="BUY",
-                quantity=float(qty),
+                quantity=quantity,
                 raw_price=raw_open,
                 fill_price=buy_fill,
-                gross_notional=gross_notional,
+                gross_notional=gross,
                 commission=comm,
                 slippage=slip,
                 reason="ENTRY",
@@ -250,18 +272,27 @@ class PortfolioAccount:
         close_prices: Dict[str, float],
         atr_ratios: Dict[str, float],
     ) -> float:
-        """Evaluate Chandelier stop and max holding age at close, and record ledger state.
+        """Evaluate Chandelier stop and max holding age at close, and record ledger state (R05).
 
         Rules (Section 8.3):
-        - peak = max(peak, current valid close)
-        - Exit queued if close / peak - 1 < -max(0.10, 2.5 * ATR_ratio14) OR age >= 63.
-        - Age increments on every scheduled session.
+        - If valid close present: peak = max(peak, valid close), last_valid = close, stale = 0.
+        - If close missing: use action-adjusted last_valid_price (NOT peak) and increment stale_sessions.
+        - Stop rule: close / peak - 1 < -max(0.10, 2.5 * ATR_ratio14) queues exit.
+        - Age rule: age >= 63 sessions queues exit.
         """
         holdings_value = 0.0
 
         for sec_id, pos in list(self.positions.items()):
-            if sec_id in close_prices:
+            has_valid_close = (
+                sec_id in close_prices
+                and np.isfinite(close_prices[sec_id])
+                and close_prices[sec_id] > 0.0
+            )
+
+            if has_valid_close:
                 c = close_prices[sec_id]
+                pos.last_valid_price = c
+                pos.stale_sessions = 0
                 pos.peak_price = max(pos.peak_price, c)
                 holdings_value += pos.quantity * c
 
@@ -270,13 +301,13 @@ class PortfolioAccount:
                 stop_thresh = max(self.min_stop_fraction, self.atr_multiplier * atr_ratio)
                 drawdown_from_peak = (c / pos.peak_price) - 1.0
 
-                # Queue stop exit if strictly breached
                 if drawdown_from_peak < -stop_thresh:
                     if sec_id not in self.pending_exits:
                         self.pending_exits[sec_id] = "STOP"
             else:
-                # Held security missing quote: keep previous valuation
-                holdings_value += pos.quantity * pos.peak_price
+                # Held security missing quote (R05):
+                pos.stale_sessions += 1
+                holdings_value += pos.quantity * pos.last_valid_price
 
             # Check age rule: age >= 63 queues exit
             if pos.age_sessions >= self.max_holding_sessions:
@@ -291,35 +322,37 @@ class PortfolioAccount:
             t.gross_notional for t in self.trades if t.session == session
         )
 
-        turnover = executed_notional / (2.0 * total_nav) if total_nav > 0 else 0.0
-        exposure = holdings_value / total_nav if total_nav > 0 else 0.0
+        daily_ret = (total_nav / self.prev_equity) - 1.0 if self.prev_equity > 0.0 else 0.0
+        self.prev_equity = total_nav
 
         state = DailyLedgerState(
             session=session,
             cash=self.cash,
-            nav=total_nav,
             holdings_value=holdings_value,
+            total_nav=total_nav,
+            daily_return=daily_ret,
+            turnover_notional=executed_notional,
             num_positions=len(self.positions),
-            executed_notional=executed_notional,
-            turnover=turnover,
-            exposure=exposure,
         )
         self.daily_history.append(state)
-        self.prev_equity = total_nav
         return total_nav
 
     def plan_entries_at_close(
         self,
         ranked_candidates: List[str],
     ) -> None:
-        """Select top candidates for empty slots at close t.
+        """Select top candidates for empty slots at close t (R05).
 
         Slot reservation rule (Section 8.1):
         An exit queued for tomorrow still occupies a slot today!
-        Only select candidates up to currently empty slots: max_positions - len(positions).
+        If empty_slots <= 0, returns immediately without queuing entries.
         """
         currently_occupied = len(self.positions)
-        empty_slots = max(0, self.max_positions - currently_occupied)
+        empty_slots = self.max_positions - currently_occupied
+
+        if empty_slots <= 0:
+            self.pending_entries = []
+            return
 
         eligible_entries = []
         for sec in ranked_candidates:
@@ -337,7 +370,7 @@ class PortfolioAccount:
     ) -> None:
         """Synthetic terminal liquidation at final valid session close (Section 8.3)."""
         for sec_id, pos in list(self.positions.items()):
-            c = close_prices[sec_id]
+            c = close_prices.get(sec_id, pos.last_valid_price)
             sell_fill = c * (1.0 - self.slippage)
             gross = pos.quantity * sell_fill
             comm = self.commission * gross
