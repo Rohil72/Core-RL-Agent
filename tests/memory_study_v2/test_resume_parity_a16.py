@@ -282,3 +282,122 @@ train_backbone_model(
 
     # Optimizer state equality
     assert_optimizer_states_equal(chk_un.optimizer_state, chk_fresh.optimizer_state)
+
+
+def test_resume_parity_final_macro_update_boundary(tmp_path):
+    """Verify exact parity when interrupted after the final macro update of an epoch (C5).
+
+    Regression test for auditor finding:
+    Interruption on final macro update of epoch must run validation and checkpoint selection
+    before declaring epoch checkpoint, ensuring zero skipped validation passes on resume.
+    """
+    # 64 samples with effective batch 32 = 2 macro steps per epoch
+    train_x = torch.randn(64, 966)
+    train_y = torch.randn(64)
+    train_mkts = np.array(["US"] * 32 + ["IN"] * 32)
+    val_x = torch.randn(16, 966)
+    val_y = torch.randn(16)
+    val_mkts = np.array(["US"] * 8 + ["IN"] * 8)
+
+    # 1. Uninterrupted run for 4 epochs (8 macro steps total)
+    m_un = MLPAnnual(seed=42)
+    trained_un, sum_un = train_backbone_model(
+        m_un, train_x, train_y, train_mkts,
+        val_x, val_y, val_mkts,
+        seed=42, min_epochs=4, max_epochs=4,
+        micro_batch_size=16, effective_batch_size=32,
+        checkpoint_dir=tmp_path / "uninterrupted_final_macro",
+    )
+
+    # 2. Interrupted after macro step 6 (the FINAL macro update of epoch 3: 2 steps/epoch * 3 = 6)
+    m_int = MLPAnnual(seed=42)
+    train_backbone_model(
+        m_int, train_x, train_y, train_mkts,
+        val_x, val_y, val_mkts,
+        seed=42, min_epochs=4, max_epochs=4,
+        micro_batch_size=16, effective_batch_size=32,
+        checkpoint_dir=tmp_path / "interrupted_final_macro",
+        interrupt_at_macro_step=6,
+    )
+    chk_final = tmp_path / "interrupted_final_macro" / "last_checkpoint.pt"
+    assert chk_final.exists()
+
+    # Verify state saved at final macro update recorded the completed validation pass
+    state_at_int = torch.load(chk_final, weights_only=False)
+    assert len(state_at_int.epoch_val_losses) == 3, "Epoch 3 validation loss must be recorded before checkpointing!"
+
+    # 3. Resume from macro step 6 and complete to epoch 4
+    m_res = MLPAnnual(seed=888)
+    trained_res, sum_res = train_backbone_model(
+        m_res, train_x, train_y, train_mkts,
+        val_x, val_y, val_mkts,
+        seed=42, min_epochs=4, max_epochs=4,
+        micro_batch_size=16, effective_batch_size=32,
+        checkpoint_dir=tmp_path / "interrupted_final_macro",
+        resume_from_checkpoint=chk_final,
+    )
+
+    # Compare validation history across all 4 epochs
+    assert len(sum_res.epoch_val_losses) == len(sum_un.epoch_val_losses) == 4
+    for i, (l_un, l_res) in enumerate(zip(sum_un.epoch_val_losses, sum_res.epoch_val_losses)):
+        assert pytest.approx(l_un, rel=1e-6) == l_res, f"Validation loss at epoch {i+1} mismatch: {l_un} vs {l_res}"
+
+    # Best epoch and best loss comparison
+    assert sum_un.best_epoch == sum_res.best_epoch
+    assert pytest.approx(sum_un.best_loss, rel=1e-6) == sum_res.best_loss
+    assert sum_un.total_macro_steps == sum_res.total_macro_steps == 8
+
+    # Parameter equality
+    for name, p_un in m_un.named_parameters():
+        p_res = dict(trained_res.named_parameters())[name]
+        assert torch.equal(p_un, p_res), f"Parameter {name} mismatch after final macro resume!"
+
+    # Optimizer state equality
+    chk_un = torch.load(tmp_path / "uninterrupted_final_macro" / "last_checkpoint.pt", weights_only=False)
+    chk_res = torch.load(tmp_path / "interrupted_final_macro" / "last_checkpoint.pt", weights_only=False)
+    assert_optimizer_states_equal(chk_un.optimizer_state, chk_res.optimizer_state)
+
+
+def test_fail_closed_production_config_enforcement(tmp_path):
+    """Verify production mode strictly enforces config existence, authorization, and rejects unapproved overrides (C3)."""
+    train_x = torch.randn(32, 966)
+    train_y = torch.randn(32)
+    train_mkts = np.array(["US"] * 32)
+    val_x = torch.randn(16, 966)
+    val_y = torch.randn(16)
+    val_mkts = np.array(["US"] * 16)
+
+    m = MLPAnnual(seed=7)
+
+    # 1. Missing config in production mode raises FileNotFoundError
+    with pytest.raises(FileNotFoundError, match="In production mode, configuration file"):
+        train_backbone_model(
+            m, train_x, train_y, train_mkts, val_x, val_y, val_mkts,
+            config_path=tmp_path / "nonexistent.json",
+            execution_mode="production",
+        )
+
+    # 2. Production authorized false in config raises PermissionError
+    fake_config = tmp_path / "test_config.json"
+    with open(fake_config, "w", encoding="utf-8") as f:
+        json.dump({"production_authorized": False, "neural": {"learning_rate": 0.001}}, f)
+
+    with pytest.raises(PermissionError, match="production_authorized is false"):
+        train_backbone_model(
+            m, train_x, train_y, train_mkts, val_x, val_y, val_mkts,
+            config_path=fake_config,
+            execution_mode="production",
+        )
+
+    # 3. Unapproved hyperparameter override in production mode raises ValueError
+    with open(fake_config, "w", encoding="utf-8") as f:
+        json.dump({"production_authorized": True, "neural": {"learning_rate": 0.001, "weight_decay": 0.0001}}, f)
+
+    with pytest.raises(ValueError, match="Unapproved hyperparameter override"):
+        train_backbone_model(
+            m, train_x, train_y, train_mkts, val_x, val_y, val_mkts,
+            config_path=fake_config,
+            execution_mode="production",
+            lr=0.05,  # Unapproved override
+        )
+

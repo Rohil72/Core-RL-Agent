@@ -223,13 +223,23 @@ class TrainingSummary:
     early_stopped: bool
 
 
-def load_neural_config(config_path: Optional[Union[str, Path]] = None) -> Dict[str, Any]:
-    """Load and validate neural training configuration from config.proposed.json (C3)."""
+def load_neural_config(
+    config_path: Optional[Union[str, Path]] = None,
+    execution_mode: str = "pilot",
+) -> Dict[str, Any]:
+    """Load and validate neural training configuration from config.proposed.json (C3).
+
+    In permissive 'pilot' mode, missing config files use standard defaults.
+    In fail-closed 'production' mode, the config file is mandatory and production_authorized must be true.
+    """
     if config_path is None:
         p = Path("rebuild_plan/config.proposed.json")
     else:
         p = Path(config_path)
+
     if not p.exists():
+        if execution_mode == "production":
+            raise FileNotFoundError(f"In production mode, configuration file '{p}' is mandatory.")
         return {
             "learning_rate": 0.001,
             "weight_decay": 0.0001,
@@ -242,8 +252,14 @@ def load_neural_config(config_path: Optional[Union[str, Path]] = None) -> Dict[s
             "minimum_improvement": 1e-06,
             "gradient_norm_clip": 1.0,
         }
+
     with open(p, "r", encoding="utf-8") as f:
         data = json.load(f)
+
+    if execution_mode == "production":
+        if not data.get("production_authorized", False):
+            raise PermissionError("Production execution rejected: production_authorized is false.")
+
     return data.get("neural", {})
 
 
@@ -272,6 +288,7 @@ def train_backbone_model(
     interrupt_at_macro_step: Optional[int] = None,
     resume_from_checkpoint: Optional[Union[str, Path]] = None,
     config_path: Optional[Union[str, Path]] = None,
+    execution_mode: str = "pilot",
 ) -> Tuple[nn.Module, TrainingSummary]:
     """Complete integrated dataset-to-epoch training runner (R02).
 
@@ -281,23 +298,46 @@ def train_backbone_model(
     - EarlyStoppingSelector with earliest-best tie rule.
     - Checkpoint persistence to disk with full RNG state and Generator state (R06).
     - Bitwise exact checkpoint resume capability.
-    - AdamW with explicit weight decay (0.01) and gradient clipping (1.0).
+    - AdamW with explicit weight decay (0.0001) and gradient clipping (1.0).
     - Streamed validation batches to bound peak memory.
+    - Fail-closed production configuration validation (C3).
+    - Macro-boundary interruption handling (C5).
     """
     # 1. Bind configuration from config.proposed.json (C3)
-    n_cfg = load_neural_config(config_path)
+    n_cfg = load_neural_config(config_path, execution_mode=execution_mode)
+    cfg_lr = float(n_cfg.get("learning_rate", 0.001))
+    cfg_wd = float(n_cfg.get("weight_decay", 0.0001))
+    cfg_clip = float(n_cfg.get("gradient_norm_clip", 1.0))
+    cfg_betas = tuple(n_cfg.get("betas", [0.9, 0.999]))
+    cfg_eps = float(n_cfg.get("epsilon", 1e-08))
+    cfg_eb = int(n_cfg.get("effective_batch", 512))
+
+    if execution_mode == "production":
+        if lr is not None and lr != cfg_lr:
+            raise ValueError(f"Unapproved hyperparameter override in production mode: lr={lr} vs config={cfg_lr}")
+        if weight_decay is not None and weight_decay != cfg_wd:
+            raise ValueError(f"Unapproved hyperparameter override in production mode: weight_decay={weight_decay} vs config={cfg_wd}")
+        if grad_clip_norm is not None and grad_clip_norm != cfg_clip:
+            raise ValueError(f"Unapproved hyperparameter override in production mode: grad_clip_norm={grad_clip_norm} vs config={cfg_clip}")
+        if betas is not None and betas != cfg_betas:
+            raise ValueError(f"Unapproved hyperparameter override in production mode: betas={betas} vs config={cfg_betas}")
+        if eps is not None and eps != cfg_eps:
+            raise ValueError(f"Unapproved hyperparameter override in production mode: eps={eps} vs config={cfg_eps}")
+        if effective_batch_size is not None and effective_batch_size != cfg_eb:
+            raise ValueError(f"Unapproved hyperparameter override in production mode: effective_batch_size={effective_batch_size} vs config={cfg_eb}")
+
     if lr is None:
-        lr = float(n_cfg.get("learning_rate", 0.001))
+        lr = cfg_lr
     if weight_decay is None:
-        weight_decay = float(n_cfg.get("weight_decay", 0.0001))
+        weight_decay = cfg_wd
     if grad_clip_norm is None:
-        grad_clip_norm = float(n_cfg.get("gradient_norm_clip", 1.0))
+        grad_clip_norm = cfg_clip
     if betas is None:
-        betas = tuple(n_cfg.get("betas", [0.9, 0.999]))
+        betas = cfg_betas
     if eps is None:
-        eps = float(n_cfg.get("epsilon", 1e-08))
+        eps = cfg_eps
     if effective_batch_size is None:
-        effective_batch_size = int(n_cfg.get("effective_batch", 512))
+        effective_batch_size = cfg_eb
     if min_epochs is None:
         min_epochs = int(n_cfg.get("min_epochs", 5))
     if max_epochs is None:
@@ -350,6 +390,12 @@ def train_backbone_model(
         if initial_cursor > 0 and getattr(state, "epoch_permutation", None) is not None:
             resumed_permutation = np.array(state.epoch_permutation, dtype=int)
         epoch_val_losses = list(getattr(state, "epoch_val_losses", []))
+        # Validate restored optimizer parameter groups against current optimizer config (C3, C5)
+        for pg in optimizer.param_groups:
+            assert pg["lr"] == lr, f"Restored optimizer lr mismatch: {pg['lr']} vs {lr}"
+            assert pg["weight_decay"] == weight_decay, f"Restored optimizer weight_decay mismatch: {pg['weight_decay']} vs {weight_decay}"
+            assert pg["betas"] == betas, f"Restored optimizer betas mismatch: {pg['betas']} vs {betas}"
+            assert pg["eps"] == eps, f"Restored optimizer eps mismatch: {pg['eps']} vs {eps}"
     else:
         torch.manual_seed(seed)
         if torch.cuda.is_available():
@@ -405,24 +451,71 @@ def train_backbone_model(
             optimizer.zero_grad()
             macro_step += 1
 
-            # Safe macro-boundary mid-epoch interruption (C5)
+            # Safe macro-boundary interruption (C5)
             if interrupt_at_macro_step is not None and macro_step == interrupt_at_macro_step:
-                if checkpoint_dir is not None:
-                    interrupted_state = capture_training_state(
-                        model=model,
-                        optimizer=optimizer,
-                        selector=selector,
-                        epoch=epoch,
-                        macro_step=macro_step,
-                        micro_step=micro_step,
-                        sampler_cursor=macro_end if macro_end < N_train else 0,
-                        generator=rng,
+                if macro_end < N_train:
+                    # Interrupted strictly mid-epoch before final macro step
+                    if checkpoint_dir is not None:
+                        interrupted_state = capture_training_state(
+                            model=model,
+                            optimizer=optimizer,
+                            selector=selector,
+                            epoch=epoch,
+                            macro_step=macro_step,
+                            micro_step=micro_step,
+                            sampler_cursor=macro_end,
+                            generator=rng,
+                            epoch_val_losses=epoch_val_losses,
+                            epoch_permutation=list(indices),
+                        )
+                        torch.save(interrupted_state, Path(checkpoint_dir) / "last_checkpoint.pt")
+                    interrupted_mid_epoch = True
+                    break
+                else:
+                    # Interrupted on final macro update of epoch:
+                    # Execute validation and checkpoint selection before saving checkpoint and exiting (C5)
+                    model.eval()
+                    val_preds_list = []
+                    with torch.no_grad():
+                        for v_start in range(0, len(val_y), micro_batch_size):
+                            v_end = min(v_start + micro_batch_size, len(val_y))
+                            bx = val_x[v_start:v_end].to(device)
+                            bp = model(bx).cpu().numpy()
+                            val_preds_list.append(bp)
+                        val_preds = np.concatenate(val_preds_list, axis=0) if val_preds_list else np.array([], dtype=np.float32)
+                        val_targets = val_y.cpu().numpy()
+                        val_loss = compute_equal_market_val_mse(val_preds, val_targets, val_markets)
+
+                    epoch_val_losses.append(val_loss)
+                    is_best = selector.step(epoch, val_loss)
+
+                    if checkpoint_dir is not None:
+                        state = capture_training_state(
+                            model=model,
+                            optimizer=optimizer,
+                            selector=selector,
+                            epoch=epoch,
+                            macro_step=macro_step,
+                            micro_step=micro_step,
+                            sampler_cursor=0,
+                            generator=rng,
+                            epoch_val_losses=epoch_val_losses,
+                        )
+                        torch.save(state, Path(checkpoint_dir) / "last_checkpoint.pt")
+                        if is_best:
+                            torch.save(state, Path(checkpoint_dir) / "best_checkpoint.pt")
+
+                    return model, TrainingSummary(
+                        model_type=model.__class__.__name__,
+                        seed=seed,
+                        best_epoch=selector.best_epoch or 0,
+                        best_loss=selector.best_loss if selector.best_loss is not None else float("inf"),
+                        epochs_trained=len(epoch_val_losses),
+                        total_macro_steps=macro_step,
+                        samples_per_market=samples_per_market,
                         epoch_val_losses=epoch_val_losses,
-                        epoch_permutation=list(indices),
+                        early_stopped=False,
                     )
-                    torch.save(interrupted_state, Path(checkpoint_dir) / "last_checkpoint.pt")
-                interrupted_mid_epoch = True
-                break
 
         if interrupted_mid_epoch:
             return model, TrainingSummary(

@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 import math
 from dataclasses import asdict, dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -101,6 +101,9 @@ def compute_sharpe_ratio(returns: np.ndarray) -> float:
     if len(returns) == 0:
         return 0.0
     r = np.asarray(returns, dtype=np.float64)
+    # Mask out non-finite (holiday/unobserved) sessions
+    if np.any(~np.isfinite(r)):
+        r = r[np.isfinite(r)]
     n = len(r)
     if n == 0:
         return 0.0
@@ -123,39 +126,44 @@ def compute_sharpe_ratio(returns: np.ndarray) -> float:
 def build_calendar_weeks_mapping(
     session_dates: Optional[List[str]],
     total_sessions: int,
-) -> Tuple[List[int], List[int], List[Tuple[int, int]]]:
-    """Assign sessions to year and week indices, with within-year non-wrapping partitions (C2)."""
-    if session_dates is not None and len(session_dates) == total_sessions:
-        years = []
-        weeks_in_year = []
-        for s in session_dates:
-            try:
-                dt = datetime.strptime(str(s)[:10], "%Y-%m-%d")
-                years.append(dt.year)
-                # ISO week or sequential calendar week
-                weeks_in_year.append(dt.isocalendar()[1] - 1)
-            except Exception:
-                # Fallback to 5-day week chunks
-                idx = len(years)
-                w = idx // 5
-                years.append(w // 52)
-                weeks_in_year.append(w % 52)
-    else:
-        # 5-day trading week chunks
-        years = [(t // 5) // 52 for t in range(total_sessions)]
-        weeks_in_year = [(t // 5) % 52 for t in range(total_sessions)]
+) -> Tuple[List[int], List[int], List[Tuple[int, Any]]]:
+    """Assign sessions to year and week indices, with Monday-based non-wrapping within-year partitions (C2).
 
-    # Map unique (year, week_in_year) to global week index
+    Uses Monday anchor date within each calendar year to avoid ISO week collisions (e.g. 2024-01-02 vs 2024-12-30).
+    Rejects malformed production dates.
+    """
+    if session_dates is not None:
+        if len(session_dates) != total_sessions:
+            raise ValueError(f"session_dates length ({len(session_dates)}) does not match total_sessions ({total_sessions})")
+        years = []
+        monday_keys = []
+        for s in session_dates:
+            s_str = str(s)[:10]
+            try:
+                dt = datetime.strptime(s_str, "%Y-%m-%d")
+            except Exception as e:
+                raise ValueError(f"Malformed production session date '{s}': expected YYYY-MM-DD ({e})")
+            y = dt.year
+            mon = dt - timedelta(days=dt.weekday())
+            years.append(y)
+            # Monday key anchored within calendar year avoids collision
+            monday_keys.append((y, mon.strftime("%Y-%m-%d")))
+    else:
+        # 5-day trading week chunks for synthetic tests
+        years = [(t // 5) // 52 for t in range(total_sessions)]
+        monday_keys = [(years[t], f"synthetic_w_{(t // 5) % 52:02d}") for t in range(total_sessions)]
+
+    # Map unique (year, week_anchor) to global week index
     unique_yw = []
     seen = set()
-    for y, w in zip(years, weeks_in_year):
-        if (y, w) not in seen:
-            seen.add((y, w))
-            unique_yw.append((y, w))
+    for ym in monday_keys:
+        if ym not in seen:
+            seen.add(ym)
+            unique_yw.append(ym)
     unique_yw.sort()
-    yw_to_global = {yw: idx for idx, yw in enumerate(unique_yw)}
+    yw_to_global = {ym: idx for idx, ym in enumerate(unique_yw)}
 
-    session_global_weeks = [yw_to_global[(y, w)] for y, w in zip(years, weeks_in_year)]
+    session_global_weeks = [yw_to_global[ym] for ym in monday_keys]
     return session_global_weeks, years, unique_yw
 
 
@@ -235,8 +243,13 @@ def compute_weekly_sufficient_statistics(
     returns_matrix: np.ndarray,
     session_global_weeks: List[int],
     total_weeks: int,
+    valid_mask: Optional[np.ndarray] = None,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Compute (N, Sum, SumSq) per week and per series for bounded-memory bootstrap (C2)."""
+    """Compute (N, Sum, SumSq) per week and per series for bounded-memory bootstrap (C2).
+
+    Applies per-series holiday/open masks: non-observed holiday sessions are excluded
+    and do not increment N or accumulate 0.0 into sums.
+    """
     K = returns_matrix.shape[0]
     W = total_weeks
 
@@ -244,12 +257,19 @@ def compute_weekly_sufficient_statistics(
     week_sums = np.zeros((W, K), dtype=np.float64)
     week_sumsq = np.zeros((W, K), dtype=np.float64)
 
-    # Accumulate into weekly bins
+    if valid_mask is None:
+        mask = np.isfinite(returns_matrix)
+    else:
+        mask = valid_mask & np.isfinite(returns_matrix)
+
+    # Accumulate into weekly bins with holiday/open mask
     for t_idx, w_idx in enumerate(session_global_weeks):
-        r_t = returns_matrix[:, t_idx]
-        week_counts[w_idx, :] += 1.0
-        week_sums[w_idx, :] += r_t
-        week_sumsq[w_idx, :] += (r_t ** 2)
+        m_t = mask[:, t_idx]
+        if np.any(m_t):
+            r_t = np.where(m_t, returns_matrix[:, t_idx], 0.0)
+            week_counts[w_idx, :] += m_t.astype(np.float64)
+            week_sums[w_idx, :] += r_t
+            week_sumsq[w_idx, :] += (r_t ** 2) * m_t
 
     return week_counts, week_sums, week_sumsq
 
@@ -259,6 +279,7 @@ def evaluate_primary_contrasts(
     markets: List[str],
     session_dates: Optional[List[str]] = None,
     draw_week_indices: Optional[np.ndarray] = None,
+    valid_mask: Optional[np.ndarray] = None,
     num_draws: int = 1000,
     block_length_weeks: int = 4,
     seed: int = 42,
@@ -284,6 +305,15 @@ def evaluate_primary_contrasts(
             missing_required.append(f"{cid}: comparator '{comp}' missing")
     if missing_required and not allow_reduced_arms:
         raise ValueError(f"Required policy arms missing from returns data: {missing_required}")
+
+    # When not allowing reduced arms, verify complete market coverage for all candidate and comparator arms
+    if not allow_reduced_arms:
+        for cid, cand, comp in PRIMARY_CONTRASTS:
+            for arm in (cand, comp):
+                arm_mkts = {k[1] for k in keys if k[0] == arm}
+                missing_mkts = [m for m in markets if m not in arm_mkts]
+                if missing_mkts:
+                    raise ValueError(f"Required market path missing for arm '{arm}' in contrast {cid}: missing {missing_mkts}")
 
     # Build matrix of return series
     lengths = [len(returns_by_arm_market_realization[k]) for k in keys]
@@ -330,7 +360,7 @@ def evaluate_primary_contrasts(
 
     # 4. Weekly Sufficient Statistics (Bounded Memory) (C2)
     # week_counts, week_sums, week_sumsq shape: (W, K)
-    w_counts, w_sums, w_sumsq = compute_weekly_sufficient_statistics(ret_matrix, session_weeks, total_weeks)
+    w_counts, w_sums, w_sumsq = compute_weekly_sufficient_statistics(ret_matrix, session_weeks, total_weeks, valid_mask=valid_mask)
 
     # 5. Build draw frequency matrix F shape: (D, W)
     # F[d, w] is count of times week w was sampled in draw d
@@ -546,58 +576,105 @@ def replay_analysis_bundle(
         allow_reduced_arms=allow_reduced_arms,
     )
 
-    # Compare recomputed draws to stored draw matrix
+    # 1. Structural count and shape checks
+    if len(stored_contrasts) != len(recomputed_contrasts):
+        raise ReplayVerificationError(
+            f"Stored contrast count ({len(stored_contrasts)}) != recomputed count ({len(recomputed_contrasts)})"
+        )
+    if stored_draw_matrix.shape != recomputed_draws.shape:
+        raise ReplayVerificationError(
+            f"Stored draw matrix shape {stored_draw_matrix.shape} != recomputed shape {recomputed_draws.shape}"
+        )
+
+    # 2. Strict finite checks on all stored and recomputed matrices (reject NaNs/Infs) (C2)
+    if not np.all(np.isfinite(stored_draw_matrix)):
+        raise ReplayVerificationError("Stored draw matrix contains non-finite (NaN or Inf) values")
+    if not np.all(np.isfinite(recomputed_draws)):
+        raise ReplayVerificationError("Recomputed draw matrix contains non-finite (NaN or Inf) values")
+    if not np.all(np.isfinite(stored_weeks_matrix)):
+        raise ReplayVerificationError("Stored sampled weeks matrix contains non-finite values")
+
+    # 3. Compare recomputed draws to stored draw matrix within tolerance
     draw_diff = float(np.max(np.abs(recomputed_draws - stored_draw_matrix)))
     if draw_diff > tolerance:
         raise ReplayVerificationError(
             f"Replay mismatch in bootstrap draw matrix: max discrepancy {draw_diff:.4e} > tolerance {tolerance:.4e}"
         )
 
-    # Compare recomputed contrast results to stored contrasts
+    # 4. Compare recomputed contrast results to stored contrasts
     replayed_results = []
     for c_idx, stored_entry in enumerate(stored_contrasts):
         recomputed = recomputed_contrasts[c_idx]
 
+        # Explicit contrast ID, candidate, comparator, and status check (C2)
+        stored_cid = stored_entry.get("contrast_id")
+        if stored_cid != recomputed.contrast_id:
+            raise ReplayVerificationError(
+                f"Contrast ID mismatch at index {c_idx}: stored '{stored_cid}' != recomputed '{recomputed.contrast_id}'"
+            )
+        if stored_entry.get("candidate") != recomputed.candidate:
+            raise ReplayVerificationError(
+                f"Candidate mismatch on {stored_cid}: stored '{stored_entry.get('candidate')}' != recomputed '{recomputed.candidate}'"
+            )
+        if stored_entry.get("comparator") != recomputed.comparator:
+            raise ReplayVerificationError(
+                f"Comparator mismatch on {stored_cid}: stored '{stored_entry.get('comparator')}' != recomputed '{recomputed.comparator}'"
+            )
+        if stored_entry.get("status") != recomputed.status:
+            raise ReplayVerificationError(
+                f"Status mismatch on {stored_cid}: stored '{stored_entry.get('status')}' != recomputed '{recomputed.status}'"
+            )
+
         stored_th = float(stored_entry["theta"])
         recomputed_th = float(recomputed.theta)
-        if abs(recomputed_th - stored_th) > tolerance:
-            raise ReplayVerificationError(
-                f"Replay mismatch for theta on {stored_entry['contrast_id']}: stored={stored_th}, recomputed={recomputed_th}"
-            )
-
         stored_ci_l = float(stored_entry["ci_lower"])
         recomputed_ci_l = float(recomputed.ci_lower)
-        if abs(recomputed_ci_l - stored_ci_l) > tolerance:
-            raise ReplayVerificationError(
-                f"Replay mismatch for ci_lower on {stored_entry['contrast_id']}: stored={stored_ci_l}, recomputed={recomputed_ci_l}"
-            )
-
         stored_ci_u = float(stored_entry["ci_upper"])
         recomputed_ci_u = float(recomputed.ci_upper)
-        if abs(recomputed_ci_u - stored_ci_u) > tolerance:
-            raise ReplayVerificationError(
-                f"Replay mismatch for ci_upper on {stored_entry['contrast_id']}: stored={stored_ci_u}, recomputed={recomputed_ci_u}"
-            )
-
         stored_p = float(stored_entry["p_value"])
         recomputed_p = float(recomputed.p_value)
-        if abs(recomputed_p - stored_p) > tolerance:
-            raise ReplayVerificationError(
-                f"Replay mismatch for p-value on {stored_entry['contrast_id']}: stored={stored_p}, recomputed={recomputed_p}"
-            )
-
         stored_holm_p = float(stored_entry["p_value_holm"])
         recomputed_holm_p = float(recomputed.p_value_holm)
+
+        # Finite checks on every single metric (stored and recomputed)
+        for name, val in [
+            ("theta", stored_th), ("ci_lower", stored_ci_l), ("ci_upper", stored_ci_u),
+            ("p_value", stored_p), ("p_value_holm", stored_holm_p),
+        ]:
+            if not np.isfinite(val):
+                raise ReplayVerificationError(f"Non-finite stored {name} on {stored_cid}: {val}")
+
+        for name, val in [
+            ("theta", recomputed_th), ("ci_lower", recomputed_ci_l), ("ci_upper", recomputed_ci_u),
+            ("p_value", recomputed_p), ("p_value_holm", recomputed_holm_p),
+        ]:
+            if not np.isfinite(val):
+                raise ReplayVerificationError(f"Non-finite recomputed {name} on {stored_cid}: {val}")
+
+        # Strict tolerance checks
+        if abs(recomputed_th - stored_th) > tolerance:
+            raise ReplayVerificationError(
+                f"Replay mismatch for theta on {stored_cid}: stored={stored_th}, recomputed={recomputed_th}"
+            )
+        if abs(recomputed_ci_l - stored_ci_l) > tolerance:
+            raise ReplayVerificationError(
+                f"Replay mismatch for ci_lower on {stored_cid}: stored={stored_ci_l}, recomputed={recomputed_ci_l}"
+            )
+        if abs(recomputed_ci_u - stored_ci_u) > tolerance:
+            raise ReplayVerificationError(
+                f"Replay mismatch for ci_upper on {stored_cid}: stored={stored_ci_u}, recomputed={recomputed_ci_u}"
+            )
+        if abs(recomputed_p - stored_p) > tolerance:
+            raise ReplayVerificationError(
+                f"Replay mismatch for p-value on {stored_cid}: stored={stored_p}, recomputed={recomputed_p}"
+            )
         if abs(recomputed_holm_p - stored_holm_p) > tolerance:
             raise ReplayVerificationError(
-                f"Replay mismatch for p_value_holm on {stored_entry['contrast_id']}: stored={stored_holm_p}, recomputed={recomputed_holm_p}"
+                f"Replay mismatch for p_value_holm on {stored_cid}: stored={stored_holm_p}, recomputed={recomputed_holm_p}"
             )
 
-        # Assert finite values
-        assert np.isfinite(recomputed_th) and np.isfinite(recomputed_p) and np.isfinite(recomputed_holm_p)
-
         replayed_results.append({
-            "contrast_id": stored_entry["contrast_id"],
+            "contrast_id": stored_cid,
             "replayed_p": recomputed_p,
             "stored_p": stored_p,
             "replayed_p_holm": recomputed_holm_p,

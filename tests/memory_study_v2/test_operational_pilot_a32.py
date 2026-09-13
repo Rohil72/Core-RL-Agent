@@ -72,3 +72,43 @@ def test_pilot_report_exists_and_valid():
     assert "a30_gpu_hardware_acceleration" in unmeas
     assert "cloud_persistent_storage_io" in unmeas
     assert "multi_worker_parallel_retrieval" in unmeas
+
+
+def test_fold_dimensions_manifest_traceability_c6():
+    """Verify C6 requirement: traceable hashed admissible-row manifest across 103 securities."""
+    import hashlib
+
+    manifest_path = Path("rebuild_plan/fold_dimensions_manifest.json")
+    assert manifest_path.exists(), "fold_dimensions_manifest.json must exist"
+
+    with open(manifest_path, "r", encoding="utf-8") as f:
+        manifest = json.load(f)
+
+    assert manifest.get("manifest_version") == "2.0.0"
+    assert manifest.get("security_count") == 103
+
+    files = manifest.get("file_manifest", [])
+    assert len(files) == 103, f"Expected 103 files in manifest, got {len(files)}"
+
+    for entry in files:
+        assert "filename" in entry
+        assert "sha256" in entry and len(entry["sha256"]) == 64
+        assert entry.get("file_size_bytes", 0) > 0
+        assert entry.get("total_rows", 0) > 0
+        assert "annual_admissible_rows" in entry
+
+    fold_dims = manifest.get("fold_dimensions", [])
+    assert len(fold_dims) == 6
+
+    # Verify report references the manifest with matching hash
+    report_path = Path("rebuild_plan/pilot_report.json")
+    assert report_path.exists()
+    with open(report_path, "r", encoding="utf-8") as f:
+        report = json.load(f)
+
+    if "fold_manifest" in report:
+        fm = report["fold_manifest"]
+        assert fm["security_count"] == 103
+        actual_sha = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+        assert fm["manifest_sha256"] == actual_sha
+

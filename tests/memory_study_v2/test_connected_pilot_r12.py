@@ -35,6 +35,16 @@ def test_connected_restricted_pilot_runs_end_to_end(tmp_path):
     for file_info in input_manifest["input_files"]:
         assert len(file_info["sha256"]) == 64
 
+    # Verify chronological integrity assertions (C1)
+    assertions = input_manifest["chronological_integrity_assertions"]
+    assert assertions["training_targets_mature_before_validation"] is True
+    assert assertions["validation_targets_mature_before_evaluation"] is True
+    assert assertions["bank_records_mature_before_evaluation"] is True
+    assert assertions["evaluation_origins_in_fold_2016"] is True
+    assert assertions["scaler_fitted_strictly_on_training"] is True
+    assert input_manifest["scaler_training_cutoff"] == "2015-03-25"
+    assert input_manifest["price_adjustment_mode"] == "ADJUSTED_PRICE_CACHE_PILOT_MODE"
+
     # Verify output manifest (C1)
     output_manifest_path = tmp_path / "pilot_out" / "output_manifest.json"
     assert output_manifest_path.exists()
@@ -44,6 +54,27 @@ def test_connected_restricted_pilot_runs_end_to_end(tmp_path):
     assert output_manifest["policies_evaluated"] == ["MEM_SIM", "MLP_BASE", "TRANS_BASE"]
     assert output_manifest["policies_unrun_status"] == "NOT_RUN"
     assert output_manifest["verification"]["replay_verification_status"] == "REPLAY_VERIFIED"
+
+    # Verify per-policy sealed predictions, trade ledgers, and NAV histories (C1)
+    for pol in ["MEM_SIM", "MLP_BASE", "TRANS_BASE"]:
+        pol_lower = pol.lower()
+        pred_path = tmp_path / "pilot_out" / f"predictions_2016_{pol_lower}.json"
+        assert pred_path.exists(), f"Sealed predictions missing for {pol}"
+        with open(pred_path, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+        queries = payload.get("queries", [])
+        assert len(queries) > 0
+        assert all(p["fold_year"] == 2016 for p in queries), f"All queries for {pol} must be fold 2016"
+        assert all(p["session_origin"] >= "2016-01-01" for p in queries), f"All queries for {pol} must be in 2016"
+
+        trade_path = tmp_path / "pilot_out" / f"trades_{pol}.json"
+        assert trade_path.exists(), f"Trades ledger missing for {pol}"
+
+        nav_path = tmp_path / "pilot_out" / f"daily_nav_{pol}.json"
+        assert nav_path.exists(), f"Daily NAV history missing for {pol}"
+        with open(nav_path, "r", encoding="utf-8") as f:
+            nav_data = json.load(f)
+        assert len(nav_data) > 0
 
 
 def test_connected_pilot_contrasts_distinguish_evaluated_vs_unrun(tmp_path):
@@ -69,4 +100,5 @@ def test_connected_pilot_contrasts_distinguish_evaluated_vs_unrun(tmp_path):
     assert contrasts_by_id["P4"]["status"] == "NOT_RUN"
     assert contrasts_by_id["P7"]["status"] == "NOT_RUN"
     assert contrasts_by_id["P8"]["status"] == "NOT_RUN"
+
 

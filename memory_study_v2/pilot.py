@@ -11,6 +11,7 @@ Acceptance criteria addressed:
 from __future__ import annotations
 
 import glob
+import hashlib
 import json
 import math
 import os
@@ -69,6 +70,31 @@ MEASURED_FOLD_DIMENSIONS: List[Dict[str, int]] = [
     {"year": 2024, "train_samples": 229571, "val_samples": 25707, "dev_samples": 25588, "eval_queries": 25753, "bank_samples": 229571},
     {"year": 2025, "train_samples": 255278, "val_samples": 25588, "dev_samples": 25753, "eval_queries": 25654, "bank_samples": 255278},
 ]
+
+
+def load_measured_fold_dimensions(manifest_path: str = "rebuild_plan/fold_dimensions_manifest.json") -> Tuple[List[Dict[str, int]], Optional[str]]:
+    """Load fold dimensions from hashed manifest if available, else use verified constants (C6)."""
+    p = Path(manifest_path)
+    if p.exists():
+        try:
+            with open(p, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            dims = []
+            for fd in data.get("fold_dimensions", []):
+                dims.append({
+                    "year": fd["evaluation_year"],
+                    "train_samples": fd["train_samples"],
+                    "val_samples": fd["validation_samples"],
+                    "dev_samples": fd["development_samples"],
+                    "eval_queries": fd["evaluation_queries"],
+                    "bank_samples": fd["bank_samples"],
+                })
+            manifest_sha = hashlib.sha256(p.read_bytes()).hexdigest()
+            if dims:
+                return dims, manifest_sha
+        except Exception:
+            pass
+    return MEASURED_FOLD_DIMENSIONS, None
 
 
 def to_native_types(obj: Any) -> Any:
@@ -292,13 +318,14 @@ def run_operational_pilot() -> Dict[str, Any]:
     # 5. Full Workload Dimensions & Cap-Based Budget Projection (R01, B6)
     # -------------------------------------------------------------
     # Evaluate exact training steps, bank queries, and simulation paths across folds
+    fold_dims, manifest_sha = load_measured_fold_dimensions()
     fold_details = []
     total_training_samples = 0
     total_macro_steps_all_fits = 0
     total_eval_queries = 0
     total_retrieval_sec = 0.0
 
-    for f_info in MEASURED_FOLD_DIMENSIONS:
+    for f_info in fold_dims:
         n_train = f_info["train_samples"]
         n_eval = f_info["eval_queries"]
         n_bank = f_info["bank_samples"]
@@ -326,7 +353,7 @@ def run_operational_pilot() -> Dict[str, Any]:
             "macro_steps_per_fit": macro_per_fit,
         })
 
-    avg_train_samples = round(total_training_samples / len(MEASURED_FOLD_DIMENSIONS))
+    avg_train_samples = round(total_training_samples / len(fold_dims))
     avg_macro_per_epoch = round(sum(d["macro_steps_per_epoch"] for d in fold_details) / len(fold_details))
     avg_macro_per_fit = avg_macro_per_epoch * 50
 
@@ -410,6 +437,14 @@ def run_operational_pilot() -> Dict[str, Any]:
         "cloud_persistent_storage_io": "UNMEASURED_LOCALLY - Pending measurement of VM network egress to backup storage",
         "multi_worker_parallel_retrieval": "UNMEASURED_LOCALLY - Multi-core retrieval parallelization pending across 103 securities",
     }
+
+    if manifest_sha:
+        report["fold_manifest"] = {
+            "manifest_file": "rebuild_plan/fold_dimensions_manifest.json",
+            "manifest_sha256": manifest_sha,
+            "security_count": 103,
+            "status": "LOADED_FROM_HASHED_MANIFEST",
+        }
 
     return to_native_types(report)
 

@@ -195,3 +195,182 @@ def test_missing_required_policy_arm_raises_error():
     }
     with pytest.raises(ValueError, match="Required policy arms missing from returns data"):
         evaluate_primary_contrasts(returns_map, markets, allow_reduced_arms=False)
+
+
+def test_calendar_week_identity_no_collision():
+    """Verify 2 Jan 2024 and 30 Dec 2024 do NOT collide into the same week key (C2)."""
+    from memory_study_v2.inference import build_calendar_weeks_mapping
+    dates = ["2024-01-02", "2024-12-30"]
+    g_weeks, years, unique_yw = build_calendar_weeks_mapping(dates, 2)
+    assert len(unique_yw) == 2, f"Expected 2 unique weeks, got {unique_yw}"
+    assert g_weeks[0] != g_weeks[1]
+    assert unique_yw[0] != unique_yw[1]
+
+
+def test_year_boundary_strata_separation():
+    """Verify year boundary sessions remain strictly separated by calendar-year strata (C2)."""
+    from memory_study_v2.inference import build_calendar_weeks_mapping
+    dates = ["2024-12-30", "2024-12-31", "2025-01-02", "2025-01-03"]
+    g_weeks, years, unique_yw = build_calendar_weeks_mapping(dates, 4)
+    assert years == [2024, 2024, 2025, 2025]
+    # Unique year-week tuples must preserve calendar year strata
+    y_2024 = [yw for yw in unique_yw if yw[0] == 2024]
+    y_2025 = [yw for yw in unique_yw if yw[0] == 2025]
+    assert len(y_2024) >= 1
+    assert len(y_2025) >= 1
+    assert all(yw[0] == 2024 for yw in y_2024)
+    assert all(yw[0] == 2025 for yw in y_2025)
+
+
+def test_malformed_session_dates_rejected():
+    """Verify malformed session dates are strictly rejected without fallback (C2)."""
+    from memory_study_v2.inference import build_calendar_weeks_mapping
+    bad_dates = ["2024-01-02", "2024/01/03"]
+    with pytest.raises(ValueError, match="Malformed production session date"):
+        build_calendar_weeks_mapping(bad_dates, 2)
+
+
+def test_holiday_observed_by_only_one_market_sufficient_stats_oracle():
+    """Verify per-series holiday mask produces exact numerical identity with direct daily calculations (C2)."""
+    from memory_study_v2.inference import build_calendar_weeks_mapping, compute_weekly_sufficient_statistics
+    # 10 trading sessions
+    dates = [
+        "2024-01-02", "2024-01-03", "2024-01-04", "2024-01-05", "2024-01-08",
+        "2024-01-09", "2024-01-10", "2024-01-11", "2024-01-12", "2024-01-15",
+    ]
+    g_weeks, years, unique_yw = build_calendar_weeks_mapping(dates, 10)
+
+    # Market 0 has complete 10 days; Market 1 has a holiday on day 2 and day 7 (NaN)
+    r0 = np.array([0.01, 0.02, -0.01, 0.005, 0.015, 0.01, -0.005, 0.02, -0.01, 0.005], dtype=np.float64)
+    r1 = np.array([0.005, 0.01, np.nan, 0.015, -0.005, 0.02, -0.01, np.nan, 0.015, -0.005], dtype=np.float64)
+    ret_matrix = np.stack([r0, r1], axis=0)
+
+    w_counts, w_sums, w_sumsq = compute_weekly_sufficient_statistics(ret_matrix, g_weeks, len(unique_yw))
+
+    # Test draw selecting both weeks
+    draw_counts = np.sum(w_counts, axis=0)
+    draw_sums = np.sum(w_sums, axis=0)
+    draw_sumsq = np.sum(w_sumsq, axis=0)
+
+    # Direct daily calculation excluding NaNs
+    valid_r1 = r1[np.isfinite(r1)]
+    direct_sr1 = compute_sharpe_ratio(valid_r1)
+
+    # From weekly sufficient stats
+    N1 = draw_counts[1]
+    S1 = draw_sums[1]
+    S2 = draw_sumsq[1]
+    mean1 = S1 / N1
+    var1 = (S2 / N1) - (mean1 ** 2)
+    stat_sr1 = (mean1 * 252.0) / (np.sqrt(var1) * np.sqrt(252.0))
+
+    assert N1 == 8.0, f"Expected 8 valid sessions for Market 1, got {N1}"
+    assert abs(direct_sr1 - stat_sr1) < 1e-12, "Sufficient stats Sharpe must match direct daily calculation (<1e-12)"
+
+
+def test_missing_required_market_path_rejected():
+    """Verify evaluator strictly rejects missing required market paths when allow_reduced_arms=False (C2)."""
+    markets = ["US", "IN"]
+    arms = [
+        "MEM_SIM", "KNN_PLAIN", "MEM_RANDOM", "HIST_PRIOR", "RIDGE_ANNUAL",
+        "MLP_BASE", "TRANS_BASE", "MLP_MIX_SR", "TRANS_MIX_SR", "MLP_GATE", "TRANS_GATE"
+    ]
+    returns_map = {}
+    for arm in arms:
+        for mkt in markets:
+            # Deliberately omit market IN for MLP_BASE
+            if arm == "MLP_BASE" and mkt == "IN":
+                continue
+            returns_map[(arm, mkt, None)] = np.array([0.01] * 10)
+
+    with pytest.raises(ValueError, match="Required market path missing for arm 'MLP_BASE'"):
+        evaluate_primary_contrasts(returns_map, markets, allow_reduced_arms=False)
+
+
+def test_replay_detects_renamed_contrast_id(tmp_path):
+    """Verify replay rejects tampered/renamed contrast IDs (C2)."""
+    rng = np.random.default_rng(42)
+    returns_map = {}
+    arms = [
+        "MEM_SIM", "KNN_PLAIN", "MEM_RANDOM", "HIST_PRIOR", "RIDGE_ANNUAL",
+        "MLP_BASE", "TRANS_BASE", "MLP_MIX_SR", "TRANS_MIX_SR", "MLP_GATE", "TRANS_GATE"
+    ]
+    markets = ["US", "IN", "CN", "FR", "GB", "BR"]
+    for arm in arms:
+        for mkt in markets:
+            returns_map[(arm, mkt, None)] = rng.normal(0.0004, 0.01, 252)
+
+    contrast_results, draw_matrix, draw_weeks = evaluate_primary_contrasts(returns_map, markets, num_draws=50)
+    bundle_dir = export_analysis_bundle(
+        {f"{k[0]}__{k[1]}__{k[2]}": list(v) for k, v in returns_map.items()},
+        contrast_results, draw_matrix, draw_weeks, tmp_path / "bundle_rename", markets=markets, num_draws=50
+    )
+
+    contrasts_file = bundle_dir / "primary_contrasts.json"
+    with open(contrasts_file, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    data[0]["contrast_id"] = "P_RENAMED"
+    with open(contrasts_file, "w", encoding="utf-8") as f:
+        json.dump(data, f)
+
+    with pytest.raises(ReplayVerificationError, match="Contrast ID mismatch"):
+        replay_analysis_bundle(bundle_dir)
+
+
+def test_replay_detects_truncated_summary_list(tmp_path):
+    """Verify replay rejects truncated summary lists (C2)."""
+    rng = np.random.default_rng(42)
+    returns_map = {}
+    arms = [
+        "MEM_SIM", "KNN_PLAIN", "MEM_RANDOM", "HIST_PRIOR", "RIDGE_ANNUAL",
+        "MLP_BASE", "TRANS_BASE", "MLP_MIX_SR", "TRANS_MIX_SR", "MLP_GATE", "TRANS_GATE"
+    ]
+    markets = ["US", "IN", "CN", "FR", "GB", "BR"]
+    for arm in arms:
+        for mkt in markets:
+            returns_map[(arm, mkt, None)] = rng.normal(0.0004, 0.01, 252)
+
+    contrast_results, draw_matrix, draw_weeks = evaluate_primary_contrasts(returns_map, markets, num_draws=50)
+    bundle_dir = export_analysis_bundle(
+        {f"{k[0]}__{k[1]}__{k[2]}": list(v) for k, v in returns_map.items()},
+        contrast_results, draw_matrix, draw_weeks, tmp_path / "bundle_trunc", markets=markets, num_draws=50
+    )
+
+    contrasts_file = bundle_dir / "primary_contrasts.json"
+    with open(contrasts_file, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    data.pop()  # Drop last contrast
+    with open(contrasts_file, "w", encoding="utf-8") as f:
+        json.dump(data, f)
+
+    with pytest.raises(ReplayVerificationError, match="Stored contrast count"):
+        replay_analysis_bundle(bundle_dir)
+
+
+def test_replay_detects_nan_corrupted_stored_draws(tmp_path):
+    """Verify replay rejects NaN-corrupted stored draws (C2)."""
+    rng = np.random.default_rng(42)
+    returns_map = {}
+    arms = [
+        "MEM_SIM", "KNN_PLAIN", "MEM_RANDOM", "HIST_PRIOR", "RIDGE_ANNUAL",
+        "MLP_BASE", "TRANS_BASE", "MLP_MIX_SR", "TRANS_MIX_SR", "MLP_GATE", "TRANS_GATE"
+    ]
+    markets = ["US", "IN", "CN", "FR", "GB", "BR"]
+    for arm in arms:
+        for mkt in markets:
+            returns_map[(arm, mkt, None)] = rng.normal(0.0004, 0.01, 252)
+
+    contrast_results, draw_matrix, draw_weeks = evaluate_primary_contrasts(returns_map, markets, num_draws=50)
+    bundle_dir = export_analysis_bundle(
+        {f"{k[0]}__{k[1]}__{k[2]}": list(v) for k, v in returns_map.items()},
+        contrast_results, draw_matrix, draw_weeks, tmp_path / "bundle_nan", markets=markets, num_draws=50
+    )
+
+    draws_file = bundle_dir / "contrast_draws.npy"
+    draws = np.load(draws_file)
+    draws[0, 5] = np.nan
+    np.save(draws_file, draws)
+
+    with pytest.raises(ReplayVerificationError, match="contains non-finite"):
+        replay_analysis_bundle(bundle_dir)
+

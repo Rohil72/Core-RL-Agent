@@ -23,50 +23,47 @@ Production Status: `production_authorized: false` strictly enforced in `rebuild_
 
 ## 2. Technical Remediation Narrative (C1–C6)
 
-### C1: Connected Pilot on Real Candidate Slice without Imputation or Substitute Returns
-- **Data Provenance**: Sourced real market parquet files from preserved pre-2020 cache (`US_AAPL.parquet`, `US_MSFT.parquet`, 1,259 canonical sessions spanning 2013-01-02 to 2017-12-29).
-- **Organic Invariants**:
-  - Feature warmup: 252 bars required and satisfied before feature extraction begins.
-  - Representation window: 252 bars required, slicing strictly $t-252$ to $t-1$ (origin $t$ excluded).
-  - Target horizon: 63 sessions forward, organically observed from real prices.
-  - Memory bank maturity: 126 sessions forward maturity strictly satisfied for all bank records before evaluation begins ($t_{\text{orig}} + 126 \le T_{\text{eval}}$).
-  - Imputation policy: **Zero label imputation** (0 imputed, 0 fallback to 0.01).
-- **Multi-Policy Evaluation**:
+### C1: Chronological Partitions, Venue Matching, and Multi-Policy Artifacts
+- **Venue Matching via Schedule Intersection**:
+  - Aligned raw candidate bars (`US_AAPL.parquet`, `US_MSFT.parquet`) using verified venue calendar intersection (`venue_sessions`), strictly eliminating arbitrary row truncation.
+  - Sourced explicit `CorporateAction` adapter and documented `price_adjustment_mode = "ADJUSTED_PRICE_CACHE_PILOT_MODE"`.
+- **Strict Chronological Partitions (Zero Overlap, Purged Forward Labels)**:
+  - **Train**: Indices $[503, 560]$ (2014-12-31 to 2015-03-25). Forward target horizon ($t+63$) matures by 2015-06-24. Memory bank records ($t+126$) mature by 2015-09-23.
+  - **Validation**: Indices $[630, 680]$ (2015-07-06 to 2015-09-15). Strictly purged after all training targets mature. Validation targets mature by 2015-12-14.
+  - **Evaluation**: Indices $[756, 805]$ (2016-01-04 to 2016-03-15). All queries in calendar year 2016 (fold 2016). All bank records mature before eval start.
+  - **Zero Label Imputation**: Organically calculated forward 63-session cumulative returns across all partitions (0 imputed, 0 fallback to 0.01).
+  - **Feature Scaling**: Feature scaler fitted strictly on training partition (`training_cutoff = "2015-03-25"`) before transforming validation and evaluation sets.
+- **Multi-Policy Artifact Generation**:
   - `MEM_SIM`: Retrieval-based policy using cosine similarity over mature bank records.
   - `MLP_BASE`: Trained MLP neural network predicting forward return scores.
   - `TRANS_BASE`: Trained Transformer neural network predicting forward return scores.
-  - Each policy drives its own `PortfolioAccount` execution simulation with ranking, open fills, and stops, yielding authentic distinct daily NAV returns.
-- **Un-Run Comparison Arms**:
-  - Arms not executed in this restricted pilot (`KNN_PLAIN`, `MEM_RANDOM`, `HIST_PRIOR`, `RIDGE_ANNUAL`, `MLP_MIX_SR`, `TRANS_MIX_SR`, `MLP_GATE`, `TRANS_GATE`) are evaluated under `allow_reduced_arms=True`.
-  - Contrasts are recorded with `status = "NOT_RUN"`, `theta = 0.0`, `ci_lower = 0.0`, `ci_upper = 0.0`, `p_value = 1.0`, **with zero substitute random noise**.
-- **Manifests & Cryptographic Traceability**:
-  - `input_manifest.json`: Records SHA-256 digests, row counts, security IDs, session bounds, and verification that imputed target count is 0.
-  - `output_manifest.json`: Records SHA-256 digests of all generated artifacts, model checkpoints, predictions, release analysis files, and replay status.
-- **Verification**: `python -m memory_study_v2.connected_pilot` runs end-to-end; verified by `tests/memory_study_v2/test_connected_pilot_r12.py`.
+  - Exported sealed predictions, trade ledgers, and daily NAV histories for ALL 3 policies (`predictions_2016_{mem_sim,mlp_base,trans_base}.json`, `trades_{MEM_SIM,MLP_BASE,TRANS_BASE}.json`, `daily_nav_{MEM_SIM,MLP_BASE,TRANS_BASE}.json`).
+  - Regenerated `input_manifest.json` and `output_manifest.json` with SHA-256 digests and 1e-10 release replay verification.
+- **Verification**: `tests/memory_study_v2/test_connected_pilot_r12.py` (2/2 passed).
 
-### C2: Calendar-Week Block Bootstrap with Weekly Sufficient Statistics & Oracle
-- **Mathematical Identity (Weekly Sufficient Statistics)**:
-  - For $T$ daily returns partitioned into calendar weeks $w \in \{1, \dots, W\}$, each week has sample count $N_w$, sum of returns $S_{1, w} = \sum_{t \in w} R_t$, and sum of squared returns $S_{2, w} = \sum_{t \in w} R_t^2$.
-  - For any bootstrap draw of weeks, the total sample mean and variance are mathematically identical to concatenating daily returns:
-    $$\sum_{t \in \text{sample}} R_t = \sum_w c_w S_{1, w}, \quad \sum_{t \in \text{sample}} R_t^2 = \sum_w c_w S_{2, w}$$
-  - Evaluated via matrix multiplication $F @ S_1$ and $F @ S_2$ where $F \in \mathbb{R}^{B \times W}$ is the week frequency matrix.
-  - **Memory Reduction**: Replaces 24.67 GiB tensor blowup with a ~1.5 MB frequency array ($>1,000\times$ memory reduction), executing 10,000 draws in $<0.05$ seconds with identical numerical precision ($<10^{-15}$ discrepancy).
-- **Calendar-Week Non-Wrapping Partitioning**:
-  - Slices trading days into non-wrapping calendar-week blocks stratified by year (`sample_calendar_week_blocks`).
-- **Independent Small Numerical Oracle**:
-  - Verified on 10 sessions across 2 markets and 11 arms against exact analytical expectations in `test_numerical_oracle_with_fixed_blocks`.
-- **Corruption Tests**:
-  - Verified that deliberate corruption of a single float in `contrast_draws.npy` or `daily_returns.json` immediately raises `ReplayVerificationError`.
-- **Deterministic Replay**:
-  - Persists `sampled_weeks.npy` and `bootstrap_spec.json`. Independent replay recomputes contrast estimates and draws, verifying agreement at $10^{-10}$ tolerance.
+### C2: Calendar Identity, Native Holiday Masks, and Fail-Closed Replay Validation
+- **Monday Anchor Week Identity**:
+  - Week identity computed via Monday anchor date `(dt.year, (dt - timedelta(days=dt.weekday())).strftime("%Y-%m-%d"))`, eliminating the ISO week collision where `2024-01-02` and `2024-12-30` both mapped to `(2024, 0)`.
+  - Malformed or invalid dates strictly raise `ValueError` (no fallback to row bins).
+- **Per-Series Holiday Mask**:
+  - `compute_weekly_sufficient_statistics` applies per-series holiday mask, ensuring unobserved sessions do not accumulate count or sums.
+  - Mathematically matches direct array indexing oracle across holidays and year boundaries ($< 10^{-12}$).
+- **Missing Required Market Paths**:
+  - `evaluate_primary_contrasts` strictly rejects missing required market paths when `allow_reduced_arms=False` (no silent skipping).
+- **Fail-Closed Replay Checks**:
+  - `replay_analysis_bundle` verifies contrast counts, draw matrix shapes, finite checks on all matrices/scalars, contrast IDs, arm names, statuses, and tolerances.
+  - Added corruption tests in `test_inference_replay_r10.py` for renamed contrast IDs, truncated summary lists, and NaN-corrupted stored draws (13/13 passed).
+- **Resource Scope**: Scoped float64 frequency matrix allocation ($25,040,000$ bytes for 313 weeks and 10,000 draws) distinct from measured RSS.
 
-### C3: Configuration-to-Optimizer Binding
-- **Strict Binding**:
-  - Created `load_neural_config` in `train.py` binding `weight_decay = 0.0001` (matching `config.proposed.json:177`), `lr = 0.001`, `betas = (0.9, 0.999)`, `eps = 1e-8`.
-  - Added strict assertion in `train_backbone_model` verifying optimizer parameter groups conform exactly to configuration.
-- **Fail-Closed File Existence**:
-  - Added explicit `FileNotFoundError` check when requested `resume_from_checkpoint` path does not exist on disk.
-- **Regression Tests**: Verified by `tests/memory_study_v2/test_training_runner_r02.py`.
+### C3: Fail-Closed Production Configuration Enforcement
+- **Strict Production Mode**:
+  - When `execution_mode = "production"`, `train_backbone_model` enforces fail-closed checks:
+    - Missing config raises `FileNotFoundError`.
+    - `production_authorized: false` strictly raises `PermissionError`.
+    - Unapproved hyperparameter overrides raise `ValueError`.
+  - Bound `weight_decay = 0.0001` matching `config.proposed.json:177`.
+  - Restored optimizer parameter groups validated against configured hyperparameters on resume.
+- **Verification**: `tests/memory_study_v2/test_resume_parity_a16.py` and `tests/memory_study_v2/test_training_runner_r02.py`.
 
 ### C4: Terminal Liquidation Lifecycle and NAV Reconciliation
 - **Call-Order Invariant**:
@@ -78,30 +75,45 @@ Production Status: `production_authorized: false` strictly enforced in `rebuild_
   - Guarantees zero duplicate session timestamps in ledger history.
 - **Regression Tests**: Verified by 7 tests in `tests/memory_study_v2/test_execution_correctness_r05.py`.
 
-### C5: Full-State Interruption, Mid-Epoch Recovery, and Process Boundary Resume Parity
-- **Mid-Epoch Shuffling Parity**:
-  - Stored `epoch_permutation` in `TrainingState`. When resuming mid-epoch (`initial_cursor > 0`), the runner reuses the exact saved permutation, guaranteeing identical downstream RNG and microbatch data delivery.
-- **Macro-Boundary Interruption**:
-  - Added `interrupt_at_macro_step` parameter to `train_backbone_model`.
-- **Four-Way Parity Suite (`test_resume_parity_a16.py`)**:
+### C5: Final-Macro Interruption Regression and Process Boundary Resume Parity
+- **Final-Macro Update Boundary**:
+  - In `train_backbone_model`, when `interrupt_at_macro_step` occurs at `macro_end >= N_train`, the epoch is finished: validation pass and checkpoint selector run before saving checkpoint with `sampler_cursor = 0`, ensuring zero skipped validation passes upon resume.
+- **Comprehensive Parity Suite (`test_resume_parity_a16.py`, 6/6 passed)**:
   1. `test_transformer_resume_parity_on_disk`: Parameter and optimizer tensor equality (`exp_avg`, `exp_avg_sq`, `step`).
   2. `test_mlp_resume_parity_on_disk`: Parameter and optimizer tensor equality.
-  3. `test_resume_parity_mid_epoch_macro_boundary`: Interrupted mid-epoch at macro step 5, resumed, verified bitwise equality with uninterrupted run.
-  4. `test_resume_parity_fresh_process`: Interrupted at epoch 2, resumed in a completely fresh OS Python subprocess (`subprocess.run`), verified bitwise parameter and optimizer tensor equality.
+  3. `test_resume_parity_mid_epoch_macro_boundary`: First-macro interruption parity.
+  4. `test_resume_parity_final_macro_boundary`: Final-macro interruption parity with full validation loss history and best epoch parity.
+  5. `test_resume_parity_fresh_process`: Process boundary parity via OS Python subprocess (`subprocess.run`).
+  6. `test_production_config_fail_closed`: Production authorization and override rejection.
 
-### C6: Workload Projection & Honest Budget
-- **Profiling with Corrected Inference**:
-  - Integrated bounded-memory weekly sufficient statistics inference in `pilot.py` (1,000 draws in 0.0006s; projected 10,000 draws in $<0.01$ hours).
-  - Bound AdamW `weight_decay` to `0.0001` matching configuration.
-- **Traceable Fold Dimensions**:
-  - Based on 103 canonical parquet files (1,145,586 total samples across 6 walk-forward folds, average 190,931 samples/fold).
-- **Explicit Demarcation of Unmeasured Phases**:
+### C6: Hashed Admissible-Row Manifest & Reconciled Profiler Receipts
+- **Hashed Admissible-Row Manifest**:
+  - Sourced `scripts/generate_fold_manifest.py` computing SHA-256 digests and annual admissible row counts across all 103 canonical market securities to produce `rebuild_plan/fold_dimensions_manifest.json`.
+  - Exactly captures the 1,145,586 total timeline samples across the 6 walk-forward folds (2020..2025):
+    - Year 2020: train=126,667, val=25,646, dev=25,639, eval=25,853
+    - Year 2021: train=152,313, val=25,639, dev=25,853, eval=25,766
+    - Year 2022: train=177,952, val=25,853, dev=25,766, eval=25,707
+    - Year 2023: train=203,805, val=25,766, dev=25,707, eval=25,588
+    - Year 2024: train=229,571, val=25,707, dev=25,588, eval=25,753
+    - Year 2025: train=255,278, val=25,588, dev=25,753, eval=25,654
+  - `pilot.py` dynamically loads and verifies `rebuild_plan/fold_dimensions_manifest.json` with SHA-256 tracking.
+- **Reconciled Profiler Timing Receipt**:
+  - Receipts report exact measured local benchmarks on NVIDIA GeForce RTX 2050:
+    - `bootstrap_contrasts_1000_draws_seconds`: 0.0751s - 0.0822s
+    - `mlp_effective_batch_512_macro_step_ms`: 9.70ms
+    - `transformer_effective_batch_512_macro_step_ms`: 43.77ms
+    - `validation_pass_seconds`: 0.637s
+    - `projected_training_hours`: ~5.3h
+    - `projected_retrieval_hours`: ~117.2h
+    - `total_budget_needed_hours`: ~188.5h
+  - Truthfully reports `acceptance_condition_met: false` locally, keeping `production_authorized: false` strictly locked.
+- **Demarcation of Unmeasured Phases**:
   - Declared `unmeasured_phases` section in `pilot_report.json`:
     - `a30_gpu_hardware_acceleration`: UNMEASURED_LOCALLY (pending physical execution on dedicated A30 VM).
     - `cloud_persistent_storage_io`: UNMEASURED_LOCALLY (pending measurement of VM network egress to backup storage).
     - `multi_worker_parallel_retrieval`: UNMEASURED_LOCALLY (multi-core scale-out pending on 103 securities).
     - `hardware_preflight_status`: `"PENDING_A30_VM_EXECUTION"`.
-  - Truthfully reports `acceptance_condition_met: false` on local profiling hardware (178.35 hours projected on local single-threaded CPU retrieval), enforcing the production block.
+- **Verification**: `tests/memory_study_v2/test_operational_pilot_a32.py` (2/2 passed).
 
 ---
 
@@ -109,10 +121,11 @@ Production Status: `production_authorized: false` strictly enforced in `rebuild_
 
 | Suite | Tests | Result | Execution Time |
 |---|:---:|:---:|:---:|
-| `tests/memory_study_v2/` | 107 | **107 / 107 PASSED** | 13.03s |
-| Complete Repository (`tests/`) | 397 | **397 / 397 PASSED** | 147.23s |
+| `tests/memory_study_v2/` | 118 | **118 / 118 PASSED** | 14.59s |
+| Complete Repository (`tests/`) | 408 | **408 / 408 PASSED** | ~160s |
 | Connected Pilot CLI (`python -m memory_study_v2.connected_pilot`) | End-to-End | **SUCCESS** | 6.5s |
-| Operational Pilot CLI (`python -m memory_study_v2.pilot`) | End-to-End | **SUCCESS** | 10.5s |
+| Operational Pilot CLI (`python -m memory_study_v2.pilot`) | End-to-End | **SUCCESS** | 8.8s |
+| Manifest Generator CLI (`python scripts/generate_fold_manifest.py`) | 103 Securities | **SUCCESS** | 1.8s |
 
 **Production Guard Verification**:
 - `rebuild_plan/config.proposed.json`: `"production_authorized": false` strictly maintained.
