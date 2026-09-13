@@ -403,10 +403,10 @@ class PortfolioAccount:
             del self.positions[sec_id]
 
         final_nav = self.cash
+        total_turnover = sum(t.gross_notional for t in self.trades if t.session == session)
         if self.daily_history and self.daily_history[-1].session == session:
             prev_eq = self.daily_history[-2].total_nav if len(self.daily_history) > 1 else self.initial_capital
             terminal_ret = (final_nav / prev_eq) - 1.0 if prev_eq > 0.0 else 0.0
-            total_turnover = sum(t.gross_notional for t in self.trades if t.session == session)
             self.daily_history[-1] = DailyLedgerState(
                 session=session,
                 cash=final_nav,
@@ -416,5 +416,18 @@ class PortfolioAccount:
                 turnover_notional=total_turnover,
                 num_positions=0,
             )
+            self.prev_equity = final_nav
+        else:
+            prev_eq = self.daily_history[-1].total_nav if self.daily_history else self.initial_capital
+            terminal_ret = (final_nav / prev_eq) - 1.0 if prev_eq > 0.0 else 0.0
+            self.daily_history.append(DailyLedgerState(
+                session=session,
+                cash=final_nav,
+                holdings_value=0.0,
+                total_nav=final_nav,
+                daily_return=terminal_ret,
+                turnover_notional=total_turnover,
+                num_positions=0,
+            ))
             self.prev_equity = final_nav
         return final_nav

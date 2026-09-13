@@ -11,6 +11,7 @@ Acceptance criteria addressed:
 from __future__ import annotations
 
 import copy
+import json
 import os
 import random
 from dataclasses import asdict, dataclass, field
@@ -119,6 +120,7 @@ class TrainingState:
     generator_state: Optional[Dict[str, Any]] = None
     epoch_val_losses: List[float] = field(default_factory=list)
     sampler_cursor: int = 0
+    epoch_permutation: Optional[List[int]] = None
 
 
 def capture_training_state(
@@ -131,6 +133,7 @@ def capture_training_state(
     sampler_cursor: int = 0,
     generator: Optional[np.random.Generator] = None,
     epoch_val_losses: Optional[List[float]] = None,
+    epoch_permutation: Optional[List[int]] = None,
 ) -> TrainingState:
     """Capture complete state including CUDA, Python, NumPy RNGs, Generator, and cursor (R06)."""
     cuda_state = None
@@ -155,6 +158,7 @@ def capture_training_state(
         generator_state=gen_state,
         epoch_val_losses=list(epoch_val_losses) if epoch_val_losses is not None else [],
         sampler_cursor=sampler_cursor,
+        epoch_permutation=list(epoch_permutation) if epoch_permutation is not None else None,
     )
 
 
@@ -181,6 +185,8 @@ def restore_training_state(
     if state.generator_state is not None and generator is not None:
         generator.bit_generator.state = state.generator_state
 
+    if getattr(state, "sampler_cursor", 0) > 0:
+        return state.epoch
     return state.epoch + 1
 
 
@@ -217,6 +223,30 @@ class TrainingSummary:
     early_stopped: bool
 
 
+def load_neural_config(config_path: Optional[Union[str, Path]] = None) -> Dict[str, Any]:
+    """Load and validate neural training configuration from config.proposed.json (C3)."""
+    if config_path is None:
+        p = Path("rebuild_plan/config.proposed.json")
+    else:
+        p = Path(config_path)
+    if not p.exists():
+        return {
+            "learning_rate": 0.001,
+            "weight_decay": 0.0001,
+            "betas": [0.9, 0.999],
+            "epsilon": 1e-08,
+            "effective_batch": 512,
+            "max_epochs": 50,
+            "min_epochs": 5,
+            "early_stop_patience": 5,
+            "minimum_improvement": 1e-06,
+            "gradient_norm_clip": 1.0,
+        }
+    with open(p, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    return data.get("neural", {})
+
+
 def train_backbone_model(
     model: nn.Module,
     train_x: torch.Tensor,
@@ -226,18 +256,22 @@ def train_backbone_model(
     val_y: torch.Tensor,
     val_markets: np.ndarray,
     seed: int = 7,
-    lr: float = 1e-3,
-    weight_decay: float = 0.01,
-    grad_clip_norm: float = 1.0,
+    lr: Optional[float] = None,
+    weight_decay: Optional[float] = None,
+    grad_clip_norm: Optional[float] = None,
+    betas: Optional[Tuple[float, float]] = None,
+    eps: Optional[float] = None,
     micro_batch_size: int = 64,
-    effective_batch_size: int = 512,
-    min_epochs: int = 5,
-    max_epochs: int = 50,
-    patience: int = 5,
+    effective_batch_size: Optional[int] = None,
+    min_epochs: Optional[int] = None,
+    max_epochs: Optional[int] = None,
+    patience: Optional[int] = None,
     device: Optional[torch.device] = None,
     checkpoint_dir: Optional[Union[str, Path]] = None,
     interrupt_at_epoch: Optional[int] = None,
+    interrupt_at_macro_step: Optional[int] = None,
     resume_from_checkpoint: Optional[Union[str, Path]] = None,
+    config_path: Optional[Union[str, Path]] = None,
 ) -> Tuple[nn.Module, TrainingSummary]:
     """Complete integrated dataset-to-epoch training runner (R02).
 
@@ -250,11 +284,39 @@ def train_backbone_model(
     - AdamW with explicit weight decay (0.01) and gradient clipping (1.0).
     - Streamed validation batches to bound peak memory.
     """
+    # 1. Bind configuration from config.proposed.json (C3)
+    n_cfg = load_neural_config(config_path)
+    if lr is None:
+        lr = float(n_cfg.get("learning_rate", 0.001))
+    if weight_decay is None:
+        weight_decay = float(n_cfg.get("weight_decay", 0.0001))
+    if grad_clip_norm is None:
+        grad_clip_norm = float(n_cfg.get("gradient_norm_clip", 1.0))
+    if betas is None:
+        betas = tuple(n_cfg.get("betas", [0.9, 0.999]))
+    if eps is None:
+        eps = float(n_cfg.get("epsilon", 1e-08))
+    if effective_batch_size is None:
+        effective_batch_size = int(n_cfg.get("effective_batch", 512))
+    if min_epochs is None:
+        min_epochs = int(n_cfg.get("min_epochs", 5))
+    if max_epochs is None:
+        max_epochs = int(n_cfg.get("max_epochs", 50))
+    if patience is None:
+        patience = int(n_cfg.get("early_stop_patience", 5))
+
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     model.to(device)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, betas=betas, eps=eps, weight_decay=weight_decay)
+    # Assert optimizer parameter groups strictly match approved configuration (C3)
+    for pg in optimizer.param_groups:
+        assert pg["lr"] == lr, f"Optimizer lr mismatch: {pg['lr']} vs {lr}"
+        assert pg["weight_decay"] == weight_decay, f"Optimizer weight_decay mismatch: {pg['weight_decay']} vs {weight_decay}"
+        assert pg["betas"] == betas, f"Optimizer betas mismatch: {pg['betas']} vs {betas}"
+        assert pg["eps"] == eps, f"Optimizer eps mismatch: {pg['eps']} vs {eps}"
+
     selector = EarlyStoppingSelector(min_epochs=min_epochs, max_epochs=max_epochs, patience=patience)
 
     N_train = len(train_y)
@@ -272,16 +334,22 @@ def train_backbone_model(
     rng = np.random.default_rng(seed)
 
     start_epoch = 1
+    initial_cursor = 0
+    resumed_permutation = None
     if resume_from_checkpoint is not None:
         chk_file = Path(resume_from_checkpoint)
         if not chk_file.is_file() and chk_file.is_dir():
             chk_file = chk_file / "last_checkpoint.pt"
-        if chk_file.exists():
-            state = torch.load(chk_file, weights_only=False)
-            start_epoch = restore_training_state(state, model, optimizer, selector, generator=rng)
-            macro_step = state.macro_step
-            micro_step = state.micro_step
-            epoch_val_losses = list(getattr(state, "epoch_val_losses", []))
+        if not chk_file.exists():
+            raise FileNotFoundError(f"Requested resume checkpoint does not exist: {chk_file}")
+        state = torch.load(chk_file, weights_only=False)
+        start_epoch = restore_training_state(state, model, optimizer, selector, generator=rng)
+        macro_step = state.macro_step
+        micro_step = state.micro_step
+        initial_cursor = getattr(state, "sampler_cursor", 0)
+        if initial_cursor > 0 and getattr(state, "epoch_permutation", None) is not None:
+            resumed_permutation = np.array(state.epoch_permutation, dtype=int)
+        epoch_val_losses = list(getattr(state, "epoch_val_losses", []))
     else:
         torch.manual_seed(seed)
         if torch.cuda.is_available():
@@ -293,10 +361,18 @@ def train_backbone_model(
 
     for epoch in range(start_epoch, max_epochs + 1):
         model.train()
-        indices = rng.permutation(N_train)
+        if epoch == start_epoch and resumed_permutation is not None:
+            indices = resumed_permutation
+            resumed_permutation = None
+        else:
+            indices = rng.permutation(N_train)
 
-        # Macro-batch accumulation loop
-        for macro_start in range(0, N_train, effective_batch_size):
+        # Macro-batch accumulation loop (supporting mid-epoch resume cursor)
+        macro_start_offset = initial_cursor if (epoch == start_epoch and initial_cursor > 0) else 0
+        initial_cursor = 0  # reset after first resumed epoch
+        interrupted_mid_epoch = False
+
+        for macro_start in range(macro_start_offset, N_train, effective_batch_size):
             macro_end = min(macro_start + effective_batch_size, N_train)
             macro_len = macro_end - macro_start
             if macro_len <= 0:
@@ -328,6 +404,38 @@ def train_backbone_model(
             optimizer.step()
             optimizer.zero_grad()
             macro_step += 1
+
+            # Safe macro-boundary mid-epoch interruption (C5)
+            if interrupt_at_macro_step is not None and macro_step == interrupt_at_macro_step:
+                if checkpoint_dir is not None:
+                    interrupted_state = capture_training_state(
+                        model=model,
+                        optimizer=optimizer,
+                        selector=selector,
+                        epoch=epoch,
+                        macro_step=macro_step,
+                        micro_step=micro_step,
+                        sampler_cursor=macro_end if macro_end < N_train else 0,
+                        generator=rng,
+                        epoch_val_losses=epoch_val_losses,
+                        epoch_permutation=list(indices),
+                    )
+                    torch.save(interrupted_state, Path(checkpoint_dir) / "last_checkpoint.pt")
+                interrupted_mid_epoch = True
+                break
+
+        if interrupted_mid_epoch:
+            return model, TrainingSummary(
+                model_type=model.__class__.__name__,
+                seed=seed,
+                best_epoch=selector.best_epoch or 0,
+                best_loss=selector.best_loss if selector.best_loss is not None else float("inf"),
+                epochs_trained=epoch,
+                total_macro_steps=macro_step,
+                samples_per_market=samples_per_market,
+                epoch_val_losses=epoch_val_losses,
+                early_stopped=False,
+            )
 
         # Validation streamed in micro-batches
         model.eval()

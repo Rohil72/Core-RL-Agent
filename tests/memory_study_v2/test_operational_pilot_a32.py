@@ -65,3 +65,10 @@ def test_pilot_report_exists_and_valid():
     expected_condition = (total_budget <= vm_allocation)
     assert proj.get("acceptance_condition_met") == expected_condition
     assert proj.get("hardware_preflight_status") == "PENDING_A30_VM_EXECUTION"
+
+    # Unmeasured phases verification (C6)
+    unmeas = rep.get("unmeasured_phases", {})
+    assert unmeas.get("hardware_preflight_status") == "PENDING_A30_VM_EXECUTION"
+    assert "a30_gpu_hardware_acceleration" in unmeas
+    assert "cloud_persistent_storage_io" in unmeas
+    assert "multi_worker_parallel_retrieval" in unmeas

@@ -85,3 +85,64 @@ def test_conflicting_dividend_alias_raises_error():
 
     with pytest.raises(ValueError, match="Conflicting/deprecated field 'dividend_cash'"):
         account.handle_corporate_actions_before_open("2020-01-05", {"SEC_A": DeprecatedAction()})
+
+
+def test_terminal_liquidation_appends_row_when_called_directly():
+    """Verify Case B: terminal liquidation called directly on new session appends reconciled ledger row (C4)."""
+    import math
+    account = PortfolioAccount(initial_capital=10000.0, commission=0.001, slippage=0.0005)
+    # Day 1: buy
+    account.plan_entries_at_close(["SEC_A"])
+    account.process_open_fills("2025-12-29", {"SEC_A": 100.0}, {"SEC_A": True}, 10000.0)
+    account.evaluate_close_stops_and_update_state("2025-12-29", {"SEC_A": 102.0}, {})
+    
+    # Day 2: hold
+    account.evaluate_close_stops_and_update_state("2025-12-30", {"SEC_A": 105.0}, {})
+    
+    # Day 3: Terminal liquidation directly called without prior evaluate_close_stops on 2025-12-31
+    final_nav = account.execute_terminal_liquidation("2025-12-31", {"SEC_A": 104.0})
+    
+    # Verify no duplicate sessions
+    sessions = [r.session for r in account.daily_history]
+    assert len(sessions) == len(set(sessions)) == 3
+    assert sessions[-1] == "2025-12-31"
+    
+    # Verify final ledger row matches cash and final NAV
+    last_row = account.daily_history[-1]
+    assert pytest.approx(last_row.total_nav, rel=1e-6) == final_nav
+    assert pytest.approx(last_row.cash, rel=1e-6) == account.cash
+    assert last_row.holdings_value == 0.0
+    assert last_row.num_positions == 0
+    
+    # Verify compounded return reconciliation
+    compounded_equity = account.initial_capital * math.prod(1.0 + r.daily_return for r in account.daily_history)
+    assert pytest.approx(compounded_equity, rel=1e-6) == final_nav
+
+
+def test_terminal_liquidation_replaces_row_when_close_called_first():
+    """Verify Case A: close stops evaluated then liquidated on same day replaces row without duplicate (C4)."""
+    import math
+    account = PortfolioAccount(initial_capital=10000.0, commission=0.001, slippage=0.0005)
+    account.plan_entries_at_close(["SEC_A"])
+    account.process_open_fills("2025-12-30", {"SEC_A": 100.0}, {"SEC_A": True}, 10000.0)
+    account.evaluate_close_stops_and_update_state("2025-12-30", {"SEC_A": 102.0}, {})
+    
+    # Day 2: evaluate close stops first
+    account.evaluate_close_stops_and_update_state("2025-12-31", {"SEC_A": 106.0}, {})
+    assert len(account.daily_history) == 2
+    pre_liquidation_nav = account.daily_history[-1].total_nav
+    
+    # Then execute terminal liquidation on same session
+    final_nav = account.execute_terminal_liquidation("2025-12-31", {"SEC_A": 106.0})
+    
+    # Verify no duplicate row
+    assert len(account.daily_history) == 2
+    assert account.daily_history[-1].session == "2025-12-31"
+    
+    # Friction must reduce NAV from pre-liquidation valuation
+    assert final_nav < pre_liquidation_nav
+    assert pytest.approx(account.daily_history[-1].total_nav, rel=1e-6) == final_nav
+    
+    # Reconcile compounded returns
+    compounded_equity = account.initial_capital * math.prod(1.0 + r.daily_return for r in account.daily_history)
+    assert pytest.approx(compounded_equity, rel=1e-6) == final_nav

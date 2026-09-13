@@ -124,7 +124,7 @@ def run_operational_pilot() -> Dict[str, Any]:
 
     # Microbatches on device
     mlp = MLPAnnual(seed=7).to(device)
-    opt_mlp = torch.optim.AdamW(mlp.parameters(), lr=1e-3, weight_decay=0.01)
+    opt_mlp = torch.optim.AdamW(mlp.parameters(), lr=1e-3, weight_decay=0.0001)
     x_mlp_micro = torch.randn(micro_batch, 966, device=device)
     y_micro = torch.randn(micro_batch, device=device)
     w_micro = torch.ones(micro_batch, device=device)
@@ -157,7 +157,7 @@ def run_operational_pilot() -> Dict[str, Any]:
 
     # Transformer macro updates
     trans = TransformerAnnual(seed=17).to(device)
-    opt_trans = torch.optim.AdamW(trans.parameters(), lr=1e-3, weight_decay=0.01)
+    opt_trans = torch.optim.AdamW(trans.parameters(), lr=1e-3, weight_decay=0.0001)
     x_trans_micro = torch.randn(micro_batch, 42, 23, device=device)
 
     # Warmup 2 macro steps
@@ -279,7 +279,7 @@ def run_operational_pilot() -> Dict[str, Any]:
                 returns_map[(arm, mkt, seed)] = rng.normal(0.0004, 0.01, 252 * 6)
 
     t0 = time.perf_counter()
-    _, _ = evaluate_primary_contrasts(returns_map, markets, num_draws=1000)
+    contrast_results, draw_matrix, _ = evaluate_primary_contrasts(returns_map, markets, num_draws=1000)
     contrast_1k_time = time.perf_counter() - t0
     mem_tracker.update()
 
@@ -402,6 +402,13 @@ def run_operational_pilot() -> Dict[str, Any]:
         "vm_allocation_hours": actual_vm_allocation_hours,
         "acceptance_condition_met": fits_in_vm,
         "hardware_preflight_status": "PENDING_A30_VM_EXECUTION",
+    }
+
+    report["unmeasured_phases"] = {
+        "hardware_preflight_status": "PENDING_A30_VM_EXECUTION",
+        "a30_gpu_hardware_acceleration": "UNMEASURED_LOCALLY - Pending physical execution on dedicated A30 cloud VM",
+        "cloud_persistent_storage_io": "UNMEASURED_LOCALLY - Pending measurement of VM network egress to backup storage",
+        "multi_worker_parallel_retrieval": "UNMEASURED_LOCALLY - Multi-core retrieval parallelization pending across 103 securities",
     }
 
     return to_native_types(report)

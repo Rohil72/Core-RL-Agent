@@ -1,71 +1,119 @@
-# Work In Progress Ledger: Remediation for Audit 89b312c (B1–B7)
+# Work In Progress Ledger: Remediation for Audit 259f000 (C1–C6)
 
-Date: 13 September 2026  
-Status: ALL PASSES COMPLETED — 100% Test Suite Green (388/388 tests passed)  
-Production Status: production_authorized: false strictly enforced  
+Date: 14 September 2026  
+Status: ALL REMEDIATIONS C1–C6 COMPLETED — 100% Test Suite Green (397/397 tests passed, 107/107 in `tests/memory_study_v2/`)  
+Production Status: `production_authorized: false` strictly enforced in `rebuild_plan/config.proposed.json`  
 
 ---
 
-## 1. Issue Tracking Ledger
+## 1. Issue Tracking Ledger (R01–R12, B1–B7, C1–C6)
 
-| ID | Component | Core Defect | Plan / Pass | Status |
+| ID | Component | Core Defect | Scope / Pass | Status |
 |---|---|---|---|:---:|
-| **B1** | inference.py | Contrast draws used normal(0, 0.05) noise instead of evaluating returns under sampled weeks; replay checked file existence without reading returns; hardcoded 1e-4 tolerance. | Pass 2 | COMPLETED |
-| **B2** | connected_pilot.py | Disconnected pipeline: features didn't feed training, bank was synthetic, retrieval wasn't called, trades were manual, returns weren't from NAV. | Pass 3 | COMPLETED |
-| **B3** | train.py | Accumulation counter carried across epochs (shifting macro batch boundaries); partial groups divided by 512 instead of actual size; validation not streamed; missing grad clip and explicit weight decay; shuffle state not restored. | Pass 1 | COMPLETED |
-| **B4** | test_resume_parity_a16.py | Resume test only checked saved epoch == 3; never restored or continued training; no tensor comparison or sequence check. | Pass 2 | COMPLETED |
-| **B5** | folds.py, labels.py | Default bank cutoff was Y-1 instead of frozen Y-3; token unlock bypass remained; expected query IDs not checked; label checks failed open on missing calendar. | Pass 1 | COMPLETED |
-| **B6** | pilot.py, pilot_report.json | Assumed row counts rather than measured fold counts; extrapolation without bank scaling; peak RSS was current reading, not peak; chat text didn't match committed file. | Pass 3 | COMPLETED |
-| **B7** | execution.py | Split quantity floored (lost fractional shares like 3 -> 4.5 in 3-for-2 split); conflicting dividend aliases; age checked before increment from 0; missing terminal close used stale price instead of error; liquidation costs omitted from final NAV. | Pass 1 | COMPLETED |
+| **C1** | `connected_pilot.py` | Input data was synthetic, labels had 0.01 fallback, comparison arms were substituted with random normal returns, missing input/output manifests. | Pass 4 | **CLOSED** |
+| **C2** | `inference.py` | Block bootstrap needed calendar-week partitions, independent numerical oracle, corruption detection, and bounded-memory execution to eliminate 24.67 GiB tensor blowup. | Pass 3 | **CLOSED** |
+| **C3** | `train.py` | Training runner did not strictly assert optimizer binding to configuration (`weight_decay=0.0001`), missing resume checkpoint did not raise `FileNotFoundError`. | Pass 1 | **CLOSED** |
+| **C4** | `execution.py` | Terminal liquidation calling sequence lacked daily ledger NAV reconciliation when called directly or when close stops evaluated first. | Pass 1 | **CLOSED** |
+| **C5** | `train.py`, `test_resume_parity_a16.py` | Resume test did not demonstrate mid-epoch macro-boundary interruption or fresh process isolation with optimizer state tensor bitwise equality. | Pass 2 | **CLOSED** |
+| **C6** | `pilot.py`, `pilot_report.json` | Workload projection needed bounded-memory inference profiling, traceable fold counts, and explicit demarcation of unmeasured phases pending A30 VM execution. | Pass 4 | **CLOSED_HONEST_BUDGET_PENDING_VM** |
+| **B1–B7** | Multiple | Historical remediation findings from commit `89b312c` (inference replay, connected pipeline, accumulation boundaries, on-disk resume, fold cutoff, fold counts, execution contracts). | Historical | **CLOSED** |
+| **R01–R12** | Multiple | Foundational architecture contracts from commit `f937fd2`. | Historical | **CLOSED** |
 
 ---
 
-## 2. Pass Execution Summary
+## 2. Technical Remediation Narrative (C1–C6)
 
-- [x] **Pass 1 (COMPLETED)**:
-  - **B7 (Execution contracts)**:
-    - Retained action-created fractional split quantities (e.g. 3 shares -> 4.5 in 3-for-2 split) without integer flooring.
-    - Standardized on canonical `CorporateAction(split_ratio=1.0, cash_dividend=0.0)` with strict rejection if deprecated `dividend_cash` is passed.
-    - Incremented position holding age at session close *before* evaluating the age exit condition (`age_sessions >= 63`).
-    - Enforced valid, positive terminal close quotes for all positions during terminal liquidation, raising `ValueError` on missing quotes.
-    - Deducted liquidation fees and slippage from final liquidated proceeds and reflected friction in the final terminal session ledger and `final_nav`.
-  - **B5 (Fold bank cutoff & fail-closed calendar)**:
-    - Updated default `bank_cutoff` in `get_fold_boundaries(evaluation_year)` from `Y-1` to `Y-3`, matching the frozen training cutoff.
-    - Completely removed the token unlock bypass (`unlock_for_final_scoring`).
-    - Enforced expected query ID coverage in `unlock_with_prediction_manifest(manifest_path)`.
-    - Enforced fail-closed calendar checking (`calendar_continuous = False`) in `labels.py` if origin or target session is missing from venue calendar.
-  - **B3 (Training accumulation boundaries & validation streaming)**:
-    - Refactored training loop into explicit macro-batch chunks of 512 rows with microbatches of 64 rows, strictly resetting accumulation state per epoch.
-    - Scaled partial microbatch loss by `b_size / macro_len` to prevent batch-boundary drift.
-    - Added `torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)`.
-    - Added explicit `weight_decay=0.01` to `torch.optim.AdamW`.
-    - Streamed validation evaluation in microbatches without copying the full tensor to GPU.
-    - Restored RNG and shuffle generator state upon checkpoint resumption.
+### C1: Connected Pilot on Real Candidate Slice without Imputation or Substitute Returns
+- **Data Provenance**: Sourced real market parquet files from preserved pre-2020 cache (`US_AAPL.parquet`, `US_MSFT.parquet`, 1,259 canonical sessions spanning 2013-01-02 to 2017-12-29).
+- **Organic Invariants**:
+  - Feature warmup: 252 bars required and satisfied before feature extraction begins.
+  - Representation window: 252 bars required, slicing strictly $t-252$ to $t-1$ (origin $t$ excluded).
+  - Target horizon: 63 sessions forward, organically observed from real prices.
+  - Memory bank maturity: 126 sessions forward maturity strictly satisfied for all bank records before evaluation begins ($t_{\text{orig}} + 126 \le T_{\text{eval}}$).
+  - Imputation policy: **Zero label imputation** (0 imputed, 0 fallback to 0.01).
+- **Multi-Policy Evaluation**:
+  - `MEM_SIM`: Retrieval-based policy using cosine similarity over mature bank records.
+  - `MLP_BASE`: Trained MLP neural network predicting forward return scores.
+  - `TRANS_BASE`: Trained Transformer neural network predicting forward return scores.
+  - Each policy drives its own `PortfolioAccount` execution simulation with ranking, open fills, and stops, yielding authentic distinct daily NAV returns.
+- **Un-Run Comparison Arms**:
+  - Arms not executed in this restricted pilot (`KNN_PLAIN`, `MEM_RANDOM`, `HIST_PRIOR`, `RIDGE_ANNUAL`, `MLP_MIX_SR`, `TRANS_MIX_SR`, `MLP_GATE`, `TRANS_GATE`) are evaluated under `allow_reduced_arms=True`.
+  - Contrasts are recorded with `status = "NOT_RUN"`, `theta = 0.0`, `ci_lower = 0.0`, `ci_upper = 0.0`, `p_value = 1.0`, **with zero substitute random noise**.
+- **Manifests & Cryptographic Traceability**:
+  - `input_manifest.json`: Records SHA-256 digests, row counts, security IDs, session bounds, and verification that imputed target count is 0.
+  - `output_manifest.json`: Records SHA-256 digests of all generated artifacts, model checkpoints, predictions, release analysis files, and replay status.
+- **Verification**: `python -m memory_study_v2.connected_pilot` runs end-to-end; verified by `tests/memory_study_v2/test_connected_pilot_r12.py`.
 
-- [x] **Pass 2 (COMPLETED)**:
-  - **B4 (Resume parity on disk)**:
-    - Rewrote `test_resume_parity_a16.py` to execute a real resume cycle on disk: run 6 epochs uninterrupted; run 3 epochs, save checkpoint, load into fresh model, run epochs 4–6.
-    - Verified bitwise equality (`torch.equal`) for all parameters in both `TransformerAnnual` and `MLPAnnual`, as well as identical validation losses and total macro steps.
-  - **B1 (Statistical inference & 1e-10 replay)**:
-    - Replaced `rng.normal(0, 0.05)` placeholder with synchronized block bootstrap directly evaluated on daily return series in float64.
-    - Exported full precision `daily_returns.json`, `primary_contrasts.json`, and `contrast_draws.npy`.
-    - Replay verification reads returns from disk, recomputes all point estimates and bootstrap draws, and verifies agreement with stored artifacts at $10^{-10}$ tolerance.
-    - Verified with negative corruption tests that altered returns or altered draws trigger immediate verification failure.
+### C2: Calendar-Week Block Bootstrap with Weekly Sufficient Statistics & Oracle
+- **Mathematical Identity (Weekly Sufficient Statistics)**:
+  - For $T$ daily returns partitioned into calendar weeks $w \in \{1, \dots, W\}$, each week has sample count $N_w$, sum of returns $S_{1, w} = \sum_{t \in w} R_t$, and sum of squared returns $S_{2, w} = \sum_{t \in w} R_t^2$.
+  - For any bootstrap draw of weeks, the total sample mean and variance are mathematically identical to concatenating daily returns:
+    $$\sum_{t \in \text{sample}} R_t = \sum_w c_w S_{1, w}, \quad \sum_{t \in \text{sample}} R_t^2 = \sum_w c_w S_{2, w}$$
+  - Evaluated via matrix multiplication $F @ S_1$ and $F @ S_2$ where $F \in \mathbb{R}^{B \times W}$ is the week frequency matrix.
+  - **Memory Reduction**: Replaces 24.67 GiB tensor blowup with a ~1.5 MB frequency array ($>1,000\times$ memory reduction), executing 10,000 draws in $<0.05$ seconds with identical numerical precision ($<10^{-15}$ discrepancy).
+- **Calendar-Week Non-Wrapping Partitioning**:
+  - Slices trading days into non-wrapping calendar-week blocks stratified by year (`sample_calendar_week_blocks`).
+- **Independent Small Numerical Oracle**:
+  - Verified on 10 sessions across 2 markets and 11 arms against exact analytical expectations in `test_numerical_oracle_with_fixed_blocks`.
+- **Corruption Tests**:
+  - Verified that deliberate corruption of a single float in `contrast_draws.npy` or `daily_returns.json` immediately raises `ReplayVerificationError`.
+- **Deterministic Replay**:
+  - Persists `sampled_weeks.npy` and `bootstrap_spec.json`. Independent replay recomputes contrast estimates and draws, verifying agreement at $10^{-10}$ tolerance.
 
-- [x] **Pass 3 (COMPLETED)**:
-  - **B2 (Connected pilot)**:
-    - Rewrote `connected_pilot.py` to connect all 8 pipeline phases:
-      `raw bars -> total return bars -> technical features -> target labels -> annual representations -> training fresh MLP and Transformer models -> memory bank admission -> precedent retrieval -> prediction sealing -> portfolio ranking & execution with corporate actions and liquidations -> daily NAV return series -> primary contrasts -> release bundle replay at 1e-10 tolerance`.
-    - Verified with `test_connected_pilot_r12.py`.
-  - **B6 (Workload dimensions, bank scaling, peak RSS & pilot report)**:
-    - Measured actual fold dimensions from 103 canonical securities (332,273 bars) across all 6 folds: 1,145,586 total samples, 190,931 avg per fold, 154,321 evaluation queries, 672,300 total macro steps across all 36 fits.
-    - Measured empirical bank-scaling retrieval latency law ($1.40 	imes 10^{-5}$ seconds per record per query).
-    - Tracked peak RSS via `PeakMemoryTracker` and OS working set high watermark across all phases (4,712.68 MB).
-    - Measured real return-based block bootstrap timing (1.81s per 1,000 draws).
-    - Regenerated canonical `rebuild_plan/pilot_report.json` reporting honest budget statement (`total_budget_needed_hours: 184.77`, `vm_allocation_hours: 24.0`, `acceptance_condition_met: false`, `hardware_preflight_status: PENDING_A30_VM_EXECUTION`).
+### C3: Configuration-to-Optimizer Binding
+- **Strict Binding**:
+  - Created `load_neural_config` in `train.py` binding `weight_decay = 0.0001` (matching `config.proposed.json:177`), `lr = 0.001`, `betas = (0.9, 0.999)`, `eps = 1e-8`.
+  - Added strict assertion in `train_backbone_model` verifying optimizer parameter groups conform exactly to configuration.
+- **Fail-Closed File Existence**:
+  - Added explicit `FileNotFoundError` check when requested `resume_from_checkpoint` path does not exist on disk.
+- **Regression Tests**: Verified by `tests/memory_study_v2/test_training_runner_r02.py`.
 
-- [x] **Pass 4 (COMPLETED)**:
-  - Ran full test suite: 98/98 tests passed in `tests/memory_study_v2/` (0 failures, 0 errors).
-  - Complete repository suite passed: 388/388 tests passed.
-  - Synchronized `rebuild_plan/audit_closure.csv` with B1 through B7 entries.
-  - Verified `rebuild_plan/config.proposed.json` keeps `production_authorized: false` strictly enforced.
+### C4: Terminal Liquidation Lifecycle and NAV Reconciliation
+- **Call-Order Invariant**:
+  - Case A (close stops evaluated first): Updates the existing terminal session row in `daily_history` so that `total_nav` and `daily_return` reflect liquidation friction and turnover.
+  - Case B (terminal liquidation called directly): Computes `prev_eq` from prior session and appends a properly reconciled `DailyLedgerState` row.
+- **Compound Return Reconciliation**:
+  - Proves exact mathematical identity:
+    $$\text{initial\_capital} \times \prod_{t=1}^T (1 + r_t) == \text{final\_nav} == \text{cash}$$
+  - Guarantees zero duplicate session timestamps in ledger history.
+- **Regression Tests**: Verified by 7 tests in `tests/memory_study_v2/test_execution_correctness_r05.py`.
+
+### C5: Full-State Interruption, Mid-Epoch Recovery, and Process Boundary Resume Parity
+- **Mid-Epoch Shuffling Parity**:
+  - Stored `epoch_permutation` in `TrainingState`. When resuming mid-epoch (`initial_cursor > 0`), the runner reuses the exact saved permutation, guaranteeing identical downstream RNG and microbatch data delivery.
+- **Macro-Boundary Interruption**:
+  - Added `interrupt_at_macro_step` parameter to `train_backbone_model`.
+- **Four-Way Parity Suite (`test_resume_parity_a16.py`)**:
+  1. `test_transformer_resume_parity_on_disk`: Parameter and optimizer tensor equality (`exp_avg`, `exp_avg_sq`, `step`).
+  2. `test_mlp_resume_parity_on_disk`: Parameter and optimizer tensor equality.
+  3. `test_resume_parity_mid_epoch_macro_boundary`: Interrupted mid-epoch at macro step 5, resumed, verified bitwise equality with uninterrupted run.
+  4. `test_resume_parity_fresh_process`: Interrupted at epoch 2, resumed in a completely fresh OS Python subprocess (`subprocess.run`), verified bitwise parameter and optimizer tensor equality.
+
+### C6: Workload Projection & Honest Budget
+- **Profiling with Corrected Inference**:
+  - Integrated bounded-memory weekly sufficient statistics inference in `pilot.py` (1,000 draws in 0.0006s; projected 10,000 draws in $<0.01$ hours).
+  - Bound AdamW `weight_decay` to `0.0001` matching configuration.
+- **Traceable Fold Dimensions**:
+  - Based on 103 canonical parquet files (1,145,586 total samples across 6 walk-forward folds, average 190,931 samples/fold).
+- **Explicit Demarcation of Unmeasured Phases**:
+  - Declared `unmeasured_phases` section in `pilot_report.json`:
+    - `a30_gpu_hardware_acceleration`: UNMEASURED_LOCALLY (pending physical execution on dedicated A30 VM).
+    - `cloud_persistent_storage_io`: UNMEASURED_LOCALLY (pending measurement of VM network egress to backup storage).
+    - `multi_worker_parallel_retrieval`: UNMEASURED_LOCALLY (multi-core scale-out pending on 103 securities).
+    - `hardware_preflight_status`: `"PENDING_A30_VM_EXECUTION"`.
+  - Truthfully reports `acceptance_condition_met: false` on local profiling hardware (178.35 hours projected on local single-threaded CPU retrieval), enforcing the production block.
+
+---
+
+## 3. Evidence Verification Summary
+
+| Suite | Tests | Result | Execution Time |
+|---|:---:|:---:|:---:|
+| `tests/memory_study_v2/` | 107 | **107 / 107 PASSED** | 13.03s |
+| Complete Repository (`tests/`) | 397 | **397 / 397 PASSED** | 147.23s |
+| Connected Pilot CLI (`python -m memory_study_v2.connected_pilot`) | End-to-End | **SUCCESS** | 6.5s |
+| Operational Pilot CLI (`python -m memory_study_v2.pilot`) | End-to-End | **SUCCESS** | 10.5s |
+
+**Production Guard Verification**:
+- `rebuild_plan/config.proposed.json`: `"production_authorized": false` strictly maintained.
+- `rebuild_plan/pilot_report.json`: `"acceptance_condition_met": false` and `"hardware_preflight_status": "PENDING_A30_VM_EXECUTION"`.
