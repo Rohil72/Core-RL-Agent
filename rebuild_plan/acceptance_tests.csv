@@ -1,0 +1,37 @@
+id,milestone,category,acceptance_condition,required_evidence
+A01,M1,schema,"Unknown configuration keys, NaN and missing mandatory production fields reject",schema_test_report
+A02,M1,provenance,"Changed data, code or feature parent hash rejects checkpoint/cache reuse",artifact_rejection_test
+A03,M1,atomicity,Interrupted partial write cannot appear COMPLETE,atomic_write_test
+A04,M2,calendar,Native-session holidays and cross-market UTC availability boundaries respected,calendar_boundary_test
+A05,M2,data,"Zero/nonfinite prices, conflicting duplicates and missing quote units rejected",invalid_data_test
+A06,M2,actions,"Split-only, dividend-only and simultaneous-action fixtures conserve expected wealth",corporate_action_test
+A07,M2,causality,Appending future data/actions never changes earlier features or predictions,future_mutation_test
+A08,M2,features,23 ordered formulas match hand-calculated fixtures; full windows and ddof tested,feature_reference_test
+A09,M2,representation,"Training, bank, validation and query annual arrays identical for identical origin",representation_parity_test
+A10,M2,representation,"Session t excluded; first/last patch, shapes and clipping-before-pooling tested",window_boundary_test
+A11,M2,folds,63/126-session maturity masks pass last-admitted and first-rejected boundary fixtures,fold_maturity_test
+A12,M2,isolation,"Evaluation labels unavailable to training, selection and execution APIs",label_access_test
+A13,M3,training,"Both backbones initialize fresh, receive gradients and update weights; no old Transformer loader",fresh_training_test
+A14,M3,training,Loss weights and microbatch accumulation match macro reference on dropout-disabled fixture,weighted_loss_test
+A15,M3,training,Early stopping and earliest-best tie rule match deterministic loss-sequence fixtures,checkpoint_selection_test
+A16,M3,resume,Optimizer/RNG/sampler resume matches uninterrupted run on same device/environment,resume_parity_test
+A17,M4,retrieval,"Optimized selected IDs equal float64 reference on constrained, tied and buffer-expansion cases",retrieval_reference_test
+A18,M4,retrieval,"Canonical-security exclusions, cap3, spacing21 and insufficient-pool fallback verified",eligibility_test
+A19,M4,controls,Plain kNN removes only cap/spacing; random expansion continues same permutation,control_equivalence_test
+A20,M4,gate,Three inputs only; saved development normalizer; no outcomes supplied as gate inputs,gate_isolation_test
+A21,M4,selector,"MSE and Sharpe selectors use specified averaging, dates, ties and all grid rows",selector_reference_test
+A22,M4,aliases,Lambda endpoints alias identical predictions/paths without inflating independence counts,alias_test
+A23,M5,execution,"Next-open order, exits before entries, cash constraints and integer entry quantities match fixture",entry_funding_test
+A24,M5,execution,"Age1, age63, strict stop inequality and missing-quote queues tested",exit_boundary_test
+A25,M5,execution,"Pence/account units, dividend/split basis and action-adjusted peak verified",action_ledger_test
+A26,M5,execution,Annual policy refresh preserves holdings/state; development resets; terminal rule tested,account_boundary_test
+A27,M5,accounting,Independent ledger reconstruction cash and NAV within 1e-8 account units on fixtures,ledger_reference_test
+A28,M5,metrics,"Annualization, zero variance, initial/terminal costs, turnover and exposure match manual fixtures",metric_reference_test
+A29,M5,forecast,Constant prior rank IC is missing; valid-mask and daily cross-sectional averaging tested,forecast_metric_test
+A30,M5,bootstrap,Same year-stratified sampled weeks shared by all arms/markets; quantile/p/Holm formulas verified,bootstrap_reference_test
+A31,M5,release,Fresh full-precision summaries and bootstrap outputs replay at declared 1e-10 tolerance,replay_validation_report
+A32,M6,performance,Measured cap-based runtime projection fits actual remaining VM time plus reserves,pilot_report.json
+A33,M6,resources,"CPU RAM, GPU allocation and disk free thresholds pass stress fixtures",resource_report
+A34,M6,backup,Completed fold and resumable checkpoint retrieved off-VM with matching hashes,backup_restore_test
+A35,M7,lineage,All contribution components mapped to modules and ablations or explicitly excluded with approval,architecture_lineage.csv
+A36,M7,scope,"16 arms,34 realizations,204 primary paths,1224 cells and96 stress paths reconcile",matrix_inventory_test

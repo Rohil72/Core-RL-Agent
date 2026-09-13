@@ -1,0 +1,501 @@
+{
+  "schema_version": "rebuild-proposal-1",
+  "created_date": "2026-09-13",
+  "status": "implementation_and_pilot_only",
+  "production_authorized": false,
+  "authoritative_document": "../REBUILD_IMPLEMENTATION_PLAN.md",
+  "scope": {
+    "namespace": "memory_study_v2",
+    "preserve_legacy_release": true,
+    "memory_design_is_contribution": true,
+    "evaluation_status": "previously_exposed_historical_walk_forward",
+    "untouched_holdout_claim": false,
+    "production_search_trials_per_backbone_fold_seed": 1,
+    "evaluation_2026_enabled": false
+  },
+  "data": {
+    "candidate_provider": "Yahoo Finance through version-pinned yfinance",
+    "provider_mode": "pilot_until_price_basis_verified",
+    "start_inclusive": "2010-01-01",
+    "end_exclusive": "2026-05-01",
+    "warmup_only_end": "2012-12-31",
+    "label_tail_start": "2026-01-01",
+    "label_tail_end_inclusive": "2026-04-30",
+    "label_tail_role": "2025_query_scoring_only",
+    "universe_manifest": "universe_request.csv",
+    "primary_count": 103,
+    "requested_count": 108,
+    "settings": {
+      "interval": "1d",
+      "auto_adjust": false,
+      "back_adjust": false,
+      "repair": false,
+      "actions": true,
+      "keepna": true,
+      "prepost": false
+    },
+    "concurrent_requests": 1,
+    "max_attempts": 4,
+    "retry_wait_seconds": [
+      2,
+      8,
+      32
+    ],
+    "production_price_basis": "as_traded_with_actions",
+    "automatic_price_basis_fallback": false,
+    "calendar_basis": "verified_venue_schedules",
+    "point_in_time_universe_claim": false,
+    "backfill_prices": false,
+    "impute_unknown_labels": false,
+    "factor_analysis_status": "NOT_RUN_pending_suitable_data_manifest"
+  },
+  "folds": [
+    {
+      "evaluation_year": 2020,
+      "train_origin_start": "2013-01-01",
+      "training_availability_cutoff": "2017-12-31",
+      "validation_query_start": "2018-01-01",
+      "validation_query_end": "2018-12-31",
+      "validation_label_cutoff": "2018-12-31",
+      "development_query_start": "2019-01-01",
+      "development_query_end": "2019-12-31",
+      "development_label_cutoff": "2019-12-31",
+      "evaluation_query_start": "2020-01-01",
+      "evaluation_query_end": "2020-12-31",
+      "bank_cutoff": "2017-12-31"
+    },
+    {
+      "evaluation_year": 2021,
+      "train_origin_start": "2013-01-01",
+      "training_availability_cutoff": "2018-12-31",
+      "validation_query_start": "2019-01-01",
+      "validation_query_end": "2019-12-31",
+      "validation_label_cutoff": "2019-12-31",
+      "development_query_start": "2020-01-01",
+      "development_query_end": "2020-12-31",
+      "development_label_cutoff": "2020-12-31",
+      "evaluation_query_start": "2021-01-01",
+      "evaluation_query_end": "2021-12-31",
+      "bank_cutoff": "2018-12-31"
+    },
+    {
+      "evaluation_year": 2022,
+      "train_origin_start": "2013-01-01",
+      "training_availability_cutoff": "2019-12-31",
+      "validation_query_start": "2020-01-01",
+      "validation_query_end": "2020-12-31",
+      "validation_label_cutoff": "2020-12-31",
+      "development_query_start": "2021-01-01",
+      "development_query_end": "2021-12-31",
+      "development_label_cutoff": "2021-12-31",
+      "evaluation_query_start": "2022-01-01",
+      "evaluation_query_end": "2022-12-31",
+      "bank_cutoff": "2019-12-31"
+    },
+    {
+      "evaluation_year": 2023,
+      "train_origin_start": "2013-01-01",
+      "training_availability_cutoff": "2020-12-31",
+      "validation_query_start": "2021-01-01",
+      "validation_query_end": "2021-12-31",
+      "validation_label_cutoff": "2021-12-31",
+      "development_query_start": "2022-01-01",
+      "development_query_end": "2022-12-31",
+      "development_label_cutoff": "2022-12-31",
+      "evaluation_query_start": "2023-01-01",
+      "evaluation_query_end": "2023-12-31",
+      "bank_cutoff": "2020-12-31"
+    },
+    {
+      "evaluation_year": 2024,
+      "train_origin_start": "2013-01-01",
+      "training_availability_cutoff": "2021-12-31",
+      "validation_query_start": "2022-01-01",
+      "validation_query_end": "2022-12-31",
+      "validation_label_cutoff": "2022-12-31",
+      "development_query_start": "2023-01-01",
+      "development_query_end": "2023-12-31",
+      "development_label_cutoff": "2023-12-31",
+      "evaluation_query_start": "2024-01-01",
+      "evaluation_query_end": "2024-12-31",
+      "bank_cutoff": "2021-12-31"
+    },
+    {
+      "evaluation_year": 2025,
+      "train_origin_start": "2013-01-01",
+      "training_availability_cutoff": "2022-12-31",
+      "validation_query_start": "2023-01-01",
+      "validation_query_end": "2023-12-31",
+      "validation_label_cutoff": "2023-12-31",
+      "development_query_start": "2024-01-01",
+      "development_query_end": "2024-12-31",
+      "development_label_cutoff": "2024-12-31",
+      "evaluation_query_start": "2025-01-01",
+      "evaluation_query_end": "2025-12-31",
+      "bank_cutoff": "2022-12-31"
+    }
+  ],
+  "representation": {
+    "feature_contract": "feature_contract.csv",
+    "features": 23,
+    "window_sessions": 252,
+    "patch_sessions": 6,
+    "patch_count": 42,
+    "flattened_dim": 966,
+    "exclude_decision_session": true,
+    "feature_dtype": "float32",
+    "statistics_dtype": "float64",
+    "feature_standard_deviation_ddof": 1,
+    "scaler_ddof": 0,
+    "scaler_std_floor": 0.0001,
+    "clip": [
+      -5,
+      5
+    ],
+    "feature_denominator_guard": 1e-09,
+    "minimum_feature_warmup_bars": 252,
+    "missing_feature_policy": "invalidate_row",
+    "target_sessions": 63,
+    "target_basis": "causal_total_return_close_ratio",
+    "target_units": "decimal_return",
+    "target_requires_uninterrupted_valid_segment": true
+  },
+  "neural": {
+    "seeds": [
+      7,
+      17,
+      37
+    ],
+    "architectures": [
+      "MLP_ANNUAL_966_64_128_1",
+      "TRANSFORMER_42x23_WIDTH64_HEADS4_LAYERS2_FF128_LATENT128"
+    ],
+    "fresh_initialization": true,
+    "legacy_checkpoint_loading": false,
+    "optimizer": "AdamW",
+    "learning_rate": 0.001,
+    "weight_decay": 0.0001,
+    "betas": [
+      0.9,
+      0.999
+    ],
+    "epsilon": 1e-08,
+    "effective_batch": 512,
+    "max_epochs": 50,
+    "min_epochs": 5,
+    "early_stop_patience": 5,
+    "minimum_improvement": 1e-06,
+    "selection": "equal_market_validation_MSE",
+    "training_objective": "equal_market_MSE",
+    "gradient_norm_clip": 1.0,
+    "scheduler": null,
+    "amp": false,
+    "tf32": false,
+    "deterministic_algorithms": true,
+    "layernorm_epsilon": 1e-05,
+    "transformer_dropout": 0.1
+  },
+  "ridge": {
+    "l2_coefficient_on_equal_market_mse": 0.001,
+    "penalize_intercept": false,
+    "dtype": "float64"
+  },
+  "memory": {
+    "k": 25,
+    "maturity_sessions": 126,
+    "refresh": "annual_training_cutoff",
+    "intra_year_refresh": false,
+    "distance": "squared_euclidean",
+    "reference_dtype": "float64",
+    "same_canonical_security_excluded": true,
+    "issuer_wide_isolation_claim": false,
+    "max_records_per_security": 3,
+    "minimum_origin_spacing_sessions": 21,
+    "candidate_buffer_start": 250,
+    "candidate_expansion_factor": 2,
+    "candidate_exhaustion": "scan_full_eligible_pool",
+    "insufficient_neighbors": "unconditional_bank_mean_with_flag",
+    "tie_break": "record_id_ascending",
+    "random_master_seeds": [
+      1001,
+      1002,
+      1003
+    ],
+    "random_generator": "PCG64",
+    "development_only_k_sensitivity": [
+      10,
+      50
+    ],
+    "plain_knn_removes": [
+      "per_security_cap",
+      "origin_spacing"
+    ],
+    "production_backend": "float64_chunked_proposal_cpu_reference_refinement",
+    "query_chunk_rows": 128,
+    "bank_chunk_rows": 16384,
+    "memory_valid_segment_sessions_after_origin": 126,
+    "proposal_absolute_error_budget": 1e-06,
+    "proposal_boundary_margin": 2e-06,
+    "final_distances": "cpu_numpy_direct_float64_reference",
+    "approximate_nearest_neighbor_index": false
+  },
+  "integration": {
+    "gate_diagnostics": [
+      "abs(base)",
+      "abs(base-memory)",
+      "abs(memory)"
+    ],
+    "gate_scale_floor": 0.0001,
+    "gate_optimizer": "Adam",
+    "gate_learning_rate": 0.05,
+    "gate_weight_decay": 0.001,
+    "gate_betas": [
+      0.9,
+      0.999
+    ],
+    "gate_epsilon": 1e-08,
+    "gate_steps": 50,
+    "gate_initial_weights": [
+      0,
+      0,
+      0
+    ],
+    "gate_initial_bias": "log(1/3)",
+    "gate_objective": "equal_market_development_MSE",
+    "mixture_grid": [
+      0,
+      0.1,
+      0.25,
+      0.5,
+      1.0
+    ],
+    "mixture_objectives": [
+      "equal_market_seed_averaged_MSE",
+      "equal_market_seed_averaged_net_Sharpe"
+    ],
+    "mixture_tie_tolerance": 1e-12,
+    "mixture_tie_break": "smallest_lambda"
+  },
+  "arms": [
+    {
+      "id": "MEM_SIM",
+      "realizations_per_market": 1
+    },
+    {
+      "id": "KNN_PLAIN",
+      "realizations_per_market": 1
+    },
+    {
+      "id": "MEM_RANDOM",
+      "realizations_per_market": 3
+    },
+    {
+      "id": "HIST_PRIOR",
+      "realizations_per_market": 1
+    },
+    {
+      "id": "RIDGE_ANNUAL",
+      "realizations_per_market": 1
+    },
+    {
+      "id": "MLP_BASE",
+      "realizations_per_market": 3
+    },
+    {
+      "id": "TRANS_BASE",
+      "realizations_per_market": 3
+    },
+    {
+      "id": "MLP_MIX_MSE",
+      "realizations_per_market": 3
+    },
+    {
+      "id": "TRANS_MIX_MSE",
+      "realizations_per_market": 3
+    },
+    {
+      "id": "MLP_MIX_SR",
+      "realizations_per_market": 3
+    },
+    {
+      "id": "TRANS_MIX_SR",
+      "realizations_per_market": 3
+    },
+    {
+      "id": "MLP_GATE",
+      "realizations_per_market": 3
+    },
+    {
+      "id": "TRANS_GATE",
+      "realizations_per_market": 3
+    },
+    {
+      "id": "MOMENTUM_21",
+      "realizations_per_market": 1
+    },
+    {
+      "id": "VOL_MOMENTUM_21",
+      "realizations_per_market": 1
+    },
+    {
+      "id": "PASSIVE_EQUAL_WEIGHT",
+      "realizations_per_market": 1
+    }
+  ],
+  "execution": {
+    "initial_capital_account_units": 100000,
+    "max_positions": 3,
+    "primary_path": "continuous_2020_2025_with_annual_model_refresh",
+    "annual_account_reset": false,
+    "development_account_reset": true,
+    "cash_budget_fraction": 0.95,
+    "entry_lot": 1,
+    "commission_per_side": 0.001,
+    "slippage_per_side": 0.0005,
+    "volatility_denominator_guard": 0.0001,
+    "allow_nonpositive_entry_score": false,
+    "fill": "next_scheduled_open",
+    "exit_before_entry": true,
+    "pending_exit_frees_slot_at_signal_time": false,
+    "entry_age": 1,
+    "maximum_holding_sessions": 63,
+    "minimum_stop_fraction": 0.1,
+    "atr_stop_multiplier": 2.5,
+    "stale_held_session_review_threshold": 5,
+    "dividend_cash_timing": "ex_date_approximation",
+    "terminal_entry_blackout_sessions": 5,
+    "terminal_fill": "synthetic_final_close_including_fee_and_slippage",
+    "quote_unit_default": null,
+    "allow_negative_cash": false,
+    "production_ledger_reconciliation_tolerance_account_units": 1e-06
+  },
+  "analysis": {
+    "annualization": 252,
+    "portfolio_standard_deviation_ddof": 0,
+    "sharpe_zero_std_threshold": 1e-08,
+    "sharpe_risk_free_subtraction": 0,
+    "headline": "mean_market_of_mean_realization_continuous_period_Sharpe",
+    "bootstrap_draws": 10000,
+    "bootstrap_primary_weeks": 4,
+    "bootstrap_sensitivity_weeks": [
+      2,
+      8
+    ],
+    "bootstrap_stratification": "calendar_year",
+    "bootstrap_generator": "PCG64(SeedSequence([42, block_length]))",
+    "bootstrap_quantile_method": "linear",
+    "primary_contrasts": [
+      {
+        "id": "P1",
+        "candidate": "MEM_SIM",
+        "comparator": "MEM_RANDOM"
+      },
+      {
+        "id": "P2",
+        "candidate": "MEM_SIM",
+        "comparator": "HIST_PRIOR"
+      },
+      {
+        "id": "P3",
+        "candidate": "MEM_SIM",
+        "comparator": "KNN_PLAIN"
+      },
+      {
+        "id": "P4",
+        "candidate": "MEM_SIM",
+        "comparator": "RIDGE_ANNUAL"
+      },
+      {
+        "id": "P5",
+        "candidate": "MEM_SIM",
+        "comparator": "MLP_BASE"
+      },
+      {
+        "id": "P6",
+        "candidate": "MEM_SIM",
+        "comparator": "TRANS_BASE"
+      },
+      {
+        "id": "P7",
+        "candidate": "MLP_GATE",
+        "comparator": "MLP_MIX_SR"
+      },
+      {
+        "id": "P8",
+        "candidate": "TRANS_GATE",
+        "comparator": "TRANS_MIX_SR"
+      }
+    ],
+    "multiplicity": "Holm_eight_primary_contrasts",
+    "variance_roundoff_tolerance": 1e-12,
+    "analysis_replay_tolerance": 1e-10,
+    "daily_rank_ic_minimum_assets": 5
+  },
+  "cost_stress": {
+    "arms": [
+      "MEM_SIM",
+      "HIST_PRIOR",
+      "MLP_GATE",
+      "TRANS_GATE"
+    ],
+    "slippage_per_side": [
+      0,
+      0.0015
+    ],
+    "commission_per_side": 0.001,
+    "reexecute_ledgers": true
+  },
+  "counts": {
+    "folds": 6,
+    "markets": 6,
+    "neural_selected_fits": 36,
+    "gate_fits": 36,
+    "ridge_fits": 6,
+    "configurations": 16,
+    "logical_realizations_per_market": 34,
+    "primary_continuous_paths": 204,
+    "primary_logical_market_year_cells": 1224,
+    "cost_stress_additional_continuous_paths": 96
+  },
+  "operations": {
+    "laptop": {
+      "microbatch": 64,
+      "loader_workers": 2,
+      "application_ram_ceiling_decimal_GB": 10,
+      "gpu_allocation_ceiling_decimal_GB": 3.2
+    },
+    "a30": {
+      "microbatch": 256,
+      "loader_workers": 4,
+      "application_ram_ceiling_decimal_GB": 48,
+      "gpu_allocation_ceiling_decimal_GB": 20,
+      "working_artifact_ceiling_decimal_GB": 60,
+      "minimum_free_disk_decimal_GB": 20
+    },
+    "vm_max_allocation_hours": 24,
+    "compute_safety_multiplier": 1.5,
+    "minimum_export_verification_hours": 2,
+    "contingency_hours": 2,
+    "maximum_backup_interval_minutes": 60,
+    "pilot_training_epochs": 3,
+    "pilot_warmup_optimizer_steps": 20,
+    "pilot_timed_optimizer_steps": 100,
+    "pilot_retrieval_queries": 1000,
+    "pilot_bootstrap_draws": 1000
+  },
+  "production_gates": {
+    "reviewed_full_code_commit": null,
+    "frozen_data_hashes": null,
+    "provider_price_and_action_basis_verified": null,
+    "quote_units_and_venue_calendars_verified": null,
+    "exceptional_actions_and_delistings_resolved": null,
+    "architecture_lineage_approved": null,
+    "data_access_and_redistribution_scope_recorded": null,
+    "all_acceptance_tests_passed": null,
+    "measured_runtime_and_resources_accepted": null,
+    "vm_actual_expiry_utc": null,
+    "vm_persistence_confirmed": null,
+    "off_vm_backup_destination_verified": null,
+    "user_freeze_approval": null
+  }
+}
