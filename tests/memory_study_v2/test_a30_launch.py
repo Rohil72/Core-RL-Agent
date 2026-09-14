@@ -1298,3 +1298,132 @@ def test_training_cache_invalidates_on_inputs_or_config_change(real_driver_env, 
     )
     assert new_comp["artifacts"]["best_checkpoint"]["sha256"]
 
+
+def test_checkpoint_modification_regenerates_policy_predictions(real_driver_env, tmp_path):
+    """Modified model checkpoint triggers prediction_identity mismatch, regenerating forecasts from that model while preserving training."""
+    import numpy as np
+    from memory_study_v2.backbones import MLPAnnual
+    from scripts.launch_a30_production import prepare_fold_data
+
+    out_dir = tmp_path / "pred_cache_inval_test"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # 1. Initial complete run
+    receipt1 = launch_a30_deployment(
+        config_path=real_driver_env["config_path"],
+        data_dir=real_driver_env["data_dir"],
+        output_dir=out_dir,
+        sample_ids_dir=real_driver_env["sample_ids_dir"],
+        authorize_production=True,
+        check_only=False,
+        selected_folds=[2020],
+        selected_securities=["US_AAPL", "US_MSFT"],
+        execution_mode="pilot",
+        driver_fn=None,
+        driver_kwargs={
+            "min_epochs": 1,
+            "max_epochs": 1,
+            "micro_batch_size": 16,
+            "effective_batch_size": 32,
+        },
+    )
+    assert receipt1["execution"]["status"] == "PRODUCTION_SUCCESS"
+
+    manifest_path = out_dir / "fold_2020" / "predictions_manifest.json"
+    pred_path = out_dir / "fold_2020" / "policy_predictions.json"
+    assert manifest_path.exists()
+    assert pred_path.exists()
+
+    orig_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert "prediction_identity" in orig_manifest
+    orig_pred_ident = orig_manifest["prediction_identity"]
+
+    orig_preds = json.loads(pred_path.read_text(encoding="utf-8"))
+    orig_mlp_preds = {
+        r["query_id"]: r["prediction"]
+        for r in orig_preds
+        if r["policy_id"] == "MLP_BASE" and r["realization_id"] == 7
+    }
+
+    # 2. Modify model checkpoint so its forecasts demonstrably change, keeping query IDs fixed
+    chk_dir = out_dir / "fold_2020" / "checkpoints_MLP_ANNUAL_966_64_128_1_seed7"
+    best_pt = chk_dir / "best_checkpoint.pt"
+    assert best_pt.exists()
+
+    chk_st = torch.load(best_pt, map_location="cpu", weights_only=False)
+    for k in chk_st.model_state:
+        chk_st.model_state[k] = -chk_st.model_state[k] * 2.0
+    torch.save(chk_st, best_pt)
+    new_chk_sha = hashlib.sha256(best_pt.read_bytes()).hexdigest()
+
+    # Update job_completion.json so Stage 1 preserves this training checkpoint
+    job_comp_file = chk_dir / "job_completion.json"
+    job_comp = json.loads(job_comp_file.read_text(encoding="utf-8"))
+    job_comp["artifacts"]["best_checkpoint"]["sha256"] = new_chk_sha
+    job_comp_file.write_text(json.dumps(job_comp), encoding="utf-8")
+    chk_mtime_before = job_comp_file.stat().st_mtime
+
+    # Invalidate pipeline completion to trigger restart
+    (out_dir / "pipeline_summary.json").unlink(missing_ok=True)
+    (out_dir / "pipeline_completion.json").unlink(missing_ok=True)
+
+    # 3. Restart deployment
+    receipt2 = launch_a30_deployment(
+        config_path=real_driver_env["config_path"],
+        data_dir=real_driver_env["data_dir"],
+        output_dir=out_dir,
+        sample_ids_dir=real_driver_env["sample_ids_dir"],
+        authorize_production=True,
+        check_only=False,
+        selected_folds=[2020],
+        selected_securities=["US_AAPL", "US_MSFT"],
+        execution_mode="pilot",
+        driver_fn=None,
+        driver_kwargs={
+            "min_epochs": 1,
+            "max_epochs": 1,
+            "micro_batch_size": 16,
+            "effective_batch_size": 32,
+        },
+    )
+    assert receipt2["execution"]["status"] == "PRODUCTION_SUCCESS"
+
+    # Verify Stage 1 preserved compatible training checkpoint (not retrained)
+    assert job_comp_file.stat().st_mtime == chk_mtime_before
+    assert best_pt.exists()
+
+    # Verify predictions manifest updated with new prediction identity
+    new_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    new_pred_ident = new_manifest["prediction_identity"]
+    assert new_pred_ident["prediction_identity_sha256"] != orig_pred_ident["prediction_identity_sha256"]
+    assert new_pred_ident["producing_checkpoints"] != orig_pred_ident["producing_checkpoints"]
+
+    # Verify policy predictions demonstrably regenerated from modified model
+    new_preds = json.loads(pred_path.read_text(encoding="utf-8"))
+    new_mlp_preds = {
+        r["query_id"]: r["prediction"]
+        for r in new_preds
+        if r["policy_id"] == "MLP_BASE" and r["realization_id"] == 7
+    }
+    assert len(new_mlp_preds) == len(orig_mlp_preds)
+    assert new_mlp_preds != orig_mlp_preds
+    assert any(abs(new_mlp_preds[qid] - orig_mlp_preds[qid]) > 1e-4 for qid in orig_mlp_preds)
+
+    # Assert numerical identity: regenerated forecasts match evaluating the modified model directly
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    modified_model = MLPAnnual(seed=7).to(device)
+    modified_model.load_state_dict(chk_st.model_state)
+    modified_model.eval()
+    fold_data = prepare_fold_data(
+        fold_year=2020,
+        data_dir=real_driver_env["data_dir"],
+        sample_ids_dir=real_driver_env["sample_ids_dir"],
+        selected_securities=["US_AAPL", "US_MSFT"],
+        execution_mode="pilot",
+    )
+    with torch.no_grad():
+        expected_eval = modified_model(torch.tensor(fold_data["eval_x_mlp"], dtype=torch.float32, device=device)).squeeze(-1).cpu().numpy().tolist()
+    actual_eval = [new_mlp_preds[r.query_id] for r in fold_data["eval_records"]]
+    np.testing.assert_allclose(actual_eval, expected_eval, atol=1e-3)
+
+

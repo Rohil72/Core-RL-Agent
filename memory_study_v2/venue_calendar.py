@@ -324,8 +324,26 @@ def get_market_venue_calendar(
             if str(k).strip().upper() == m_clean:
                 return v
 
+    market_aliases = {
+        "BR": "BRAZIL",
+        "BRAZIL": "BRAZIL",
+        "CN": "CHINA",
+        "CHINA": "CHINA",
+        "FR": "FRANCE",
+        "FRANCE": "FRANCE",
+        "IN": "INDIA",
+        "INDIA": "INDIA",
+        "UK": "UK",
+        "GB": "UK",
+        "US": "US",
+        "USA": "US",
+    }
+    canonical_mkt = market_aliases.get(m_clean, m_clean)
+
     f_dir = fixture_dir or (_FIXTURE_PATH.parent)
-    cand_csv = f_dir / f"{m_clean.lower()}_trading_sessions.csv"
+    cand_csv = f_dir / f"{canonical_mkt.lower()}_trading_sessions.csv"
+    if not cand_csv.exists():
+        cand_csv = f_dir / f"{m_clean.lower()}_trading_sessions.csv"
 
     if cand_csv.exists():
         sessions: List[str] = []
@@ -338,7 +356,7 @@ def get_market_venue_calendar(
         cal = VenueCalendar(sessions=sessions)
         return cal
 
-    if m_clean == "US" and _FIXTURE_PATH.exists():
+    if canonical_mkt == "US" and _FIXTURE_PATH.exists():
         return get_venue_calendar()
 
     # Missing authoritative calendar fixture

@@ -623,6 +623,41 @@ def prepare_fold_data(
         "market_calendars": market_calendars,
     }
 
+def compute_prediction_identity(
+    fold_year: int,
+    producing_checkpoints: Dict[str, str],
+    eval_records: List[Any],
+    dev_records: List[Any],
+    configured_policies: Optional[List[str]],
+    seeds: List[int],
+    code_revision: str,
+    prediction_config: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Compute stable, immutable identity for sealed policy predictions artifact."""
+    eval_qids = sorted(r.query_id for r in eval_records)
+    dev_qids = sorted(r.query_id for r in dev_records)
+    eval_qids_sha = hashlib.sha256("\n".join(eval_qids).encode("utf-8")).hexdigest()
+    dev_qids_sha = hashlib.sha256("\n".join(dev_qids).encode("utf-8")).hexdigest()
+
+    pred_cfg_clean = prediction_config or {}
+    pred_cfg_sha = hashlib.sha256(to_canonical_json(pred_cfg_clean).encode("utf-8")).hexdigest()
+
+    ident = {
+        "fold_year": fold_year,
+        "producing_checkpoints": dict(sorted(producing_checkpoints.items())),
+        "admitted_eval_queries_sha256": eval_qids_sha,
+        "admitted_dev_queries_sha256": dev_qids_sha,
+        "eval_queries_count": len(eval_qids),
+        "dev_queries_count": len(dev_qids),
+        "selected_policies": sorted(list(configured_policies)) if configured_policies is not None else "ALL_CONFIGURED",
+        "seeds": sorted(list(seeds)),
+        "code_revision": str(code_revision).strip(),
+        "prediction_config_sha256": pred_cfg_sha,
+    }
+    ident["prediction_identity_sha256"] = hashlib.sha256(to_canonical_json(ident).encode("utf-8")).hexdigest()
+    return ident
+
+
 def generate_and_seal_policy_predictions(
     fold_year: int,
     fold_dir: Path,
@@ -637,6 +672,7 @@ def generate_and_seal_policy_predictions(
     custom_predictions: Optional[Dict[str, float]] = None,
     fail_on_corrupted_predictions: bool = False,
     checkpoint_hashes: Optional[Dict[str, str]] = None,
+    code_revision: Optional[str] = None,
 ) -> List[PolicyPredictionRecord]:
     """Generate, validate, and atomically seal common prediction records for all configured arms."""
     pred_manifest_path = fold_dir / "predictions_manifest.json"
@@ -646,36 +682,80 @@ def generate_and_seal_policy_predictions(
     dev_recs: List[SampleIndexRecord] = fold_data.get("dev_records", [])
     admitted_query_ids = {r.query_id for r in eval_recs}
 
-    # 1. Check existing verified predictions on disk with scope & query match validation
+    seeds = seeds or [7, 17, 37]
+    lambda_grid = lambda_grid or [0.0, 0.10, 0.25, 0.50, 1.00]
+
+    # Collect producing checkpoints on disk and from completed checkpoint hashes
+    producing_checkpoints: Dict[str, str] = {}
+    for chk_dir in sorted(fold_dir.glob("checkpoints_*")):
+        best_pt = chk_dir / "best_checkpoint.pt"
+        if best_pt.exists():
+            producing_checkpoints[chk_dir.name] = hashlib.sha256(best_pt.read_bytes()).hexdigest()
+    if checkpoint_hashes:
+        for k, v in checkpoint_hashes.items():
+            if f"fold_{fold_year}" in k or any(chk_name in k for chk_name in producing_checkpoints):
+                producing_checkpoints[k] = v
+
+    actual_code_rev = str(code_revision).strip() if code_revision else "UNKNOWN_REVISION"
+    pred_config_payload = {
+        "lambda_grid": lambda_grid,
+        "ridge_l2_lambda": 0.001,
+        "trust_gate_steps": 50,
+    }
+
+    current_prediction_identity = compute_prediction_identity(
+        fold_year=fold_year,
+        producing_checkpoints=producing_checkpoints,
+        eval_records=eval_recs,
+        dev_records=dev_recs,
+        configured_policies=configured_policies,
+        seeds=seeds,
+        code_revision=actual_code_rev,
+        prediction_config=pred_config_payload,
+    )
+
+    # 1. Check existing verified predictions on disk with prediction_identity match & content validation
     if pred_manifest_path.exists() and pred_json_path.exists() and custom_predictions is None:
         try:
             with open(pred_manifest_path, "r", encoding="utf-8") as f:
                 manifest_data = json.load(f)
+
+            # Check exact prediction identity match
+            stored_identity = manifest_data.get("prediction_identity")
+            if not stored_identity:
+                raise ValueError("Missing prediction_identity in predictions manifest")
+            if stored_identity.get("prediction_identity_sha256") != current_prediction_identity["prediction_identity_sha256"]:
+                mismatches = []
+                for field in ("producing_checkpoints", "admitted_eval_queries_sha256", "admitted_dev_queries_sha256", "selected_policies", "seeds", "code_revision", "prediction_config_sha256"):
+                    if stored_identity.get(field) != current_prediction_identity.get(field):
+                        mismatches.append(f"{field} mismatch")
+                raise ValueError(f"Prediction identity mismatch: {'; '.join(mismatches) if mismatches else 'sha256 diff'}")
+
             expected_sha = manifest_data.get("sha256")
             actual_sha = hashlib.sha256(pred_json_path.read_bytes()).hexdigest()
-            if actual_sha == expected_sha:
-                with open(pred_json_path, "r", encoding="utf-8") as f:
-                    cached_records = json.load(f)
-                records = [
-                    PolicyPredictionRecord(**r) for r in cached_records
-                ]
-                # Validate key uniqueness, finite values, and admitted queries match
-                seen = set()
-                cached_queries = set()
-                for r in records:
-                    k = (r.query_id, r.policy_id, r.realization_id)
-                    if k in seen:
-                        raise ValueError(f"Duplicate prediction key in cached artifact: {k}")
-                    if not math.isfinite(r.prediction):
-                        raise ValueError(f"Non-finite prediction in cached artifact: {k}")
-                    seen.add(k)
-                    cached_queries.add(r.query_id)
-                if cached_queries != admitted_query_ids:
-                    raise ValueError(f"Cached queries do not match current admitted queries: {len(cached_queries)} != {len(admitted_query_ids)}")
-                print(f"  [Fold {fold_year}] Verified {len(records)} existing predictions on disk.")
-                return records
-            else:
+            if actual_sha != expected_sha:
                 raise ValueError(f"Predictions digest mismatch: {actual_sha} != {expected_sha}")
+
+            with open(pred_json_path, "r", encoding="utf-8") as f:
+                cached_records = json.load(f)
+            records = [
+                PolicyPredictionRecord(**r) for r in cached_records
+            ]
+            # Validate key uniqueness, finite values, and admitted queries match
+            seen = set()
+            cached_queries = set()
+            for r in records:
+                k = (r.query_id, r.policy_id, r.realization_id)
+                if k in seen:
+                    raise ValueError(f"Duplicate prediction key in cached artifact: {k}")
+                if not math.isfinite(r.prediction):
+                    raise ValueError(f"Non-finite prediction in cached artifact: {k}")
+                seen.add(k)
+                cached_queries.add(r.query_id)
+            if cached_queries != admitted_query_ids:
+                raise ValueError(f"Cached queries do not match current admitted queries: {len(cached_queries)} != {len(admitted_query_ids)}")
+            print(f"  [Fold {fold_year}] Verified {len(records)} existing predictions on disk (prediction_identity match).")
+            return records
         except Exception as e:
             if fail_on_corrupted_predictions:
                 raise RuntimeError(f"Corrupted predictions artifact rejected on fold {fold_year}: {e}")
@@ -1009,6 +1089,7 @@ def generate_and_seal_policy_predictions(
         "fold_year": fold_year,
         "count": len(records),
         "sha256": actual_sha,
+        "prediction_identity": current_prediction_identity,
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
     }
     with open(pred_manifest_path, "w", encoding="utf-8") as f:
@@ -1698,6 +1779,7 @@ def run_production_experiment_driver(context: Dict[str, Any]) -> Dict[str, Any]:
             custom_predictions=context.get("custom_predictions"),
             fail_on_corrupted_predictions=bool(context.get("fail_on_corrupted_predictions", False)),
             checkpoint_hashes=completed_checkpoint_hashes,
+            code_revision=current_run_identity["code_revision"],
         )
         predictions_by_year[fold_year] = p_records
 
