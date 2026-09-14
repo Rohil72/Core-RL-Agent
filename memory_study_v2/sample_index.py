@@ -88,26 +88,53 @@ def build_security_sample_index(
             df = df.rename(columns={df.columns[0]: "session"})
 
     df["session"] = df["session"].astype(str).str[:10]
-    df = df.sort_values(by="session").reset_index(drop=True)
+
+    # Reindex onto venue calendar schedule if not already aligned with bar_status
+    if "bar_status" not in df.columns:
+        s_min = df["session"].min()
+        s_max = df["session"].max()
+        s_min = max(s_min, vc.sessions[0])
+        s_max = min(s_max, vc.sessions[-1])
+        df = vc.reindex_to_schedule(df, (s_min, s_max))
+    else:
+        df = df.sort_values(by="session").reset_index(drop=True)
+
     N = len(df)
     if N == 0:
         return []
 
     sessions = df["session"].tolist()
+
+    # Reject unknown session ordinals instead of substituting row positions!
+    for sess in sessions:
+        if sess not in vc.ordinal:
+            raise ValueError(
+                f"Session '{sess}' for security '{security_id}' is not a valid scheduled session on venue calendar."
+            )
+
     close_col = "close" if "close" in df.columns else "tr_close"
     closes = df[close_col].to_numpy(dtype=float) if close_col in df.columns else np.zeros(N)
 
     # 503 bars of preceding history required: 252 warmup + 252 representation (excluding t)
     min_preceding_bars = (required_feature_warmup - 1) + required_repr_window  # 251 + 252 = 503
 
+    # Validity mask: preserve complete validity mask from calendar alignment
+    if "bar_status" in df.columns:
+        valid_bar = (df["bar_status"] == "VALID").to_numpy(dtype=bool)
+    else:
+        valid_bar = np.ones(N, dtype=bool)
+
+    if "is_valid_bar" in df.columns:
+        valid_bar = valid_bar & df["is_valid_bar"].to_numpy(dtype=bool)
+
     # Check finite and positive close
-    valid_bar = np.isfinite(closes) & (closes > 0.0)
+    valid_bar = valid_bar & np.isfinite(closes) & (closes > 0.0)
 
     # If segments present, track them
     has_segments = "segment_id" in df.columns
     segments = df["segment_id"].to_numpy() if has_segments else np.zeros(N, dtype=int)
 
-    # Compute target labels using canonical labels module
+    # Compute target labels using canonical labels module with venue_sessions
     from memory_study_v2.labels import compute_target_labels
     tr_df = pd.DataFrame({
         "session": sessions,
@@ -118,7 +145,7 @@ def build_security_sample_index(
     if has_segments:
         tr_df["segment_id"] = segments
 
-    lbl_df = compute_target_labels(tr_df)
+    lbl_df = compute_target_labels(tr_df, venue_sessions=sessions)
     v63_arr = lbl_df["valid_63"].to_numpy(dtype=bool)
     v126_arr = lbl_df["valid_126"].to_numpy(dtype=bool)
     s63_arr = lbl_df["session_63"].astype(str).to_numpy()
@@ -132,7 +159,7 @@ def build_security_sample_index(
 
     for t in range(N):
         sess_t = sessions[t]
-        ord_t = vc.get_ordinal(sess_t) if sess_t in vc.ordinal else t
+        ord_t = vc.get_ordinal(sess_t)
         qid = f"{evaluation_year}_{security_id}_{sess_t}"
 
         # 1. Derive input_window_valid strictly from preceding 503 bars (t - 503 through t - 1)
@@ -147,7 +174,7 @@ def build_security_sample_index(
             valid_count = cum_valid[win_end] - cum_valid[win_start]
             if valid_count != min_preceding_bars:
                 input_valid = False
-                excl_reason = "NONFINITE_INPUT_BAR"
+                excl_reason = "INVALID_BAR_IN_INPUT_WINDOW"
             elif has_segments and (segments[win_start] != segments[win_end - 1]):
                 input_valid = False
                 excl_reason = "GAP_IN_INPUT_WINDOW"
@@ -176,6 +203,39 @@ def build_security_sample_index(
         ))
 
     return records
+
+
+def filter_admitted_sample_ids(
+    records: List[SampleIndexRecord],
+    start_session: str,
+    end_session: str,
+    require_target: bool = True,
+    max_target_maturity: Optional[str] = None,
+    max_bank_maturity: Optional[str] = None,
+) -> List[SampleIndexRecord]:
+    """Filter and return strictly admitted sample records for a date range.
+
+    Enforces that:
+    1. Session falls strictly within [start_session, end_session].
+    2. input_window_valid is True (all preceding 503 bars are valid).
+    3. If require_target: target_63_valid is True, and matures <= max_target_maturity.
+    4. If max_bank_maturity: bank_126_valid is True, and matures <= max_bank_maturity.
+    """
+    admitted = []
+    for r in records:
+        if start_session <= r.session <= end_session:
+            if not r.input_window_valid:
+                continue
+            if require_target:
+                if not r.target_63_valid:
+                    continue
+                if max_target_maturity is not None and r.target_63_available_at > max_target_maturity:
+                    continue
+            if max_bank_maturity is not None:
+                if not r.bank_126_valid or r.bank_126_available_at > max_bank_maturity:
+                    continue
+            admitted.append(r)
+    return admitted
 
 
 def partition_sample_index(

@@ -51,7 +51,7 @@ except ImportError:
 from memory_study_v2.backbones import MLPAnnual, TransformerAnnual
 from memory_study_v2.canonical_data import align_to_venue_calendar, build_total_return_bars, validate_raw_bars, CorporateAction
 from memory_study_v2.venue_calendar import VenueCalendar
-from memory_study_v2.sample_index import build_security_sample_index
+from memory_study_v2.sample_index import build_security_sample_index, filter_admitted_sample_ids, SampleIndexRecord
 from memory_study_v2.contracts import to_canonical_json
 from memory_study_v2.execution import PortfolioAccount
 from memory_study_v2.features import compute_technical_features, fit_scaler
@@ -195,11 +195,33 @@ def run_connected_restricted_pilot(
         "US_MSFT", tr_df1, venue_calendar=_vc, evaluation_year=2016
     )
 
-    # Chronological partition indices:
-    # Feature warmup requirement: 252 bars for features + 252 bars for representation -> t >= 503
-    train_indices = list(range(503, 561))  # 2014-12-31 to 2015-03-25 (58 sessions)
-    val_indices = list(range(630, 681))    # 2015-07-06 to 2015-09-15 (51 sessions)
-    eval_indices = list(range(756, 806))   # 2016-01-04 to 2016-03-15 (50 sessions)
+    # Declared pilot partition date bounds (C1)
+    train_start_sess = "2014-12-31"
+    train_end_sess = "2015-03-25"
+    val_start_sess = "2015-07-06"
+    val_end_sess = "2015-09-15"
+    eval_start_sess = "2016-01-04"
+    eval_end_sess = "2016-03-15"
+
+    # Filter admitted sample IDs through shared admission function (Finding 3 / F3)
+    admitted_train_0 = filter_admitted_sample_ids(
+        sample_records_0, train_start_sess, train_end_sess, require_target=True, max_target_maturity=val_start_sess
+    )
+    admitted_train_1 = filter_admitted_sample_ids(
+        sample_records_1, train_start_sess, train_end_sess, require_target=True, max_target_maturity=val_start_sess
+    )
+    admitted_val_0 = filter_admitted_sample_ids(
+        sample_records_0, val_start_sess, val_end_sess, require_target=True, max_target_maturity=eval_start_sess
+    )
+    admitted_val_1 = filter_admitted_sample_ids(
+        sample_records_1, val_start_sess, val_end_sess, require_target=True, max_target_maturity=eval_start_sess
+    )
+    admitted_eval_0 = filter_admitted_sample_ids(
+        sample_records_0, eval_start_sess, eval_end_sess, require_target=False
+    )
+    admitted_eval_1 = filter_admitted_sample_ids(
+        sample_records_1, eval_start_sess, eval_end_sess, require_target=False
+    )
 
     # Verify warmup boundary rule: bar 503 valid, bar 502 invalid
     assert sample_records_0[503].input_window_valid is True, "Bar 503 must be input_window_valid"
@@ -207,9 +229,50 @@ def run_connected_restricted_pilot(
     assert sample_records_1[503].input_window_valid is True, "Bar 503 must be input_window_valid"
     assert sample_records_1[502].input_window_valid is False, "Bar 502 must be invalid due to 503-bar warmup rule"
 
-    train_qids = [sample_records_0[t].query_id for t in train_indices] + [sample_records_1[t].query_id for t in train_indices]
-    val_qids = [sample_records_0[t].query_id for t in val_indices] + [sample_records_1[t].query_id for t in val_indices]
-    eval_qids = [sample_records_0[t].query_id for t in eval_indices] + [sample_records_1[t].query_id for t in eval_indices]
+    # Session to row index lookup map
+    sess_to_idx_0 = {str(row["session"]): i for i, row in tr_df0.iterrows()}
+    sess_to_idx_1 = {str(row["session"]): i for i, row in tr_df1.iterrows()}
+
+    # Feature scaler fitted strictly on training partition (cutoff 2015-03-25) (C1)
+    scaler = fit_scaler(feats0, training_cutoff=train_end_sess)
+
+    # Canonical dataset loader consuming strictly admitted sample records (F3)
+    def load_from_admitted_ids(
+        records: List[SampleIndexRecord],
+        feats_df: pd.DataFrame,
+        labels_df: pd.DataFrame,
+        sess_map: Dict[str, int],
+        scaler_obj: Any,
+        is_eval: bool = False,
+    ):
+        reps = []
+        targets = []
+        qids = []
+        for r in records:
+            # Assert that EVERY consumed ID satisfies required input and label conditions
+            assert r.input_window_valid is True, f"Consumed record {r.query_id} must satisfy input_window_valid"
+            idx = sess_map[r.session]
+            rep = extract_annual_representation(feats_df, idx, scaler_obj)
+            reps.append(rep)
+            qids.append(r.query_id)
+            if not is_eval:
+                assert r.target_63_valid is True, f"Consumed training/validation record {r.query_id} must have target_63_valid"
+                t_val = float(labels_df.loc[idx, "target_value"])
+                assert np.isfinite(t_val), f"Consumed record {r.query_id} target must be finite and organic"
+                targets.append(t_val)
+        return reps, targets, qids
+
+    # Load representations and targets using strictly the admitted records
+    reps0_train, targets0_train, train_qids_0 = load_from_admitted_ids(admitted_train_0, feats0, labels0, sess_to_idx_0, scaler)
+    reps1_train, targets1_train, train_qids_1 = load_from_admitted_ids(admitted_train_1, feats1, labels1, sess_to_idx_1, scaler)
+
+    reps0_val, targets0_val, val_qids_0 = load_from_admitted_ids(admitted_val_0, feats0, labels0, sess_to_idx_0, scaler)
+    reps1_val, targets1_val, val_qids_1 = load_from_admitted_ids(admitted_val_1, feats1, labels1, sess_to_idx_1, scaler)
+
+    eval_indices = [sess_to_idx_0[r.session] for r in admitted_eval_0]
+    eval_qids = [r.query_id for r in admitted_eval_0] + [r.query_id for r in admitted_eval_1]
+    train_qids = train_qids_0 + train_qids_1
+    val_qids = val_qids_0 + val_qids_1
 
     report["data_admission"] = {
         "status": "ADMISSION_VERIFIED",
@@ -217,22 +280,12 @@ def run_connected_restricted_pilot(
         "val_query_ids_count": len(val_qids),
         "eval_query_ids_count": len(eval_qids),
         "bank_query_ids_count": len(train_qids),
+        "every_consumed_id_verified": True,
     }
 
-    train_start_sess = str(tr_df0.iloc[train_indices[0]]["session"])
-    train_end_sess = str(tr_df0.iloc[train_indices[-1]]["session"])
-    train_max_target_mat = str(tr_df0.iloc[train_indices[-1] + 63]["session"])
-    train_max_bank_mat = str(tr_df0.iloc[train_indices[-1] + 126]["session"])
-
-    val_start_sess = str(tr_df0.iloc[val_indices[0]]["session"])
-    val_end_sess = str(tr_df0.iloc[val_indices[-1]]["session"])
-    val_max_target_mat = str(tr_df0.iloc[val_indices[-1] + 63]["session"])
-
-    eval_start_sess = str(tr_df0.iloc[eval_indices[0]]["session"])
-    eval_end_sess = str(tr_df0.iloc[eval_indices[-1]]["session"])
-
-    # Feature scaler fitted strictly on training partition (cutoff 2015-03-25) (C1)
-    scaler = fit_scaler(feats0, training_cutoff=train_end_sess)
+    train_max_target_mat = max(r.target_63_available_at for r in admitted_train_0)
+    train_max_bank_mat = max(r.bank_126_available_at for r in admitted_train_0)
+    val_max_target_mat = max(r.target_63_available_at for r in admitted_val_0)
 
     # Enforce strict chronological assertions (C1)
     assert train_end_sess == "2015-03-25", f"Train end expected 2015-03-25, got {train_end_sess}"
@@ -240,23 +293,6 @@ def run_connected_restricted_pilot(
     assert val_max_target_mat < eval_start_sess, f"Val targets ({val_max_target_mat}) must mature before eval start ({eval_start_sess})"
     assert train_max_bank_mat < eval_start_sess, f"Bank records ({train_max_bank_mat}) must mature before eval start ({eval_start_sess})"
     assert eval_start_sess >= "2016-01-01", f"Evaluation start ({eval_start_sess}) must be in fold 2016"
-
-    # Extract representations for train and val sets
-    reps0_train = [extract_annual_representation(feats0, t, scaler) for t in train_indices]
-    reps1_train = [extract_annual_representation(feats1, t, scaler) for t in train_indices]
-    targets0_train = [float(labels0.loc[t, "target_value"]) for t in train_indices]
-    targets1_train = [float(labels1.loc[t, "target_value"]) for t in train_indices]
-
-    reps0_val = [extract_annual_representation(feats0, t, scaler) for t in val_indices]
-    reps1_val = [extract_annual_representation(feats1, t, scaler) for t in val_indices]
-    targets0_val = [float(labels0.loc[t, "target_value"]) for t in val_indices]
-    targets1_val = [float(labels1.loc[t, "target_value"]) for t in val_indices]
-
-    # Verify organic label validity: NO imputation, NO fallback to 0.01
-    assert all(np.isfinite(targets0_train)), "All AAPL train targets must be organic and finite"
-    assert all(np.isfinite(targets1_train)), "All MSFT train targets must be organic and finite"
-    assert all(np.isfinite(targets0_val)), "All AAPL val targets must be organic and finite"
-    assert all(np.isfinite(targets1_val)), "All MSFT val targets must be organic and finite"
 
     report["phases_executed"].append("feature_engineering")
 
@@ -354,18 +390,16 @@ def run_connected_restricted_pilot(
     # -------------------------------------------------------------------------
     bank_records: List[BankRecord] = []
     all_reps_train = reps0_train + reps1_train
-    for i, (r, tgt) in enumerate(zip(all_reps_train, all_train_targets)):
-        sec = "US_AAPL" if i < len(reps0_train) else "US_MSFT"
-        orig_t = train_indices[i % len(train_indices)]
-        mat_sess = str(tr_df0.iloc[orig_t + 126]["session"])
+    all_admitted_train = admitted_train_0 + admitted_train_1
+    for i, (r, tgt, rec_meta) in enumerate(zip(all_reps_train, all_train_targets, all_admitted_train)):
         bank_records.append(BankRecord(
             record_id=i + 1,
-            security_id=sec,
-            session_origin=r.session_t,
-            session_126_maturity=mat_sess,
+            security_id=rec_meta.security_id,
+            session_origin=rec_meta.session,
+            session_126_maturity=rec_meta.bank_126_available_at,
             vector=r.flattened_vector,
             target_63=tgt,
-            session_ordinal=i,
+            session_ordinal=rec_meta.session_ordinal,
         ))
     bank = MemoryBank(bank_records)
     for rec in bank_records:
@@ -418,6 +452,26 @@ def run_connected_restricted_pilot(
     )[0]
     assert tie_bat.neighbor_ids == [5, 50, 100], f"Tie-breaking failed on {device.type}: got {tie_bat.neighbor_ids}"
 
+    # 3. Truncated-candidate boundary fixture on device (bank N=20 > buffer_size=5, closer candidate outside pool)
+    np.random.seed(123)
+    trunc_q = np.random.randn(vec_dim).astype(np.float32) * 40.0
+    trunc_records = []
+    for i in range(5):
+        v = trunc_q + np.random.randn(vec_dim).astype(np.float32) * 0.1
+        trunc_records.append(BankRecord(record_id=i + 1, security_id=f"SEC_{i}", session_origin="2015-01-01", session_126_maturity="2017-06-01", vector=v, target_63=0.01 * (i + 1), session_ordinal=i + 1))
+    v_close = trunc_q + np.random.randn(vec_dim).astype(np.float32) * 0.01
+    trunc_records.append(BankRecord(record_id=6, security_id="SEC_CLOSE", session_origin="2015-01-01", session_126_maturity="2017-06-01", vector=v_close, target_63=0.06, session_ordinal=6))
+    for i in range(7, 21):
+        v = trunc_q + np.random.randn(vec_dim).astype(np.float32) * 0.5
+        trunc_records.append(BankRecord(record_id=i, security_id=f"SEC_{i}", session_origin="2015-01-01", session_126_maturity="2017-06-01", vector=v, target_63=0.01 * i, session_ordinal=i))
+    trunc_bank = MemoryBank(trunc_records)
+    trunc_bank.precompute_bank_norms()
+
+    ref_trunc = retrieve_mem_sim(trunc_bank, trunc_q, "QUERY_SEC", k=3)
+    bat_trunc = retrieve_mem_sim_batch(trunc_bank, trunc_q.reshape(1, -1), ["QUERY_SEC"], k=3, start_buffer_size=5, use_gpu=(device.type == "cuda"))[0]
+    assert ref_trunc.neighbor_ids == bat_trunc.neighbor_ids, f"Truncated boundary test failed on {device.type}: expected {ref_trunc.neighbor_ids}, got {bat_trunc.neighbor_ids}"
+    assert np.allclose(ref_trunc.neighbor_distances, bat_trunc.neighbor_distances, atol=1e-5), "Truncated boundary distance mismatch"
+
     eval_r0_list = [extract_annual_representation(feats0, t, scaler) for t in eval_indices]
     eval_r1_list = [extract_annual_representation(feats1, t, scaler) for t in eval_indices]
 
@@ -448,6 +502,7 @@ def run_connected_restricted_pilot(
         "parity_with_reference_passed": True,
         "cancellation_fixture_passed": True,
         "tie_breaking_passed": True,
+        "truncated_boundary_expansion_passed": True,
     }
 
     queries_mem: List[PredictionQuery] = []
@@ -796,8 +851,10 @@ def run_connected_restricted_pilot(
         },
         "verifications": {
             "data_admission_verified": True,
+            "every_consumed_id_verified": True,
             "cuda_recovery_verified": report.get("recovery_verification", {}).get("status") == "RECOVERY_VERIFIED",
             "retrieval_parity_verified": report.get("retrieval_verification", {}).get("status") == "RETRIEVAL_VERIFIED",
+            "truncated_boundary_expansion_verified": report.get("retrieval_verification", {}).get("truncated_boundary_expansion_passed", False),
             "release_verified": verif["status"] == "RELEASE_VERIFIED",
             "replay_verified": replay["status"] == "REPLAY_VERIFIED",
             "compounded_nav_reconciled": True,

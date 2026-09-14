@@ -231,14 +231,59 @@ def retrieve_mem_sim_batch(
                     buffer_size = min(buffer_size * 2, bank.N)
                     continue
 
-                # Boundary ambiguity check: compare pool boundary approx distance against max accepted
+                # Boundary ambiguity verification with established mathematical error bound:
+                pool_discrepancies = np.abs(dist_row[candidate_pool] - refined_pool_dists)
+                max_pool_discrepancy = float(np.max(pool_discrepancies)) if len(pool_discrepancies) > 0 else 0.0
+
+                D_dim = query_vec.shape[0]
+                eps_32 = float(np.finfo(np.float32).eps)
+                gamma_D = (D_dim * eps_32) / max(1e-12, (1.0 - D_dim * eps_32))
+                q_norm_sq = float(np.dot(query_vec.astype(np.float64), query_vec.astype(np.float64)))
+                theoretical_slack = 2.0 * gamma_D * (q_norm_sq + float(np.max(bank._bank_norms_sq)))
+                err_bound = max(2.0 * max_pool_discrepancy, theoretical_slack, 1e-4)
+
                 max_approx_in_pool = float(np.max(dist_row[candidate_pool]))
                 max_accepted = accepted_distances[-1]
-                if max_approx_in_pool - 1e-5 <= max_accepted:
-                    buffer_size = min(buffer_size * 2, bank.N)
-                    continue
 
-                # Certified!
+                # If an uninspected candidate could have true distance <= max_accepted, expand or fall back:
+                if max_approx_in_pool - err_bound <= max_accepted:
+                    new_buffer_size = min(buffer_size * 2, bank.N)
+                    if new_buffer_size == buffer_size or new_buffer_size >= bank.N:
+                        # Fallback to direct reference calculation across all bank records
+                        # whenever the truncated ordering cannot be certified within buffer
+                        full_ref_dists = bank.refine_candidate_distances(query_vec, np.arange(bank.N))
+                        sort_order_full = np.lexsort((bank.record_ids, full_ref_dists))
+                        sorted_candidates = np.arange(bank.N)[sort_order_full]
+                        sorted_refined_dists = full_ref_dists[sort_order_full]
+                        accepted_indices.clear()
+                        accepted_distances.clear()
+                        sec_counts.clear()
+                        sec_ordinals.clear()
+                        for idx, d_val in zip(sorted_candidates, sorted_refined_dists):
+                            sec_id = bank.security_ids[idx]
+                            if sec_id == query_sec:
+                                continue
+                            count = sec_counts.get(sec_id, 0)
+                            if count >= max_per_security:
+                                continue
+                            cand_ord = int(bank.session_ordinals[idx])
+                            past_ords = sec_ordinals.get(sec_id, [])
+                            if any(abs(cand_ord - p_ord) < min_spacing_sessions for p_ord in past_ords):
+                                continue
+                            accepted_indices.append(idx)
+                            accepted_distances.append(float(d_val))
+                            sec_counts[sec_id] = count + 1
+                            if sec_id not in sec_ordinals:
+                                sec_ordinals[sec_id] = []
+                            sec_ordinals[sec_id].append(cand_ord)
+                            if len(accepted_indices) == k:
+                                break
+                        break
+                    else:
+                        buffer_size = new_buffer_size
+                        continue
+
+                # Certified: all uninspected candidates have true distance > max_accepted
                 break
 
             if len(accepted_indices) < k:
