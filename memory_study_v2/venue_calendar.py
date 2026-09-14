@@ -135,6 +135,13 @@ class VenueCalendar:
         self._session_set: Set[str] = set(self.sessions)
         # 0-based ordinal for each session date string
         self.ordinal: Dict[str, int] = {s: i for i, s in enumerate(self.sessions)}
+        self.is_inferred: bool = False
+        self.fallback_source: Optional[str] = None
+
+    @property
+    def schedule_hash(self) -> str:
+        """Deterministic SHA-256 hash of the session schedule."""
+        return hashlib.sha256("\n".join(self.sessions).encode("utf-8")).hexdigest()
 
     # ------------------------------------------------------------------
     # Public helpers
@@ -294,37 +301,32 @@ def get_venue_calendar() -> VenueCalendar:
     return _GLOBAL_CALENDAR
 
 
-_MARKET_CALENDARS: Dict[str, VenueCalendar] = {}
-
-
 def get_market_venue_calendar(
     market: str,
     custom_calendars: Optional[Dict[str, VenueCalendar]] = None,
     fixture_dir: Optional[Path] = None,
     data_cache_dir: Optional[Path] = None,
+    execution_mode: str = "production",
 ) -> VenueCalendar:
     """Resolve authoritative venue calendar for a specific market.
 
-    Order of resolution:
-    1. Direct override via `custom_calendars`.
-    2. US standard fixture via `get_venue_calendar()`.
-    3. Market fixture CSV `data/fixtures/{market.lower()}_trading_sessions.csv`.
-    4. Unique sorted session dates across parquets in `data_cache_dir` for `{market}_*.parquet`.
+    In production mode:
+    Requires an explicitly supplied, validated calendar for every requested market.
+    If fixture or custom calendar is missing, raises ValueError identifying the missing market.
+    Automatic parquet-derived inference and US-substitute fallbacks are strictly disabled.
+
+    In pilot mode:
+    Permissive fallbacks are permitted but explicitly recorded on the returned calendar.
     """
-    m_clean = str(market).strip()
-    if custom_calendars and m_clean in custom_calendars:
-        return custom_calendars[m_clean]
-
-    if m_clean in _MARKET_CALENDARS:
-        return _MARKET_CALENDARS[m_clean]
-
-    if m_clean.upper() == "US":
-        cal = get_venue_calendar()
-        _MARKET_CALENDARS[m_clean] = cal
-        return cal
+    m_clean = str(market).strip().upper()
+    if custom_calendars:
+        for k, v in custom_calendars.items():
+            if str(k).strip().upper() == m_clean:
+                return v
 
     f_dir = fixture_dir or (_FIXTURE_PATH.parent)
     cand_csv = f_dir / f"{m_clean.lower()}_trading_sessions.csv"
+
     if cand_csv.exists():
         sessions: List[str] = []
         with open(cand_csv, "r", encoding="utf-8") as f:
@@ -334,9 +336,20 @@ def get_market_venue_calendar(
                 if s:
                     sessions.append(s)
         cal = VenueCalendar(sessions=sessions)
-        _MARKET_CALENDARS[m_clean] = cal
         return cal
 
+    if m_clean == "US" and _FIXTURE_PATH.exists():
+        return get_venue_calendar()
+
+    # Missing authoritative calendar fixture
+    if execution_mode == "production":
+        raise ValueError(
+            f"Missing authoritative venue calendar for market '{m_clean}' (expected fixture '{cand_csv}'). "
+            "In production mode, every requested market requires an explicitly supplied, validated calendar fixture. "
+            "Parquet date inference and US-substitute fallbacks are strictly disabled."
+        )
+
+    # Permissive pilot fallbacks (explicitly recorded)
     c_dir = data_cache_dir or (_FIXTURE_PATH.parents[1] / "data" / "cache" / "ohlcv")
     if c_dir.exists():
         all_dates: Set[str] = set()
@@ -348,10 +361,11 @@ def get_market_venue_calendar(
                 continue
         if all_dates:
             cal = VenueCalendar(sessions=sorted(list(all_dates)))
-            _MARKET_CALENDARS[m_clean] = cal
+            cal.is_inferred = True
+            cal.fallback_source = f"parquet_date_inference:{m_clean}"
             return cal
 
-    # Fallback to US calendar if no market-specific calendar can be found
-    cal = get_venue_calendar()
-    _MARKET_CALENDARS[m_clean] = cal
+    cal = VenueCalendar(sessions=get_venue_calendar().sessions)
+    cal.is_inferred = True
+    cal.fallback_source = f"us_calendar_substitute:{m_clean}"
     return cal

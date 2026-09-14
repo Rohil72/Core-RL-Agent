@@ -1097,3 +1097,204 @@ def test_cached_completion_invalidates_on_scope_or_config_change(real_driver_env
     with open(comp_file, "r", encoding="utf-8") as f:
         comp_data2 = json.load(f)
     assert sorted(comp_data2["run_identity"]["requested_scope"]["securities"]) == ["US_AAPL", "US_MSFT"]
+
+
+def test_production_fails_on_missing_market_calendar_without_fallback(real_driver_env, tmp_path):
+    """Production mode strictly requires validated fixture calendar; fails closed without falling back to US or prices."""
+    from memory_study_v2.venue_calendar import get_market_venue_calendar
+
+    # 1. Non-existent / non-US market with no fixture calendar in production mode must fail closed
+    with pytest.raises(ValueError, match="Missing authoritative venue calendar for market 'JP'"):
+        get_market_venue_calendar("JP", execution_mode="production")
+
+    # In pilot mode, permissive fallback is allowed but explicitly marked
+    pilot_cal = get_market_venue_calendar("JP", execution_mode="pilot")
+    assert pilot_cal.is_inferred is True
+    assert pilot_cal.fallback_source == "us_calendar_substitute:JP"
+
+    # 2. End-to-end launcher in production mode with unmapped market fails upfront before training
+    out_dir = tmp_path / "prod_missing_cal"
+    with pytest.raises(ValueError, match="Missing authoritative venue calendar for market 'JP'"):
+        launch_a30_deployment(
+            config_path=real_driver_env["config_path"],
+            data_dir=real_driver_env["data_dir"],
+            output_dir=out_dir,
+            sample_ids_dir=real_driver_env["sample_ids_dir"],
+            authorize_production=True,
+            check_only=False,
+            selected_folds=[2020],
+            selected_securities=["JP_7203"],
+            execution_mode="production",
+        )
+
+
+def test_pipeline_reuse_invalidates_on_checkpoint_or_code_change(real_driver_env, tmp_path):
+    """Layer 1: Pipeline completion reuse is invalidated if checkpoint hash or code revision differs."""
+    out_dir = tmp_path / "pipe_reuse_test"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # 1. Initial complete run
+    receipt1 = launch_a30_deployment(
+        config_path=real_driver_env["config_path"],
+        data_dir=real_driver_env["data_dir"],
+        output_dir=out_dir,
+        sample_ids_dir=real_driver_env["sample_ids_dir"],
+        authorize_production=True,
+        check_only=False,
+        selected_folds=[2020],
+        selected_securities=["US_AAPL", "US_MSFT"],
+        execution_mode="pilot",
+        driver_fn=None,
+        driver_kwargs={
+            "min_epochs": 1,
+            "max_epochs": 1,
+            "micro_batch_size": 16,
+            "effective_batch_size": 32,
+            "code_revision": "initial_code_rev_001",
+        },
+    )
+    assert receipt1["execution"]["status"] == "PRODUCTION_SUCCESS"
+    assert receipt1["execution"]["driver_result"].get("reused_cached_completion") is not True
+
+    # Immediate rerun with identical revision and checkpoints -> reuses cached completion
+    receipt_reused = launch_a30_deployment(
+        config_path=real_driver_env["config_path"],
+        data_dir=real_driver_env["data_dir"],
+        output_dir=out_dir,
+        sample_ids_dir=real_driver_env["sample_ids_dir"],
+        authorize_production=True,
+        check_only=False,
+        selected_folds=[2020],
+        selected_securities=["US_AAPL", "US_MSFT"],
+        execution_mode="pilot",
+        driver_fn=None,
+        driver_kwargs={
+            "min_epochs": 1,
+            "max_epochs": 1,
+            "micro_batch_size": 16,
+            "effective_batch_size": 32,
+            "code_revision": "initial_code_rev_001",
+        },
+    )
+    assert receipt_reused["execution"]["driver_result"].get("reused_cached_completion") is True
+
+    # 2. Invalidate via code revision change
+    receipt_code_changed = launch_a30_deployment(
+        config_path=real_driver_env["config_path"],
+        data_dir=real_driver_env["data_dir"],
+        output_dir=out_dir,
+        sample_ids_dir=real_driver_env["sample_ids_dir"],
+        authorize_production=True,
+        check_only=False,
+        selected_folds=[2020],
+        selected_securities=["US_AAPL", "US_MSFT"],
+        execution_mode="pilot",
+        driver_fn=None,
+        driver_kwargs={
+            "min_epochs": 1,
+            "max_epochs": 1,
+            "micro_batch_size": 16,
+            "effective_batch_size": 32,
+            "code_revision": "modified_code_rev_002",
+        },
+    )
+    assert receipt_code_changed["execution"]["status"] == "PRODUCTION_SUCCESS"
+    assert receipt_code_changed["execution"]["driver_result"].get("reused_cached_completion") is not True
+
+    # 3. Invalidate via checkpoint modification on disk
+    best_pt = out_dir / "fold_2020" / "checkpoints_MLP_ANNUAL_966_64_128_1_seed7" / "best_checkpoint.pt"
+    assert best_pt.exists()
+    # Overwrite best_checkpoint with modified bytes
+    orig_bytes = best_pt.read_bytes()
+    best_pt.write_bytes(orig_bytes + b"tampered_bytes")
+
+    receipt_chk_changed = launch_a30_deployment(
+        config_path=real_driver_env["config_path"],
+        data_dir=real_driver_env["data_dir"],
+        output_dir=out_dir,
+        sample_ids_dir=real_driver_env["sample_ids_dir"],
+        authorize_production=True,
+        check_only=False,
+        selected_folds=[2020],
+        selected_securities=["US_AAPL", "US_MSFT"],
+        execution_mode="pilot",
+        driver_fn=None,
+        driver_kwargs={
+            "min_epochs": 1,
+            "max_epochs": 1,
+            "micro_batch_size": 16,
+            "effective_batch_size": 32,
+            "code_revision": "modified_code_rev_002",
+        },
+    )
+    assert receipt_chk_changed["execution"]["status"] == "PRODUCTION_SUCCESS"
+    assert receipt_chk_changed["execution"]["driver_result"].get("reused_cached_completion") is not True
+
+
+def test_training_cache_invalidates_on_inputs_or_config_change(real_driver_env, tmp_path):
+    """Layer 2: Invalidating pipeline completion does not blindly reuse incompatible training checkpoint."""
+    out_dir = tmp_path / "train_cache_test"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # 1. Run with effective_batch_size=32
+    receipt1 = launch_a30_deployment(
+        config_path=real_driver_env["config_path"],
+        data_dir=real_driver_env["data_dir"],
+        output_dir=out_dir,
+        sample_ids_dir=real_driver_env["sample_ids_dir"],
+        authorize_production=True,
+        check_only=False,
+        selected_folds=[2020],
+        selected_securities=["US_AAPL", "US_MSFT"],
+        execution_mode="pilot",
+        driver_fn=None,
+        driver_kwargs={
+            "min_epochs": 1,
+            "max_epochs": 1,
+            "micro_batch_size": 16,
+            "effective_batch_size": 32,
+        },
+    )
+    assert receipt1["execution"]["status"] == "PRODUCTION_SUCCESS"
+
+    chk_dir = out_dir / "fold_2020" / "checkpoints_MLP_ANNUAL_966_64_128_1_seed7"
+    job_comp_file = chk_dir / "job_completion.json"
+    assert job_comp_file.exists()
+    initial_comp = json.loads(job_comp_file.read_text(encoding="utf-8"))
+    initial_ident_sha = initial_comp["training_identity"]["job_identity_sha256"]
+
+    # 2. Invalidate pipeline completion
+    (out_dir / "pipeline_completion.json").unlink(missing_ok=True)
+    (out_dir / "pipeline_summary.json").unlink(missing_ok=True)
+
+    # 3. Re-run with different training configuration (effective_batch_size=64)
+    receipt2 = launch_a30_deployment(
+        config_path=real_driver_env["config_path"],
+        data_dir=real_driver_env["data_dir"],
+        output_dir=out_dir,
+        sample_ids_dir=real_driver_env["sample_ids_dir"],
+        authorize_production=True,
+        check_only=False,
+        selected_folds=[2020],
+        selected_securities=["US_AAPL", "US_MSFT"],
+        execution_mode="pilot",
+        driver_fn=None,
+        driver_kwargs={
+            "min_epochs": 1,
+            "max_epochs": 1,
+            "micro_batch_size": 16,
+            "effective_batch_size": 64,
+        },
+    )
+    assert receipt2["execution"]["status"] == "PRODUCTION_SUCCESS"
+
+    # Verify Stage 1 detected identity mismatch and trained fresh
+    new_comp = json.loads(job_comp_file.read_text(encoding="utf-8"))
+    new_ident_sha = new_comp["training_identity"]["job_identity_sha256"]
+    assert new_ident_sha != initial_ident_sha
+    assert (
+        new_comp["training_identity"]["neural_configuration_sha256"]
+        != initial_comp["training_identity"]["neural_configuration_sha256"]
+    )
+    assert new_comp["artifacts"]["best_checkpoint"]["sha256"]
+

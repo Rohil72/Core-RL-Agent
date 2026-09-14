@@ -315,17 +315,22 @@ def compute_scientific_run_identity(
     folds_to_run: List[int],
     context: Dict[str, Any],
     checkpoint_hashes: Optional[Dict[str, str]] = None,
+    calendar_hashes: Optional[Dict[str, str]] = None,
+    code_revision: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Compute stable scientific run identity excluding volatile timestamps (finding 3)."""
-    try:
-        git_rev = subprocess.check_output(
-            ["git", "rev-parse", "HEAD"],
-            cwd=REPO_ROOT,
-            stderr=subprocess.DEVNULL,
-            text=True,
-        ).strip()
-    except Exception:
-        git_rev = "UNTRACKED_OR_DEV"
+    if code_revision is None:
+        try:
+            git_rev = subprocess.check_output(
+                ["git", "rev-parse", "HEAD"],
+                cwd=REPO_ROOT,
+                stderr=subprocess.DEVNULL,
+                text=True,
+            ).strip()
+        except Exception:
+            git_rev = "UNTRACKED_OR_DEV"
+    else:
+        git_rev = str(code_revision).strip()
 
     sci_config: Dict[str, Any] = {}
     for k in ("folds", "universe", "execution", "neural", "memory", "mixture", "gate", "analysis", "cost_stress"):
@@ -352,11 +357,57 @@ def compute_scientific_run_identity(
         "code_revision": git_rev,
         "scientific_configuration_sha256": sci_cfg_sha,
         "sample_manifest_sha256": fold_sample_shas,
+        "calendar_hashes": calendar_hashes or {},
         "requested_scope": scope,
         "checkpoint_hashes": checkpoint_hashes or {},
     }
     identity["identity_sha256"] = hashlib.sha256(to_canonical_json(identity).encode("utf-8")).hexdigest()
     return identity
+
+
+def compute_training_job_identity(
+    fold_year: int,
+    arch: str,
+    seed: int,
+    neural_cfg: Dict[str, Any],
+    train_record_ids: List[str],
+    train_markets: List[str],
+    scaler_cutoff: str,
+    scaler_start: str,
+    calendar_hashes: Dict[str, str],
+    code_revision: str,
+) -> Dict[str, Any]:
+    """Compute stable, immutable identity for a specific neural training job."""
+    sorted_qids = sorted(train_record_ids)
+    train_ids_sha = hashlib.sha256("\n".join(sorted_qids).encode("utf-8")).hexdigest()
+
+    relevant_neural = {
+        k: neural_cfg.get(k)
+        for k in (
+            "learning_rate", "weight_decay", "betas", "epsilon", "effective_batch", "effective_batch_size",
+            "micro_batch_size", "max_epochs", "min_epochs", "early_stop_patience", "patience",
+            "minimum_improvement", "gradient_norm_clip", "optimizer", "transformer_dropout",
+        )
+        if k in neural_cfg
+    }
+    neural_sha = hashlib.sha256(to_canonical_json(relevant_neural).encode("utf-8")).hexdigest()
+
+    job_ident = {
+        "fold_year": fold_year,
+        "architecture": arch,
+        "seed": seed,
+        "code_revision": code_revision,
+        "neural_configuration_sha256": neural_sha,
+        "train_sample_ids_sha256": train_ids_sha,
+        "train_markets": sorted(list(set(train_markets))),
+        "calendar_hashes": {m: calendar_hashes[m] for m in set(train_markets) if m in calendar_hashes},
+        "preprocessing": {
+            "scaler_start": str(scaler_start),
+            "scaler_cutoff": str(scaler_cutoff),
+        },
+    }
+    job_ident["job_identity_sha256"] = hashlib.sha256(to_canonical_json(job_ident).encode("utf-8")).hexdigest()
+    return job_ident
 
 def prepare_fold_data(
     fold_year: int,
@@ -366,6 +417,7 @@ def prepare_fold_data(
     config: Dict[str, Any] = None,
     selected_securities: Optional[List[str]] = None,
     custom_calendars: Optional[Dict[str, Any]] = None,
+    execution_mode: str = "production",
 ) -> Dict[str, Any]:
     """Load admitted samples, features, representations, and tensors for a fold across native market calendars."""
     if config is None:
@@ -408,7 +460,12 @@ def prepare_fold_data(
     for p in parquet_files:
         sec_id = p.stem
         mkt_code = sec_id.split("_")[0] if "_" in sec_id else (sec_id.split(":")[0] if ":" in sec_id else "US")
-        sec_cal = get_market_venue_calendar(mkt_code, custom_calendars=custom_calendars, data_cache_dir=data_dir)
+        sec_cal = get_market_venue_calendar(
+            mkt_code,
+            custom_calendars=custom_calendars,
+            data_cache_dir=data_dir,
+            execution_mode=execution_mode,
+        )
         market_calendars[mkt_code] = sec_cal
         venue_sessions = sec_cal.sessions_in_range("2010-01-01", f"{fold_year}-12-31")
 
@@ -560,6 +617,8 @@ def prepare_fold_data(
         "bank_records": bank_records,
         "bank": bank,
         "scaler": scaler,
+        "scaler_start": train_start,
+        "scaler_cutoff": train_end,
         "sec_info": sec_info,
         "market_calendars": market_calendars,
     }
@@ -1268,37 +1327,110 @@ def run_production_experiment_driver(context: Dict[str, Any]) -> Dict[str, Any]:
     study_scope = "FULL_PRODUCTION" if is_full_study else "EXPLICIT_SUBSET"
     allow_reduced_arms = not is_full_study
 
-    current_run_identity = compute_scientific_run_identity(config, folds_to_run, context)
+    # Upfront Market Calendar Validation
+    requested_markets: Set[str] = set()
+    selected_secs = context.get("selected_securities")
+    if selected_secs:
+        for s in selected_secs:
+            m = s.split("_")[0] if "_" in s else (s.split(":")[0] if ":" in s else "US")
+            requested_markets.add(m.upper())
+    else:
+        for p in data_dir.glob("*.parquet"):
+            stem = p.stem
+            m = stem.split("_")[0] if "_" in stem else (stem.split(":")[0] if ":" in stem else "US")
+            requested_markets.add(m.upper())
+    if not requested_markets:
+        requested_markets.add("US")
+
+    resolved_market_calendars: Dict[str, VenueCalendar] = {}
+    permissive_calendar_fallbacks: Dict[str, str] = {}
+    for mkt in sorted(requested_markets):
+        cal = get_market_venue_calendar(
+            market=mkt,
+            custom_calendars=context.get("custom_calendars"),
+            data_cache_dir=data_dir,
+            execution_mode=execution_mode,
+        )
+        resolved_market_calendars[mkt] = cal
+        if getattr(cal, "is_inferred", False):
+            permissive_calendar_fallbacks[mkt] = getattr(cal, "fallback_source", "inferred")
+
+    calendar_hashes = {m: cal.schedule_hash for m, cal in resolved_market_calendars.items()}
+
+    current_run_identity = compute_scientific_run_identity(
+        config=config,
+        folds_to_run=folds_to_run,
+        context=context,
+        calendar_hashes=calendar_hashes,
+        code_revision=context.get("code_revision"),
+    )
 
     # 1. Check existing verified completion on restart, bound to stable run identity
-    pipeline_completion_file = output_dir / "pipeline_completion.json"
-    release_analysis_dir = output_dir / "release_analysis"
-    if pipeline_completion_file.exists() and release_analysis_dir.exists() and not context.get("force_rerun", False):
+    pipeline_completion_file = output_dir / "pipeline_summary.json"
+    legacy_completion_file = output_dir / "pipeline_completion.json"
+    release_manifest_file = output_dir / "release_manifest.json"
+    release_analysis_dir = output_dir / "analysis"
+    if not release_analysis_dir.exists():
+        release_analysis_dir = output_dir / "release_analysis"
+
+    neural_cfg = config.get("neural", {})
+    seeds = context.get("seeds") or neural_cfg.get("seeds", [7, 17, 37])
+    architectures = context.get("architectures") or neural_cfg.get("architectures", [
+        "MLP_ANNUAL_966_64_128_1",
+        "TRANSFORMER_42x23_WIDTH64_HEADS4_LAYERS2_FF128_LATENT128",
+    ])
+
+    target_completion_file = pipeline_completion_file if pipeline_completion_file.exists() else legacy_completion_file
+    if target_completion_file.exists() and release_manifest_file.exists() and release_analysis_dir.exists() and not context.get("force_rerun", False):
         try:
-            with open(pipeline_completion_file, "r", encoding="utf-8") as f:
+            with open(target_completion_file, "r", encoding="utf-8") as f:
                 c_data = json.load(f)
             stored_identity = c_data.get("run_identity", {})
 
-            # Validate stable scientific identity match (finding 3)
+            # Compute current actual checkpoint hashes on disk right now
+            actual_chk_hashes: Dict[str, str] = {}
+            chk_missing = False
+            for f_year in folds_to_run:
+                for arch in architectures:
+                    for s_seed in seeds:
+                        jid = f"fold_{f_year}_{arch}_seed{s_seed}"
+                        c_pt = output_dir / f"fold_{f_year}" / f"checkpoints_{arch}_seed{s_seed}" / "best_checkpoint.pt"
+                        if c_pt.exists():
+                            actual_chk_hashes[jid] = hashlib.sha256(c_pt.read_bytes()).hexdigest()
+                        else:
+                            chk_missing = True
+                            actual_chk_hashes[jid] = "MISSING"
+
             mismatches = []
-            if stored_identity.get("requested_scope") != current_run_identity["requested_scope"]:
-                mismatches.append(f"scope mismatch: stored={stored_identity.get('requested_scope')} vs current={current_run_identity['requested_scope']}")
+            if stored_identity.get("code_revision") != current_run_identity["code_revision"]:
+                mismatches.append(f"code_revision mismatch: stored={stored_identity.get('code_revision')} vs current={current_run_identity['code_revision']}")
             if stored_identity.get("scientific_configuration_sha256") != current_run_identity["scientific_configuration_sha256"]:
                 mismatches.append("scientific configuration mismatch")
             if stored_identity.get("sample_manifest_sha256") != current_run_identity["sample_manifest_sha256"]:
                 mismatches.append("sample manifest mismatch")
+            if stored_identity.get("calendar_hashes") != current_run_identity["calendar_hashes"]:
+                mismatches.append("calendar hashes mismatch")
+            if stored_identity.get("requested_scope") != current_run_identity["requested_scope"]:
+                mismatches.append(f"scope mismatch: stored={stored_identity.get('requested_scope')} vs current={current_run_identity['requested_scope']}")
+            if chk_missing or stored_identity.get("checkpoint_hashes") != actual_chk_hashes:
+                mismatches.append("checkpoint hashes mismatch (stored vs current on disk)")
 
             if mismatches:
                 print(f"  [PIPELINE_SCOPE_MISMATCH] Cached completion invalidated: {'; '.join(mismatches)}")
                 pipeline_completion_file.unlink(missing_ok=True)
+                legacy_completion_file.unlink(missing_ok=True)
+                release_manifest_file.unlink(missing_ok=True)
             else:
                 replay_res = replay_analysis_bundle(release_analysis_dir, tolerance=1e-10, allow_reduced_arms=allow_reduced_arms)
                 print(f"  [PIPELINE_COMPLETE] Experiment already verified for identical run identity (Replay: {replay_res.get('status')}).")
                 c_data["replayed"] = True
+                c_data["reused_cached_completion"] = True
                 return c_data
         except Exception as e:
             print(f"  [PIPELINE_INVALID] Existing completion invalid ({e}); continuing with stage execution...")
             pipeline_completion_file.unlink(missing_ok=True)
+            legacy_completion_file.unlink(missing_ok=True)
+            release_manifest_file.unlink(missing_ok=True)
 
     runtime_cfg_path = output_dir / "runtime_config.authorized.json"
     runtime_cfg = dict(config)
@@ -1308,13 +1440,6 @@ def run_production_experiment_driver(context: Dict[str, Any]) -> Dict[str, Any]:
     runtime_cfg["authorized_at_utc"] = datetime.now(timezone.utc).isoformat()
     with open(runtime_cfg_path, "w", encoding="utf-8") as f:
         f.write(to_canonical_json(runtime_cfg))
-
-    neural_cfg = config.get("neural", {})
-    seeds = context.get("seeds") or neural_cfg.get("seeds", [7, 17, 37])
-    architectures = context.get("architectures") or neural_cfg.get("architectures", [
-        "MLP_ANNUAL_966_64_128_1",
-        "TRANSFORMER_42x23_WIDTH64_HEADS4_LAYERS2_FF128_LATENT128",
-    ])
 
     jobs_started: List[str] = []
     jobs_completed: List[str] = []
@@ -1343,6 +1468,7 @@ def run_production_experiment_driver(context: Dict[str, Any]) -> Dict[str, Any]:
             config=config,
             selected_securities=context.get("selected_securities"),
             custom_calendars=context.get("custom_calendars"),
+            execution_mode=execution_mode,
         )
         fold_data_by_year[fold_year] = fold_data
         print(f"  [Fold {fold_year}] Samples: Train={len(fold_data['train_y'])}, Val={len(fold_data['val_y'])}, Eval={len(fold_data['eval_records'])}, Bank={len(fold_data['bank_records'])}")
@@ -1360,15 +1486,44 @@ def run_production_experiment_driver(context: Dict[str, Any]) -> Dict[str, Any]:
                 best_pt = chk_dir / "best_checkpoint.pt"
                 last_pt = chk_dir / "last_checkpoint.pt"
                 preds_json = chk_dir / "predictions.json"
+                training_ident_file = chk_dir / "training_identity.json"
+
+                job_train_records = fold_data.get("train_records", [])
+                job_train_qids = [r.query_id for r in job_train_records]
+                effective_neural_cfg = dict(neural_cfg)
+                for k in ("min_epochs", "max_epochs", "micro_batch_size", "effective_batch_size", "effective_batch", "patience", "early_stop_patience", "learning_rate", "weight_decay"):
+                    if context.get(k) is not None:
+                        effective_neural_cfg[k] = context[k]
+                if "effective_batch_size" in effective_neural_cfg and "effective_batch" not in effective_neural_cfg:
+                    effective_neural_cfg["effective_batch"] = effective_neural_cfg["effective_batch_size"]
+                if "effective_batch" in effective_neural_cfg and "effective_batch_size" not in effective_neural_cfg:
+                    effective_neural_cfg["effective_batch_size"] = effective_neural_cfg["effective_batch"]
+
+                current_job_training_identity = compute_training_job_identity(
+                    fold_year=fold_year,
+                    arch=arch,
+                    seed=seed,
+                    neural_cfg=effective_neural_cfg,
+                    train_record_ids=job_train_qids,
+                    train_markets=list(fold_data.get("train_markets", [])),
+                    scaler_cutoff=str(fold_data.get("scaler_cutoff", "")),
+                    scaler_start=str(fold_data.get("scaler_start", "")),
+                    calendar_hashes=calendar_hashes,
+                    code_revision=current_run_identity["code_revision"],
+                )
 
                 if completion_marker.exists() and best_pt.exists() and preds_json.exists():
                     try:
                         with open(completion_marker, "r", encoding="utf-8") as f:
                             c_rec = json.load(f)
+                        stored_job_ident = c_rec.get("training_identity", {})
                         curr_best_sha = hashlib.sha256(best_pt.read_bytes()).hexdigest()
                         expected_best_sha = c_rec.get("artifacts", {}).get("best_checkpoint", {}).get("sha256")
-                        if curr_best_sha == expected_best_sha:
-                            print(f"  [COMPLETED] Job {job_id} already finished and verified.")
+                        if (
+                            stored_job_ident.get("job_identity_sha256") == current_job_training_identity["job_identity_sha256"]
+                            and curr_best_sha == expected_best_sha
+                        ):
+                            print(f"  [COMPLETED] Job {job_id} already finished and verified for identical training identity.")
                             jobs_completed.append(job_id)
                             completed_checkpoint_hashes[job_id] = curr_best_sha
                             if "MLP" in arch.upper():
@@ -1380,15 +1535,35 @@ def run_production_experiment_driver(context: Dict[str, Any]) -> Dict[str, Any]:
                             m.to(device)
                             trained_models[f"{arch}_seed{seed}"] = m
                             continue
+                        else:
+                            print(f"  [INCOMPATIBLE_TRAINING] Job {job_id} training identity or checkpoint digest mismatch; retraining...")
                     except Exception:
                         pass
                     completion_marker.unlink(missing_ok=True)
+                    best_pt.unlink(missing_ok=True)
+                    last_pt.unlink(missing_ok=True)
+                    preds_json.unlink(missing_ok=True)
+                    training_ident_file.unlink(missing_ok=True)
 
                 resume_from = None
                 if last_pt.exists() and not completion_marker.exists():
-                    print(f"  [RESUMABLE] Job {job_id} resuming from {last_pt}...")
-                    jobs_resumable.append(job_id)
-                    resume_from = last_pt
+                    is_resume_compatible = False
+                    if training_ident_file.exists():
+                        try:
+                            with open(training_ident_file, "r", encoding="utf-8") as f:
+                                saved_ident = json.load(f)
+                            if saved_ident.get("job_identity_sha256") == current_job_training_identity["job_identity_sha256"]:
+                                is_resume_compatible = True
+                        except Exception:
+                            is_resume_compatible = False
+                    if is_resume_compatible:
+                        print(f"  [RESUMABLE] Job {job_id} resuming from {last_pt}...")
+                        jobs_resumable.append(job_id)
+                        resume_from = last_pt
+                    else:
+                        print(f"  [INCOMPATIBLE_RESUME] Job {job_id} partial checkpoint incompatible with new training inputs/config; retraining fresh...")
+                        last_pt.unlink(missing_ok=True)
+                        best_pt.unlink(missing_ok=True)
 
                 if "MLP" in arch.upper():
                     model = MLPAnnual(seed=seed)
@@ -1400,6 +1575,9 @@ def run_production_experiment_driver(context: Dict[str, Any]) -> Dict[str, Any]:
                     dx = fold_data["dev_x_trans"]
 
                 print(f"  [TRAINING] Dispatching {job_id} on {device} (Mode: {execution_mode})...")
+                # Record training identity before running
+                with open(training_ident_file, "w", encoding="utf-8") as f:
+                    f.write(to_canonical_json(current_job_training_identity))
                 try:
                     trained_model, summary = train_backbone_model(
                         model=model,
@@ -1461,6 +1639,7 @@ def run_production_experiment_driver(context: Dict[str, Any]) -> Dict[str, Any]:
                     "architecture": arch,
                     "seed": seed,
                     "status": "STAGE_COMPLETED",
+                    "training_identity": current_job_training_identity,
                     "artifacts": {
                         "best_checkpoint": {"path": str(best_pt), "sha256": best_sha},
                         "last_checkpoint": {"path": str(last_pt), "sha256": last_sha},
@@ -1620,6 +1799,8 @@ def run_production_experiment_driver(context: Dict[str, Any]) -> Dict[str, Any]:
         folds_to_run=folds_to_run,
         context=context,
         checkpoint_hashes=completed_checkpoint_hashes,
+        calendar_hashes=calendar_hashes,
+        code_revision=current_run_identity["code_revision"],
     )
 
     pipeline_summary = {
@@ -1627,6 +1808,7 @@ def run_production_experiment_driver(context: Dict[str, Any]) -> Dict[str, Any]:
         "pipeline_stage": "RELEASE_VERIFIED",
         "study_scope": study_scope,
         "run_identity": final_run_identity,
+        "permissive_calendar_fallbacks": permissive_calendar_fallbacks,
         "configured_folds": all_configured_folds,
         "executed_folds": folds_to_run,
         "jobs_started": jobs_started,
@@ -1641,7 +1823,7 @@ def run_production_experiment_driver(context: Dict[str, Any]) -> Dict[str, Any]:
     }
     with open(pipeline_completion_file, "w", encoding="utf-8") as f:
         f.write(to_canonical_json(pipeline_summary))
-    with open(output_dir / "pipeline_summary.json", "w", encoding="utf-8") as f:
+    with open(output_dir / "pipeline_completion.json", "w", encoding="utf-8") as f:
         f.write(to_canonical_json(pipeline_summary))
 
     rel_artifacts = {
