@@ -31,9 +31,11 @@ if REPO_ROOT not in sys.path:
 
 import argparse
 from dataclasses import asdict
+from datetime import datetime, timezone
 import hashlib
 import json
 import math
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -41,9 +43,15 @@ import numpy as np
 import pandas as pd
 import torch
 
+try:
+    import psutil
+except ImportError:
+    psutil = None
+
 from memory_study_v2.backbones import MLPAnnual, TransformerAnnual
 from memory_study_v2.canonical_data import align_to_venue_calendar, build_total_return_bars, validate_raw_bars, CorporateAction
 from memory_study_v2.venue_calendar import VenueCalendar
+from memory_study_v2.sample_index import build_security_sample_index
 from memory_study_v2.contracts import to_canonical_json
 from memory_study_v2.execution import PortfolioAccount
 from memory_study_v2.features import compute_technical_features, fit_scaler
@@ -57,8 +65,22 @@ from memory_study_v2.memory import BankRecord, MemoryBank
 from memory_study_v2.predict import PredictionQuery, generate_and_seal_predictions
 from memory_study_v2.release import generate_release_checksums, verify_release_bundle
 from memory_study_v2.representations import extract_annual_representation
-from memory_study_v2.retrieval import retrieve_mem_sim
+from memory_study_v2.retrieval import retrieve_mem_sim, retrieve_mem_sim_batch
 from memory_study_v2.train import train_backbone_model
+
+
+def _get_rss_mb() -> float:
+    """Get resident set size in MB."""
+    if psutil is not None:
+        return float(psutil.Process().memory_info().rss / (1024.0 * 1024.0))
+    return 0.0
+
+
+def _get_vram_mb() -> float:
+    """Get peak VRAM allocated in MB."""
+    if torch.cuda.is_available():
+        return float(torch.cuda.max_memory_allocated() / (1024.0 * 1024.0))
+    return 0.0
 
 
 def _compute_sha256(filepath: Path) -> str:
@@ -82,13 +104,39 @@ def find_data_cache_dir() -> Path:
     raise FileNotFoundError("Could not find pre-2020 parquet cache directory with US_AAPL and US_MSFT.")
 
 
-def run_connected_restricted_pilot(output_dir: Path) -> Dict[str, Any]:
+def run_connected_restricted_pilot(
+    output_dir: Path,
+    use_cuda: Optional[bool] = None,
+) -> Dict[str, Any]:
     """Run complete end-to-end pipeline across all phases on pre-2020 candidate data (C1)."""
+    t_start = time.perf_counter()
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    # 0. CUDA Execution & Device Determination
+    if use_cuda is None:
+        use_cuda = torch.cuda.is_available()
+
+    if use_cuda:
+        if not torch.cuda.is_available():
+            raise RuntimeError("CUDA execution requested, but torch.cuda.is_available() is False.")
+        device = torch.device("cuda:0")
+        device_name = torch.cuda.get_device_name(0)
+        # Probe CUDA execution
+        probe = torch.ones(10, device=device)
+        if not probe.is_cuda:
+            raise RuntimeError("CUDA tensor probe failed to allocate on CUDA device.")
+    else:
+        device = torch.device("cpu")
+        device_name = "CPU"
+
     report: Dict[str, Any] = {
         "status": "CONNECTED_PILOT_SUCCESS",
+        "cuda_execution": {
+            "requested": use_cuda,
+            "device": device_name,
+            "is_cuda": (device.type == "cuda"),
+        },
         "phases_executed": [],
         "artifacts_generated": {},
     }
@@ -110,17 +158,12 @@ def run_connected_restricted_pilot(output_dir: Path) -> Dict[str, Any]:
     df_msft_raw["session"] = df_msft_raw["session"].astype(str)
 
     # Load venue schedule independently of price files (Finding 1 / C1)
-    # This guarantees ordinals and session sets are NOT derived from whatever
-    # files happen to be present.
     from memory_study_v2.venue_calendar import _FIXTURE_SHA256 as _VC_SHA256
     _vc = VenueCalendar()
     venue_sessions = _vc.sessions_in_range("2013-01-01", "2017-12-31")
     report["venue_calendar_sha"] = _VC_SHA256
 
-    # Reindex each security onto the authoritative venue schedule.
-    # Sessions where a security's bar is absent get NaN rows (status = "MISSING").
-    # We then pass only sessions from the schedule to align_to_venue_calendar
-    # so that the existing validation pipeline still works on the aligned frames.
+    # Reindex each security onto the authoritative venue schedule
     df0 = align_to_venue_calendar(df_aapl_raw, venue_sessions)
     df1 = align_to_venue_calendar(df_msft_raw, venue_sessions)
 
@@ -144,11 +187,37 @@ def run_connected_restricted_pilot(output_dir: Path) -> Dict[str, Any]:
     labels0 = compute_target_labels(tr_df0, venue_sessions=venue_sessions)
     labels1 = compute_target_labels(tr_df1, venue_sessions=venue_sessions)
 
+    # Data admission check: build and verify canonical sample index records (Finding 3 / F3)
+    sample_records_0 = build_security_sample_index(
+        "US_AAPL", tr_df0, venue_calendar=_vc, evaluation_year=2016
+    )
+    sample_records_1 = build_security_sample_index(
+        "US_MSFT", tr_df1, venue_calendar=_vc, evaluation_year=2016
+    )
+
     # Chronological partition indices:
     # Feature warmup requirement: 252 bars for features + 252 bars for representation -> t >= 503
     train_indices = list(range(503, 561))  # 2014-12-31 to 2015-03-25 (58 sessions)
     val_indices = list(range(630, 681))    # 2015-07-06 to 2015-09-15 (51 sessions)
     eval_indices = list(range(756, 806))   # 2016-01-04 to 2016-03-15 (50 sessions)
+
+    # Verify warmup boundary rule: bar 503 valid, bar 502 invalid
+    assert sample_records_0[503].input_window_valid is True, "Bar 503 must be input_window_valid"
+    assert sample_records_0[502].input_window_valid is False, "Bar 502 must be invalid due to 503-bar warmup rule"
+    assert sample_records_1[503].input_window_valid is True, "Bar 503 must be input_window_valid"
+    assert sample_records_1[502].input_window_valid is False, "Bar 502 must be invalid due to 503-bar warmup rule"
+
+    train_qids = [sample_records_0[t].query_id for t in train_indices] + [sample_records_1[t].query_id for t in train_indices]
+    val_qids = [sample_records_0[t].query_id for t in val_indices] + [sample_records_1[t].query_id for t in val_indices]
+    eval_qids = [sample_records_0[t].query_id for t in eval_indices] + [sample_records_1[t].query_id for t in eval_indices]
+
+    report["data_admission"] = {
+        "status": "ADMISSION_VERIFIED",
+        "train_query_ids_count": len(train_qids),
+        "val_query_ids_count": len(val_qids),
+        "eval_query_ids_count": len(eval_qids),
+        "bank_query_ids_count": len(train_qids),
+    }
 
     train_start_sess = str(tr_df0.iloc[train_indices[0]]["session"])
     train_end_sess = str(tr_df0.iloc[train_indices[-1]]["session"])
@@ -216,11 +285,50 @@ def run_connected_restricted_pilot(output_dir: Path) -> Dict[str, Any]:
     train_mkts = np.array(["US"] * N_tr)
     val_mkts = np.array(["US"] * N_va)
 
+    # Recovery Verification Check: An interrupted CUDA training run resumes correctly on the same machine
+    chk_recovery_dir = output_dir / "recovery_test_chk"
+    chk_recovery_dir.mkdir(parents=True, exist_ok=True)
+    mlp_full = MLPAnnual(seed=42)
+    trained_full, summary_full = train_backbone_model(
+        mlp_full, train_x_mlp, train_y, train_mkts,
+        val_x_mlp, val_y, val_mkts,
+        device=device, seed=42, min_epochs=2, max_epochs=2,
+        micro_batch_size=16, effective_batch_size=32,
+    )
+    mlp_int = MLPAnnual(seed=42)
+    train_backbone_model(
+        mlp_int, train_x_mlp, train_y, train_mkts,
+        val_x_mlp, val_y, val_mkts,
+        device=device, seed=42, min_epochs=2, max_epochs=2,
+        micro_batch_size=16, effective_batch_size=32,
+        interrupt_at_macro_step=1,
+        checkpoint_dir=chk_recovery_dir,
+    )
+    mlp_res = MLPAnnual(seed=999)
+    trained_res, summary_res = train_backbone_model(
+        mlp_res, train_x_mlp, train_y, train_mkts,
+        val_x_mlp, val_y, val_mkts,
+        device=device, seed=42, min_epochs=2, max_epochs=2,
+        micro_batch_size=16, effective_batch_size=32,
+        resume_from_checkpoint=chk_recovery_dir / "last_checkpoint.pt",
+    )
+    for p_full, p_res in zip(trained_full.parameters(), trained_res.parameters()):
+        assert torch.allclose(p_full, p_res, atol=1e-5), "Resumed CUDA training weights do not match uninterrupted run"
+    assert abs(summary_full.best_loss - summary_res.best_loss) < 1e-5, "Resumed val loss mismatch"
+
+    report["recovery_verification"] = {
+        "status": "RECOVERY_VERIFIED",
+        "device": device.type,
+        "interrupted_macro_step": 1,
+        "parameter_parity": True,
+        "val_loss_parity": True,
+    }
+
     mlp = MLPAnnual(seed=7)
     trained_mlp, mlp_summary = train_backbone_model(
         mlp, train_x_mlp, train_y, train_mkts,
         val_x_mlp, val_y, val_mkts,
-        seed=7, min_epochs=2, max_epochs=2,
+        device=device, seed=7, min_epochs=2, max_epochs=2,
         micro_batch_size=16, effective_batch_size=32,
         checkpoint_dir=output_dir / "checkpoints_mlp",
     )
@@ -229,10 +337,16 @@ def run_connected_restricted_pilot(output_dir: Path) -> Dict[str, Any]:
     trained_trans, trans_summary = train_backbone_model(
         trans, train_x_trans, train_y, train_mkts,
         val_x_trans, val_y, val_mkts,
-        seed=17, min_epochs=2, max_epochs=2,
+        device=device, seed=17, min_epochs=2, max_epochs=2,
         micro_batch_size=16, effective_batch_size=32,
         checkpoint_dir=output_dir / "checkpoints_trans",
     )
+
+    # Enforce CUDA execution check: assert model parameters are on device
+    if device.type == "cuda":
+        assert next(trained_mlp.parameters()).is_cuda, "MLP parameters must be on CUDA"
+        assert next(trained_trans.parameters()).is_cuda, "Transformer parameters must be on CUDA"
+
     report["phases_executed"].append("backbone_training")
 
     # -------------------------------------------------------------------------
@@ -268,29 +382,97 @@ def run_connected_restricted_pilot(output_dir: Path) -> Dict[str, Any]:
     trained_mlp.eval()
     trained_trans.eval()
 
+    # Precompute bank norms for batched retrieval
+    bank.precompute_bank_norms()
+
+    # Retrieval Parity & Boundary Fixture Checks on Device
+    # 1. Auditor boundary cancellation fixture on device (float32 vectors near 1)
+    vec_dim = len(reps0_train[0].flattened_vector)
+    q_fix = np.ones(vec_dim, dtype=np.float32)
+    v1_fix = q_fix.copy()
+    v2_fix = q_fix.copy()
+    v1_fix[0] += np.float32(2 ** (-22))
+    v2_fix[0] += np.float32(2 ** (-23))
+    fix_records = [
+        BankRecord(record_id=1, security_id="SEC_A", session_origin="2015-01-01", session_126_maturity="2017-06-01", vector=v1_fix, target_63=0.01, session_ordinal=10),
+        BankRecord(record_id=2, security_id="SEC_B", session_origin="2015-01-02", session_126_maturity="2017-06-01", vector=v2_fix, target_63=0.02, session_ordinal=20),
+    ]
+    fix_bank = MemoryBank(fix_records)
+    fix_bank.precompute_bank_norms()
+    fix_bat = retrieve_mem_sim_batch(
+        fix_bank, q_fix.reshape(1, -1), ["SEC_QUERY"], k=2, use_gpu=(device.type == "cuda")
+    )[0]
+    assert fix_bat.neighbor_ids == [2, 1], f"Boundary cancellation test failed on {device.type}: got {fix_bat.neighbor_ids}"
+
+    # 2. Exact ties fixture
+    tie_vec = np.ones(vec_dim, dtype=np.float32)
+    tie_records = [
+        BankRecord(record_id=100, security_id="SEC_A", session_origin="2015-01-01", session_126_maturity="2017-06-01", vector=tie_vec, target_63=0.01, session_ordinal=1),
+        BankRecord(record_id=5, security_id="SEC_B", session_origin="2015-01-02", session_126_maturity="2017-06-01", vector=tie_vec, target_63=0.02, session_ordinal=2),
+        BankRecord(record_id=50, security_id="SEC_C", session_origin="2015-01-03", session_126_maturity="2017-06-01", vector=tie_vec, target_63=0.03, session_ordinal=3),
+    ]
+    tie_bank = MemoryBank(tie_records)
+    tie_bank.precompute_bank_norms()
+    tie_bat = retrieve_mem_sim_batch(
+        tie_bank, np.zeros((1, vec_dim), dtype=np.float32), ["SEC_OTHER"], k=3, use_gpu=(device.type == "cuda")
+    )[0]
+    assert tie_bat.neighbor_ids == [5, 50, 100], f"Tie-breaking failed on {device.type}: got {tie_bat.neighbor_ids}"
+
+    eval_r0_list = [extract_annual_representation(feats0, t, scaler) for t in eval_indices]
+    eval_r1_list = [extract_annual_representation(feats1, t, scaler) for t in eval_indices]
+
+    # Batch evaluate MEM_SIM predictions on device
+    all_eval_vecs = []
+    all_eval_secs = []
+    for r0, r1 in zip(eval_r0_list, eval_r1_list):
+        all_eval_vecs.append(r0.flattened_vector)
+        all_eval_secs.append("US_AAPL")
+        all_eval_vecs.append(r1.flattened_vector)
+        all_eval_secs.append("US_MSFT")
+
+    batched_mem_preds = retrieve_mem_sim_batch(
+        bank, np.array(all_eval_vecs, dtype=np.float32), all_eval_secs, k=3, use_gpu=(device.type == "cuda")
+    )
+
+    # Verify parity against single-query reference oracle
+    for idx_q, (q_vec, q_sec) in enumerate(zip(all_eval_vecs, all_eval_secs)):
+        ref_res = retrieve_mem_sim(bank, q_vec, q_sec, k=3)
+        bat_res = batched_mem_preds[idx_q]
+        assert ref_res.neighbor_ids == bat_res.neighbor_ids, f"Neighbor ID mismatch on query {idx_q}"
+        assert abs(ref_res.prediction - bat_res.prediction) < 1e-5, f"Prediction mismatch on query {idx_q}"
+
+    report["retrieval_verification"] = {
+        "status": "RETRIEVAL_VERIFIED",
+        "device": device.type,
+        "is_cuda": (device.type == "cuda"),
+        "parity_with_reference_passed": True,
+        "cancellation_fixture_passed": True,
+        "tie_breaking_passed": True,
+    }
+
     queries_mem: List[PredictionQuery] = []
     queries_mlp: List[PredictionQuery] = []
     queries_trans: List[PredictionQuery] = []
 
-    for t in eval_indices:
-        r0 = extract_annual_representation(feats0, t, scaler)
-        r1 = extract_annual_representation(feats1, t, scaler)
+    for i, t in enumerate(eval_indices):
+        r0 = eval_r0_list[i]
+        r1 = eval_r1_list[i]
 
         sess0 = r0.session_t
         sess1 = r1.session_t
 
-        # 1. MEM_SIM forecasts
-        ret0 = retrieve_mem_sim(bank, r0.flattened_vector, "US_AAPL", k=3)
-        ret1 = retrieve_mem_sim(bank, r1.flattened_vector, "US_MSFT", k=3)
+        # 1. MEM_SIM forecasts from certified batch retrieval
+        mem_0 = float(batched_mem_preds[2 * i].prediction)
+        mem_1 = float(batched_mem_preds[2 * i + 1].prediction)
         queries_mem.append(PredictionQuery(
             fold_year=2016, security_id="US_AAPL", session_origin=sess0,
-            forecast_score=float(ret0.prediction),
+            forecast_score=mem_0,
             volatility_21=float(feats0.loc[t, "volatility_21"]),
             atr_ratio_14=float(feats0.loc[t, "atr_ratio_14"]),
         ))
         queries_mem.append(PredictionQuery(
             fold_year=2016, security_id="US_MSFT", session_origin=sess1,
-            forecast_score=float(ret1.prediction),
+            forecast_score=mem_1,
             volatility_21=float(feats1.loc[t, "volatility_21"]),
             atr_ratio_14=float(feats1.loc[t, "atr_ratio_14"]),
         ))
@@ -429,6 +611,8 @@ def run_connected_restricted_pilot(output_dir: Path) -> Dict[str, Any]:
         assert abs(acct.cash - final_history_nav) < 1e-5, f"NAV reconciliation error for {pol_name}"
 
         pol_returns = np.array([state.daily_return for state in acct.daily_history], dtype=np.float64)
+        compounded_nav = acct.initial_capital * float(np.prod(1.0 + pol_returns))
+        assert abs(compounded_nav - acct.cash) < 1e-4, f"Compounded return mismatch for {pol_name}: {compounded_nav} vs {acct.cash}"
         returns_map[(pol_name, "US", None)] = pol_returns
 
         # Export trade ledger and daily NAV history for this policy (C1)
@@ -585,14 +769,53 @@ def run_connected_restricted_pilot(output_dir: Path) -> Dict[str, Any]:
     with open(output_dir / "output_manifest.json", "w", encoding="utf-8") as f:
         f.write(to_canonical_json(output_manifest))
 
+    elapsed_seconds = time.perf_counter() - t_start
+    peak_rss = _get_rss_mb()
+    peak_vram = _get_vram_mb()
+
+    receipt = {
+        "receipt_type": "CONNECTED_PILOT_EXECUTION_RECEIPT",
+        "status": "CONNECTED_PILOT_SUCCESS",
+        "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+        "device": {
+            "requested_cuda": use_cuda,
+            "device_name": device_name,
+            "is_cuda": (device.type == "cuda"),
+            "compute_capability": list(torch.cuda.get_device_capability(0)) if device.type == "cuda" else None,
+            "pytorch_version": torch.__version__,
+            "cuda_version": torch.version.cuda if torch.cuda.is_available() else None,
+        },
+        "telemetry": {
+            "elapsed_seconds": round(elapsed_seconds, 3),
+            "peak_rss_mb": round(peak_rss, 2),
+            "peak_vram_mb": round(peak_vram, 2),
+        },
+        "manifest_digests": {
+            "input_manifest_sha256": _compute_sha256(output_dir / "input_manifest.json"),
+            "output_manifest_sha256": _compute_sha256(output_dir / "output_manifest.json"),
+        },
+        "verifications": {
+            "data_admission_verified": True,
+            "cuda_recovery_verified": report.get("recovery_verification", {}).get("status") == "RECOVERY_VERIFIED",
+            "retrieval_parity_verified": report.get("retrieval_verification", {}).get("status") == "RETRIEVAL_VERIFIED",
+            "release_verified": verif["status"] == "RELEASE_VERIFIED",
+            "replay_verified": replay["status"] == "REPLAY_VERIFIED",
+            "compounded_nav_reconciled": True,
+        },
+    }
+    with open(output_dir / "pilot_receipt.json", "w", encoding="utf-8") as f:
+        f.write(to_canonical_json(receipt))
+
     report["artifacts_generated"] = {
         "input_manifest": str(output_dir / "input_manifest.json"),
         "output_manifest": str(output_dir / "output_manifest.json"),
+        "pilot_receipt": str(output_dir / "pilot_receipt.json"),
         "predictions_mem_sim": str(pred_path_mem),
         "predictions_mlp_base": str(pred_path_mlp),
         "predictions_trans_base": str(pred_path_trans),
         "release_analysis": str(output_dir / "release_analysis"),
     }
+    report["receipt"] = receipt
 
     return report
 
@@ -605,10 +828,25 @@ def main() -> None:
         default=Path("rebuild_plan/connected_pilot_out"),
         help="Directory to save pilot artifacts and manifests",
     )
+    parser.add_argument(
+        "--cuda",
+        dest="use_cuda",
+        action="store_true",
+        default=None,
+        help="Force CUDA execution",
+    )
+    parser.add_argument(
+        "--no-cuda",
+        dest="use_cuda",
+        action="store_false",
+        help="Force CPU execution",
+    )
     args = parser.parse_args()
-    rep = run_connected_restricted_pilot(args.output_dir)
+    rep = run_connected_restricted_pilot(args.output_dir, use_cuda=args.use_cuda)
     print("Connected Restricted Pilot completed successfully!")
+    print(f"Device: {rep['cuda_execution']['device']} (CUDA={rep['cuda_execution']['is_cuda']})")
     print(f"Phases executed: {rep['phases_executed']}")
+    print(f"Elapsed: {rep['receipt']['telemetry']['elapsed_seconds']}s | Peak RSS: {rep['receipt']['telemetry']['peak_rss_mb']}MB | Peak VRAM: {rep['receipt']['telemetry']['peak_vram_mb']}MB")
     print(f"Artifacts: {json.dumps(rep['artifacts_generated'], indent=2)}")
 
 
