@@ -10,6 +10,7 @@ from __future__ import annotations
 import csv
 import json
 import math
+from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Union
 
@@ -20,6 +21,8 @@ class ContractValidationError(Exception):
 
 
 def _canonical_default(o: Any) -> Any:
+    if is_dataclass(o):
+        return asdict(o)
     if hasattr(o, "item") and callable(o.item):
         return o.item()
     if hasattr(o, "tolist") and callable(o.tolist):

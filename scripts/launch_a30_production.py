@@ -70,7 +70,8 @@ except ImportError:
 from memory_study_v2.backbones import MLPAnnual, TransformerAnnual
 from memory_study_v2.canonical_data import align_to_venue_calendar, build_total_return_bars, validate_raw_bars
 from memory_study_v2.contracts import EXPECTED_16_ARMS, EXPECTED_FEATURES_ORDERED, to_canonical_json
-from memory_study_v2.execution import DailyLedgerState, PortfolioAccount, TradeRecord
+import subprocess
+from memory_study_v2.execution import DailyLedgerState, PassiveEqualWeightAccount, PortfolioAccount, TradeRecord
 from memory_study_v2.features import compute_technical_features, fit_scaler
 from memory_study_v2.inference import evaluate_primary_contrasts, export_analysis_bundle, replay_analysis_bundle
 from memory_study_v2.integration import fit_trust_gate, select_mixture_mse, select_mixture_sr
@@ -91,7 +92,7 @@ from memory_study_v2.sample_index import (
     load_fold_sample_ids,
 )
 from memory_study_v2.train import train_backbone_model
-from memory_study_v2.venue_calendar import get_venue_calendar
+from memory_study_v2.venue_calendar import get_market_venue_calendar, get_venue_calendar
 
 
 @dataclass(frozen=True)
@@ -308,15 +309,67 @@ def verify_configuration_authorization(
     }
 
 
+
+def compute_scientific_run_identity(
+    config: Dict[str, Any],
+    folds_to_run: List[int],
+    context: Dict[str, Any],
+    checkpoint_hashes: Optional[Dict[str, str]] = None,
+) -> Dict[str, Any]:
+    """Compute stable scientific run identity excluding volatile timestamps (finding 3)."""
+    try:
+        git_rev = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"],
+            cwd=REPO_ROOT,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        ).strip()
+    except Exception:
+        git_rev = "UNTRACKED_OR_DEV"
+
+    sci_config: Dict[str, Any] = {}
+    for k in ("folds", "universe", "execution", "neural", "memory", "mixture", "gate", "analysis", "cost_stress"):
+        if k in config:
+            sci_config[k] = config[k]
+    sci_cfg_sha = hashlib.sha256(to_canonical_json(sci_config).encode("utf-8")).hexdigest()
+
+    sample_ids_dir = Path(context.get("sample_ids_dir", REPO_ROOT / "rebuild_plan" / "sample_ids"))
+    fold_sample_shas: Dict[str, str] = {}
+    for f in sorted(folds_to_run):
+        f_path = sample_ids_dir / f"fold_{f}_sample_ids.json"
+        if f_path.exists():
+            fold_sample_shas[str(f)] = hashlib.sha256(f_path.read_bytes()).hexdigest()
+
+    scope = {
+        "folds": sorted(list(folds_to_run)),
+        "securities": sorted(list(context["selected_securities"])) if context.get("selected_securities") is not None else "ALL",
+        "policies": sorted(list(context["selected_policies"])) if context.get("selected_policies") is not None else "ALL",
+        "seeds": sorted(list(context["seeds"])) if context.get("seeds") is not None else "ALL",
+        "architectures": sorted(list(context["architectures"])) if context.get("architectures") is not None else "ALL",
+    }
+
+    identity = {
+        "code_revision": git_rev,
+        "scientific_configuration_sha256": sci_cfg_sha,
+        "sample_manifest_sha256": fold_sample_shas,
+        "requested_scope": scope,
+        "checkpoint_hashes": checkpoint_hashes or {},
+    }
+    identity["identity_sha256"] = hashlib.sha256(to_canonical_json(identity).encode("utf-8")).hexdigest()
+    return identity
+
 def prepare_fold_data(
     fold_year: int,
     data_dir: Path,
     sample_ids_dir: Path,
-    venue_calendar: Any,
-    config: Dict[str, Any],
+    venue_calendar: Any = None,
+    config: Dict[str, Any] = None,
     selected_securities: Optional[List[str]] = None,
+    custom_calendars: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """Load admitted samples, features, representations, and tensors for a fold."""
+    """Load admitted samples, features, representations, and tensors for a fold across native market calendars."""
+    if config is None:
+        config = {}
     fold_cfgs = config.get("folds", [])
     f_cfg = next((f for f in fold_cfgs if int(f.get("evaluation_year", 0)) == fold_year), None)
 
@@ -350,10 +403,15 @@ def prepare_fold_data(
 
     sec_info: Dict[str, Any] = {}
     train_feats_dfs: List[pd.DataFrame] = []
-    venue_sessions = venue_calendar.sessions_in_range("2010-01-01", f"{fold_year}-12-31")
+    market_calendars: Dict[str, Any] = {}
 
     for p in parquet_files:
         sec_id = p.stem
+        mkt_code = sec_id.split("_")[0] if "_" in sec_id else (sec_id.split(":")[0] if ":" in sec_id else "US")
+        sec_cal = get_market_venue_calendar(mkt_code, custom_calendars=custom_calendars, data_cache_dir=data_dir)
+        market_calendars[mkt_code] = sec_cal
+        venue_sessions = sec_cal.sessions_in_range("2010-01-01", f"{fold_year}-12-31")
+
         df_raw = pd.read_parquet(p).reset_index()
         rename_dict = {}
         for c in df_raw.columns:
@@ -368,9 +426,12 @@ def prepare_fold_data(
         df_aligned = align_to_venue_calendar(df_raw, venue_sessions)
         val_df = validate_raw_bars(df_aligned, sec_id, quote_unit=1.0)
         tr_df = build_total_return_bars(val_df, actions=[], quote_unit=1.0)
-        recs = build_security_sample_index(sec_id, val_df, venue_calendar=venue_calendar)
+        s_min = val_df["session"].min()
+        s_max = val_df["session"].max()
+        sched_val_df = sec_cal.reindex_to_schedule(val_df, (s_min, s_max))
+        recs = build_security_sample_index(sec_id, sched_val_df, venue_calendar=sec_cal)
         feats_df = compute_technical_features(tr_df)
-        labels_df = compute_target_labels(tr_df, venue_sessions=venue_calendar.sessions)
+        labels_df = compute_target_labels(tr_df, venue_sessions=sec_cal.sessions)
         sess_to_row = {str(s): i for i, s in enumerate(feats_df["session"].tolist())}
 
         adm_train = filter_admitted_sample_ids(recs, train_start, train_end, require_target=True, max_target_maturity=train_end)
@@ -380,7 +441,9 @@ def prepare_fold_data(
         adm_bank = filter_admitted_sample_ids(recs, train_start, train_end, max_bank_maturity=train_end)
 
         sec_info[sec_id] = {
-            "val_df": val_df,
+            "market": mkt_code,
+            "calendar": sec_cal,
+            "val_df": sched_val_df,
             "tr_df": tr_df,
             "recs": recs,
             "feats_df": feats_df,
@@ -426,7 +489,7 @@ def prepare_fold_data(
                 mlp_vecs.append(rep.flattened_vector)
                 trans_mats.append(rep.transformer_matrix)
                 records_out.append(r)
-                mkt_code = sec_id.split("_")[0] if "_" in sec_id else (sec_id.split(":")[0] if ":" in sec_id else "US")
+                mkt_code = s_data["market"]
                 markets.append(mkt_code)
 
                 if not is_eval:
@@ -438,20 +501,19 @@ def prepare_fold_data(
                     targets.append(0.0)
 
         return (
-            torch.tensor(np.array(mlp_vecs), dtype=torch.float32),
-            torch.tensor(np.array(trans_mats), dtype=torch.float32),
-            torch.tensor(np.array(targets), dtype=torch.float32),
-            np.array(markets),
+            np.array(mlp_vecs, dtype=np.float32) if mlp_vecs else np.zeros((0, 966), dtype=np.float32),
+            np.array(trans_mats, dtype=np.float32) if trans_mats else np.zeros((0, 42, 23), dtype=np.float32),
+            np.array(targets, dtype=np.float32) if targets else np.zeros((0,), dtype=np.float32),
+            np.array(markets) if markets else np.zeros((0,), dtype=object),
             records_out,
         )
 
-    tr_mlp, tr_trans, tr_y, tr_mkts, tr_recs = _extract_dataset("train", is_eval=False)
-    va_mlp, va_trans, va_y, va_mkts, va_recs = _extract_dataset("val", is_eval=False)
-    de_mlp, de_trans, de_y, de_mkts, de_recs = _extract_dataset("dev", is_eval=False)
-    ev_mlp, ev_trans, ev_y, ev_mkts, ev_recs = _extract_dataset("eval", is_eval=True)
+    train_x_mlp, train_x_trans, train_y, train_markets, train_recs = _extract_dataset("train", is_eval=False)
+    val_x_mlp, val_x_trans, val_y, val_markets, val_recs = _extract_dataset("val", is_eval=False)
+    dev_x_mlp, dev_x_trans, dev_y, dev_markets, dev_recs = _extract_dataset("dev", is_eval=False)
+    eval_x_mlp, eval_x_trans, eval_y, eval_markets, eval_recs = _extract_dataset("eval", is_eval=True)
 
-    bank_records: List[BankRecord] = []
-    b_id = 1
+    bank_records = []
     for sec_id, s_data in sec_info.items():
         feats_df = s_data["feats_df"]
         labels_df = s_data["labels_df"]
@@ -461,9 +523,9 @@ def prepare_fold_data(
             if idx is None:
                 continue
             rep = extract_annual_representation(feats_df, idx, scaler)
-            t_val = float(labels_df["target_value"].iloc[idx]) if r.target_63_valid else 0.0
+            t_val = float(labels_df["target_value"].iloc[idx])
             bank_records.append(BankRecord(
-                record_id=b_id,
+                record_id=len(bank_records) + 1,
                 security_id=r.security_id,
                 session_origin=r.session,
                 session_126_maturity=r.bank_126_available_at,
@@ -471,32 +533,36 @@ def prepare_fold_data(
                 target_63=t_val,
                 session_ordinal=r.session_ordinal,
             ))
-            b_id += 1
+
+    bank = MemoryBank(bank_records)
 
     return {
-        "train_x_mlp": tr_mlp,
-        "train_x_trans": tr_trans,
-        "train_y": tr_y,
-        "train_mkts": tr_mkts,
-        "val_x_mlp": va_mlp,
-        "val_x_trans": va_trans,
-        "val_y": va_y,
-        "val_mkts": va_mkts,
-        "dev_x_mlp": de_mlp,
-        "dev_x_trans": de_trans,
-        "dev_y": de_y,
-        "dev_mkts": de_mkts,
-        "train_records": tr_recs,
-        "val_records": va_recs,
-        "dev_records": de_recs,
-        "eval_x_mlp": ev_mlp,
-        "eval_x_trans": ev_trans,
-        "eval_records": ev_recs,
+        "train_x_mlp": train_x_mlp,
+        "train_x_trans": train_x_trans,
+        "train_y": train_y,
+        "train_markets": train_markets,
+        "train_records": train_recs,
+        "val_x_mlp": val_x_mlp,
+        "val_x_trans": val_x_trans,
+        "val_y": val_y,
+        "val_markets": val_markets,
+        "val_records": val_recs,
+        "dev_x_mlp": dev_x_mlp,
+        "dev_x_trans": dev_x_trans,
+        "dev_y": dev_y,
+        "dev_markets": dev_markets,
+        "dev_records": dev_recs,
+        "eval_x_mlp": eval_x_mlp,
+        "eval_x_trans": eval_x_trans,
+        "eval_y": eval_y,
+        "eval_markets": eval_markets,
+        "eval_records": eval_recs,
         "bank_records": bank_records,
-        "sec_info": sec_info,
+        "bank": bank,
         "scaler": scaler,
+        "sec_info": sec_info,
+        "market_calendars": market_calendars,
     }
-
 
 def generate_and_seal_policy_predictions(
     fold_year: int,
@@ -505,17 +571,23 @@ def generate_and_seal_policy_predictions(
     trained_models: Dict[str, nn.Module],
     ridge_model: RidgeModel,
     device: torch.device,
+    config: Optional[Dict[str, Any]] = None,
     configured_policies: Optional[List[str]] = None,
     seeds: Optional[List[int]] = None,
     lambda_grid: Optional[List[float]] = None,
     custom_predictions: Optional[Dict[str, float]] = None,
     fail_on_corrupted_predictions: bool = False,
+    checkpoint_hashes: Optional[Dict[str, str]] = None,
 ) -> List[PolicyPredictionRecord]:
     """Generate, validate, and atomically seal common prediction records for all configured arms."""
     pred_manifest_path = fold_dir / "predictions_manifest.json"
     pred_json_path = fold_dir / "policy_predictions.json"
 
-    # 1. Check existing verified predictions on disk
+    eval_recs: List[SampleIndexRecord] = fold_data["eval_records"]
+    dev_recs: List[SampleIndexRecord] = fold_data.get("dev_records", [])
+    admitted_query_ids = {r.query_id for r in eval_recs}
+
+    # 1. Check existing verified predictions on disk with scope & query match validation
     if pred_manifest_path.exists() and pred_json_path.exists() and custom_predictions is None:
         try:
             with open(pred_manifest_path, "r", encoding="utf-8") as f:
@@ -528,8 +600,9 @@ def generate_and_seal_policy_predictions(
                 records = [
                     PolicyPredictionRecord(**r) for r in cached_records
                 ]
-                # Validate key uniqueness and finite values
+                # Validate key uniqueness, finite values, and admitted queries match
                 seen = set()
+                cached_queries = set()
                 for r in records:
                     k = (r.query_id, r.policy_id, r.realization_id)
                     if k in seen:
@@ -537,6 +610,9 @@ def generate_and_seal_policy_predictions(
                     if not math.isfinite(r.prediction):
                         raise ValueError(f"Non-finite prediction in cached artifact: {k}")
                     seen.add(k)
+                    cached_queries.add(r.query_id)
+                if cached_queries != admitted_query_ids:
+                    raise ValueError(f"Cached queries do not match current admitted queries: {len(cached_queries)} != {len(admitted_query_ids)}")
                 print(f"  [Fold {fold_year}] Verified {len(records)} existing predictions on disk.")
                 return records
             else:
@@ -550,84 +626,175 @@ def generate_and_seal_policy_predictions(
 
     seeds = seeds or [7, 17, 37]
     lambda_grid = lambda_grid or [0.0, 0.10, 0.25, 0.50, 1.00]
+    exec_cfg = (config or {}).get("execution", {})
 
-    eval_recs: List[SampleIndexRecord] = fold_data["eval_records"]
-    dev_recs: List[SampleIndexRecord] = fold_data.get("dev_records", [])
     eval_x_mlp = fold_data["eval_x_mlp"]
     eval_x_trans = fold_data["eval_x_trans"]
     dev_x_mlp = fold_data["dev_x_mlp"]
     dev_x_trans = fold_data["dev_x_trans"]
-    dev_y = fold_data["dev_y"].numpy()
-    dev_mkts = fold_data["dev_mkts"]
+    dev_y = fold_data["dev_y"]
+    dev_mkts = fold_data["dev_markets"]
+    bank = fold_data["bank"]
+    sec_info = fold_data["sec_info"]
 
-    bank = MemoryBank(fold_data["bank_records"])
-    bank.precompute_bank_norms()
-
-    eval_vecs = eval_x_mlp.numpy()
-    eval_secs = [r.security_id for r in eval_recs]
-    dev_vecs = dev_x_mlp.numpy()
-    dev_secs = [r.security_id for r in dev_recs]
-    k_val = min(25, len(bank.records))
-
-    # Precompute base model predictions on eval and dev
-    dev_mlp_by_seed: Dict[int, np.ndarray] = {}
+    # Precompute base model evaluation predictions
     eval_mlp_by_seed: Dict[int, np.ndarray] = {}
-    dev_trans_by_seed: Dict[int, np.ndarray] = {}
     eval_trans_by_seed: Dict[int, np.ndarray] = {}
+    dev_mlp_by_seed: Dict[int, np.ndarray] = {}
+    dev_trans_by_seed: Dict[int, np.ndarray] = {}
+
+    eval_secs = [r.security_id for r in eval_recs]
+    dev_secs = [r.security_id for r in dev_recs]
+    eval_markets = fold_data["eval_markets"]
+
+    eval_x_mlp_t = torch.tensor(eval_x_mlp, dtype=torch.float32, device=device)
+    eval_x_trans_t = torch.tensor(eval_x_trans, dtype=torch.float32, device=device)
+    dev_x_mlp_t = torch.tensor(dev_x_mlp, dtype=torch.float32, device=device)
+    dev_x_trans_t = torch.tensor(dev_x_trans, dtype=torch.float32, device=device)
 
     for s in seeds:
-        mlp_key = f"MLP_ANNUAL_966_64_128_1_seed{s}"
-        if mlp_key in trained_models:
-            m = trained_models[mlp_key]
-            m.to(device)
+        m_mlp_key = f"MLP_ANNUAL_966_64_128_1_seed{s}"
+        if m_mlp_key in trained_models:
+            m = trained_models[m_mlp_key].to(device)
             m.eval()
             with torch.no_grad():
-                eval_mlp_by_seed[s] = m(eval_x_mlp.to(device)).cpu().numpy().flatten()
-                dev_mlp_by_seed[s] = m(dev_x_mlp.to(device)).cpu().numpy().flatten()
+                eval_mlp_by_seed[s] = m(eval_x_mlp_t).squeeze(-1).cpu().numpy().astype(np.float64)
+                if len(dev_x_mlp) > 0:
+                    dev_mlp_by_seed[s] = m(dev_x_mlp_t).squeeze(-1).cpu().numpy().astype(np.float64)
 
-        trans_key = f"TRANSFORMER_42x23_WIDTH64_HEADS4_LAYERS2_FF128_LATENT128_seed{s}"
-        if trans_key in trained_models:
-            m = trained_models[trans_key]
-            m.to(device)
+        m_trans_key = f"TRANSFORMER_42x23_WIDTH64_HEADS4_LAYERS2_FF128_LATENT128_seed{s}"
+        if m_trans_key in trained_models:
+            m = trained_models[m_trans_key].to(device)
             m.eval()
             with torch.no_grad():
-                eval_trans_by_seed[s] = m(eval_x_trans.to(device)).cpu().numpy().flatten()
-                dev_trans_by_seed[s] = m(dev_x_trans.to(device)).cpu().numpy().flatten()
+                eval_trans_by_seed[s] = m(eval_x_trans_t).squeeze(-1).cpu().numpy().astype(np.float64)
+                if len(dev_x_trans) > 0:
+                    dev_trans_by_seed[s] = m(dev_x_trans_t).squeeze(-1).cpu().numpy().astype(np.float64)
 
-    # Precompute memory retrieval
-    eval_mem_res = retrieve_mem_sim_batch(bank, eval_vecs, eval_secs, k=k_val, use_gpu=(device.type == "cuda"))
-    eval_mem_preds = np.array([float(r.prediction) for r in eval_mem_res], dtype=np.float64)
+    # Precompute memory retrievals
+    k_val = int((config or {}).get("memory", {}).get("k", 25))
+    bank_hash = hashlib.sha256(bank.vectors.tobytes()).hexdigest()
 
-    dev_mem_res = retrieve_mem_sim_batch(bank, dev_vecs, dev_secs, k=k_val, use_gpu=(device.type == "cuda"))
-    dev_mem_preds = np.array([float(r.prediction) for r in dev_mem_res], dtype=np.float64)
+    eval_mem_res = retrieve_mem_sim_batch(bank, eval_x_mlp, eval_secs, k=k_val, use_gpu=(device.type == "cuda"))
+    eval_mem_preds = np.array([res.prediction for res in eval_mem_res], dtype=np.float64)
+    if len(dev_recs) > 0:
+        dev_mem_res = retrieve_mem_sim_batch(bank, dev_x_mlp, dev_secs, k=k_val, use_gpu=(device.type == "cuda"))
+        dev_mem_preds = np.array([res.prediction for res in dev_mem_res], dtype=np.float64)
+    else:
+        dev_mem_preds = np.zeros((0,), dtype=np.float64)
 
-    # Precompute KNN_PLAIN
-    eval_knn_preds = np.array([
-        float(retrieve_knn_plain(bank, eval_vecs[i], eval_secs[i], k=k_val).prediction)
-        for i in range(len(eval_recs))
-    ], dtype=np.float64)
+    knn_preds = np.array([retrieve_knn_plain(bank, eval_x_mlp[i], eval_secs[i], k=k_val).prediction for i in range(len(eval_recs))], dtype=np.float64)
 
-    # Precompute MEM_RANDOM master seeds [1001, 1002, 1003]
-    bank_hash = hashlib.sha256(str(len(bank.records)).encode()).hexdigest()
-    random_preds_by_seed: Dict[int, np.ndarray] = {}
-    for ms in [1001, 1002, 1003]:
-        r_preds = [
-            float(retrieve_mem_random(bank, eval_secs[i], bank_hash, fold_year, eval_recs[i].query_id, master_seed=ms, k=k_val).prediction)
+    rand_preds_by_seed: Dict[int, np.ndarray] = {}
+    for s in seeds:
+        rand_preds_by_seed[s] = np.array([
+            retrieve_mem_random(bank, query_security_id=eval_secs[i], bank_hash=bank_hash, fold_year=fold_year, query_id=eval_recs[i].query_id, master_seed=s, k=k_val).prediction
             for i in range(len(eval_recs))
-        ]
-        random_preds_by_seed[ms] = np.array(r_preds, dtype=np.float64)
+        ], dtype=np.float64)
 
     # Precompute HIST_PRIOR and RIDGE_ANNUAL
     hist_val = float(bank.unconditional_mean)
-    ridge_eval_preds = ridge_model.predict(eval_vecs)
+    ridge_eval_preds = ridge_model.predict(eval_x_mlp)
 
-    # Precompute Gates and Mixtures
+    # Precompute Gates and Mixtures with actual development portfolio Sharpe scoring (A21 / R07)
     gate_mlp_by_seed: Dict[int, np.ndarray] = {}
     gate_trans_by_seed: Dict[int, np.ndarray] = {}
     mix_mse_mlp_by_seed: Dict[int, np.ndarray] = {}
     mix_mse_trans_by_seed: Dict[int, np.ndarray] = {}
     mix_sr_mlp_by_seed: Dict[int, np.ndarray] = {}
     mix_sr_trans_by_seed: Dict[int, np.ndarray] = {}
+
+    def _build_dev_eval_fn(base_by_seed: Dict[int, np.ndarray]):
+        initial_cap = float(exec_cfg.get("initial_capital_account_units", 100000.0))
+        comm = float(exec_cfg.get("commission_per_side", 0.001))
+        slip = float(exec_cfg.get("slippage_per_side", 0.0005))
+        cash_frac = float(exec_cfg.get("cash_budget_fraction", 0.95))
+        atr_mult = float(exec_cfg.get("atr_stop_multiplier", 2.5))
+        min_stop = float(exec_cfg.get("minimum_stop_fraction", 0.10))
+        max_hold = int(exec_cfg.get("maximum_holding_sessions", 63))
+        max_pos = int(exec_cfg.get("max_positions", 3))
+
+        def dev_eval_fn(lam: float, seed: int, market: str) -> float:
+            m_indices = [i for i, r in enumerate(dev_recs) if str(dev_mkts[i]) == market]
+            if not m_indices:
+                return 0.0
+
+            mix_preds = (1.0 - lam) * base_by_seed[seed][m_indices] + lam * dev_mem_preds[m_indices]
+            pred_by_sec_sess: Dict[Tuple[str, str], float] = {}
+            for sub_idx, orig_idx in enumerate(m_indices):
+                r = dev_recs[orig_idx]
+                pred_by_sec_sess[(r.security_id, r.session)] = float(mix_preds[sub_idx])
+
+            dev_sessions = sorted(list(set(dev_recs[i].session for i in m_indices)))
+            if not dev_sessions:
+                return 0.0
+
+            dev_acct = PortfolioAccount(
+                initial_capital=initial_cap,
+                commission=comm,
+                slippage=slip,
+                max_positions=max_pos,
+                cash_budget_fraction=cash_frac,
+                atr_multiplier=atr_mult,
+                min_stop_fraction=min_stop,
+                max_holding_sessions=max_hold,
+            )
+
+            market_secs = [s for s, s_data in sec_info.items() if s_data.get("market", "US") == market]
+
+            for s_idx, t in enumerate(dev_sessions):
+                is_terminal = (s_idx == len(dev_sessions) - 1)
+                open_prices = {}
+                close_prices = {}
+                tradable_flags = {}
+                atr_ratios = {}
+                vol_map = {}
+
+                for s in market_secs:
+                    s_data = sec_info[s]
+                    row_idx = s_data["sess_to_row"].get(t)
+                    if row_idx is not None:
+                        v_rows = s_data["val_df"].loc[s_data["val_df"]["session"] == t]
+                        is_valid_bar = (len(v_rows) > 0 and (str(v_rows["bar_status"].iloc[0]) == "VALID" if "bar_status" in v_rows.columns else True))
+                        tr_row = s_data["tr_df"].iloc[row_idx]
+                        raw_o = float(tr_row["raw_open"])
+                        raw_c = float(tr_row["raw_close"])
+                        open_prices[s] = raw_o
+                        close_prices[s] = raw_c
+                        tradable_flags[s] = (is_valid_bar and raw_o > 0 and np.isfinite(raw_o))
+                        f_row = s_data["feats_df"].iloc[row_idx]
+                        atr_ratios[s] = float(f_row["atr_ratio_14"])
+                        vol_map[s] = float(f_row["volatility_21"])
+
+                dev_acct.handle_corporate_actions_before_open(t, {})
+                dev_acct.process_open_fills(t, open_prices, tradable_flags)
+                dev_acct.evaluate_close_stops_and_update_state(t, close_prices, atr_ratios)
+
+                if not is_terminal:
+                    cand_scores = {}
+                    for s in market_secs:
+                        if s in dev_acct.positions:
+                            continue
+                        p_val = pred_by_sec_sess.get((s, t))
+                        if p_val is not None and p_val > 0.0 and np.isfinite(p_val):
+                            v = vol_map.get(s, 0.0)
+                            cand_scores[s] = p_val / (v + 1e-4)
+
+                    sorted_cands = sorted(cand_scores.keys(), key=lambda sec: (-cand_scores[sec], sec))
+                    dev_acct.plan_entries_at_close(sorted_cands)
+                else:
+                    dev_acct.execute_terminal_liquidation(t, close_prices)
+
+            rets = [st.daily_return for st in dev_acct.daily_history]
+            if not rets:
+                return 0.0
+            r_mean = float(np.mean(rets))
+            r_std = float(np.std(rets, ddof=0))
+            if r_std > 1e-8:
+                return float((r_mean / r_std) * math.sqrt(252.0))
+            return 0.0
+
+        return dev_eval_fn
 
     if dev_mlp_by_seed:
         for s, d_mlp in dev_mlp_by_seed.items():
@@ -636,7 +803,8 @@ def generate_and_seal_policy_predictions(
             gate_mlp_by_seed[s] = p_mlp
 
         sel_mse_mlp = select_mixture_mse(dev_mlp_by_seed, dev_mem_preds, dev_y, dev_mkts, lambda_grid=lambda_grid)
-        sel_sr_mlp = select_mixture_sr(dev_mlp_by_seed, dev_mem_preds, dev_y, dev_mkts, lambda_grid=lambda_grid)
+        dev_eval_fn_mlp = _build_dev_eval_fn(dev_mlp_by_seed)
+        sel_sr_mlp = select_mixture_sr(dev_mlp_by_seed, dev_mem_preds, dev_y, dev_mkts, lambda_grid=lambda_grid, dev_eval_fn=dev_eval_fn_mlp)
         for s in dev_mlp_by_seed:
             mix_mse_mlp_by_seed[s] = (1.0 - sel_mse_mlp.selected_lambda) * eval_mlp_by_seed[s] + sel_mse_mlp.selected_lambda * eval_mem_preds
             mix_sr_mlp_by_seed[s] = (1.0 - sel_sr_mlp.selected_lambda) * eval_mlp_by_seed[s] + sel_sr_mlp.selected_lambda * eval_mem_preds
@@ -648,13 +816,13 @@ def generate_and_seal_policy_predictions(
             gate_trans_by_seed[s] = p_trans
 
         sel_mse_trans = select_mixture_mse(dev_trans_by_seed, dev_mem_preds, dev_y, dev_mkts, lambda_grid=lambda_grid)
-        sel_sr_trans = select_mixture_sr(dev_trans_by_seed, dev_mem_preds, dev_y, dev_mkts, lambda_grid=lambda_grid)
+        dev_eval_fn_trans = _build_dev_eval_fn(dev_trans_by_seed)
+        sel_sr_trans = select_mixture_sr(dev_trans_by_seed, dev_mem_preds, dev_y, dev_mkts, lambda_grid=lambda_grid, dev_eval_fn=dev_eval_fn_trans)
         for s in dev_trans_by_seed:
             mix_mse_trans_by_seed[s] = (1.0 - sel_mse_trans.selected_lambda) * eval_trans_by_seed[s] + sel_mse_trans.selected_lambda * eval_mem_preds
             mix_sr_trans_by_seed[s] = (1.0 - sel_sr_trans.selected_lambda) * eval_trans_by_seed[s] + sel_sr_trans.selected_lambda * eval_mem_preds
 
     # Generate records
-    admitted_query_ids = {r.query_id for r in eval_recs}
     records: List[PolicyPredictionRecord] = []
     seen_keys: Set[Tuple[str, str, Optional[int]]] = set()
 
@@ -666,7 +834,6 @@ def generate_and_seal_policy_predictions(
             raise ValueError(f"Prediction query {qid} does not belong to admitted queries")
         if not math.isfinite(pred):
             raise ValueError(f"Non-finite prediction encountered for {k}: {pred}")
-        # Allow custom override if provided
         if custom_predictions is not None:
             if qid in custom_predictions:
                 pred = float(custom_predictions[qid])
@@ -680,17 +847,17 @@ def generate_and_seal_policy_predictions(
             fold=fold_year,
             policy_id=pol,
             realization_id=real,
-            prediction=pred,
+            prediction=float(pred),
             source_artifact_id=art,
         )
-        records.append(rec)
         seen_keys.add(k)
+        records.append(rec)
 
     for i, r in enumerate(eval_recs):
         qid = r.query_id
         sec = r.security_id
+        mkt = str(eval_markets[i])
         sess = r.session
-        mkt = sec.split("_")[0] if "_" in sec else "US"
 
         # 1. MEM_SIM
         if configured_policies is None or "MEM_SIM" in configured_policies:
@@ -698,12 +865,12 @@ def generate_and_seal_policy_predictions(
 
         # 2. KNN_PLAIN
         if configured_policies is None or "KNN_PLAIN" in configured_policies:
-            _add_record(qid, sec, mkt, sess, "KNN_PLAIN", None, eval_knn_preds[i], f"bank_{fold_year}")
+            _add_record(qid, sec, mkt, sess, "KNN_PLAIN", None, knn_preds[i], f"bank_{fold_year}")
 
         # 3. MEM_RANDOM
         if configured_policies is None or "MEM_RANDOM" in configured_policies:
-            for ms in [1001, 1002, 1003]:
-                _add_record(qid, sec, mkt, sess, "MEM_RANDOM", ms, random_preds_by_seed[ms][i], f"bank_{fold_year}_seed{ms}")
+            for s in seeds:
+                _add_record(qid, sec, mkt, sess, "MEM_RANDOM", s, rand_preds_by_seed[s][i], f"bank_{fold_year}")
 
         # 4. HIST_PRIOR
         if configured_policies is None or "HIST_PRIOR" in configured_policies:
@@ -711,78 +878,72 @@ def generate_and_seal_policy_predictions(
 
         # 5. RIDGE_ANNUAL
         if configured_policies is None or "RIDGE_ANNUAL" in configured_policies:
-            _add_record(qid, sec, mkt, sess, "RIDGE_ANNUAL", None, float(ridge_eval_preds[i]), f"ridge_{fold_year}")
+            _add_record(qid, sec, mkt, sess, "RIDGE_ANNUAL", None, ridge_eval_preds[i], f"ridge_{fold_year}")
 
         # 6. MLP_BASE
         if configured_policies is None or "MLP_BASE" in configured_policies:
             for s in seeds:
                 if s in eval_mlp_by_seed:
-                    _add_record(qid, sec, mkt, sess, "MLP_BASE", s, float(eval_mlp_by_seed[s][i]), f"mlp_seed{s}")
+                    _add_record(qid, sec, mkt, sess, "MLP_BASE", s, eval_mlp_by_seed[s][i], f"mlp_{fold_year}_seed{s}")
 
         # 7. TRANS_BASE
         if configured_policies is None or "TRANS_BASE" in configured_policies:
             for s in seeds:
                 if s in eval_trans_by_seed:
-                    _add_record(qid, sec, mkt, sess, "TRANS_BASE", s, float(eval_trans_by_seed[s][i]), f"trans_seed{s}")
+                    _add_record(qid, sec, mkt, sess, "TRANS_BASE", s, eval_trans_by_seed[s][i], f"trans_{fold_year}_seed{s}")
 
-        # 8. MLP_GATE
-        if configured_policies is None or "MLP_GATE" in configured_policies:
-            for s in seeds:
-                if s in gate_mlp_by_seed:
-                    _add_record(qid, sec, mkt, sess, "MLP_GATE", s, float(gate_mlp_by_seed[s][i]), f"gate_mlp_seed{s}")
-
-        # 9. TRANS_GATE
-        if configured_policies is None or "TRANS_GATE" in configured_policies:
-            for s in seeds:
-                if s in gate_trans_by_seed:
-                    _add_record(qid, sec, mkt, sess, "TRANS_GATE", s, float(gate_trans_by_seed[s][i]), f"gate_trans_seed{s}")
-
-        # 10. MLP_MIX_MSE
+        # 8. MLP_MIX_MSE
         if configured_policies is None or "MLP_MIX_MSE" in configured_policies:
             for s in seeds:
                 if s in mix_mse_mlp_by_seed:
-                    _add_record(qid, sec, mkt, sess, "MLP_MIX_MSE", s, float(mix_mse_mlp_by_seed[s][i]), f"mix_mse_mlp_seed{s}")
+                    _add_record(qid, sec, mkt, sess, "MLP_MIX_MSE", s, mix_mse_mlp_by_seed[s][i], f"mlp_mix_mse_{fold_year}_seed{s}")
 
-        # 11. TRANS_MIX_MSE
+        # 9. TRANS_MIX_MSE
         if configured_policies is None or "TRANS_MIX_MSE" in configured_policies:
             for s in seeds:
                 if s in mix_mse_trans_by_seed:
-                    _add_record(qid, sec, mkt, sess, "TRANS_MIX_MSE", s, float(mix_mse_trans_by_seed[s][i]), f"mix_mse_trans_seed{s}")
+                    _add_record(qid, sec, mkt, sess, "TRANS_MIX_MSE", s, mix_mse_trans_by_seed[s][i], f"trans_mix_mse_{fold_year}_seed{s}")
 
-        # 12. MLP_MIX_SR
+        # 10. MLP_MIX_SR
         if configured_policies is None or "MLP_MIX_SR" in configured_policies:
             for s in seeds:
                 if s in mix_sr_mlp_by_seed:
-                    _add_record(qid, sec, mkt, sess, "MLP_MIX_SR", s, float(mix_sr_mlp_by_seed[s][i]), f"mix_sr_mlp_seed{s}")
+                    _add_record(qid, sec, mkt, sess, "MLP_MIX_SR", s, mix_sr_mlp_by_seed[s][i], f"mlp_mix_sr_{fold_year}_seed{s}")
 
-        # 13. TRANS_MIX_SR
+        # 11. TRANS_MIX_SR
         if configured_policies is None or "TRANS_MIX_SR" in configured_policies:
             for s in seeds:
                 if s in mix_sr_trans_by_seed:
-                    _add_record(qid, sec, mkt, sess, "TRANS_MIX_SR", s, float(mix_sr_trans_by_seed[s][i]), f"mix_sr_trans_seed{s}")
+                    _add_record(qid, sec, mkt, sess, "TRANS_MIX_SR", s, mix_sr_trans_by_seed[s][i], f"trans_mix_sr_{fold_year}_seed{s}")
+
+        # 12. MLP_GATE
+        if configured_policies is None or "MLP_GATE" in configured_policies:
+            for s in seeds:
+                if s in gate_mlp_by_seed:
+                    _add_record(qid, sec, mkt, sess, "MLP_GATE", s, gate_mlp_by_seed[s][i], f"mlp_gate_{fold_year}_seed{s}")
+
+        # 13. TRANS_GATE
+        if configured_policies is None or "TRANS_GATE" in configured_policies:
+            for s in seeds:
+                if s in gate_trans_by_seed:
+                    _add_record(qid, sec, mkt, sess, "TRANS_GATE", s, gate_trans_by_seed[s][i], f"trans_gate_{fold_year}_seed{s}")
 
         # 14. MOMENTUM_21
-        s_data = fold_data["sec_info"][sec]
-        row_idx = s_data["sess_to_row"].get(sess)
-        mom_val = float(s_data["feats_df"]["momentum_21"].iloc[row_idx]) if row_idx is not None else 0.0
-        vol_val = float(s_data["feats_df"]["volatility_21"].iloc[row_idx]) if row_idx is not None else 0.0
-
         if configured_policies is None or "MOMENTUM_21" in configured_policies:
-            _add_record(qid, sec, mkt, sess, "MOMENTUM_21", None, mom_val, f"features_{fold_year}")
+            _add_record(qid, sec, mkt, sess, "MOMENTUM_21", None, 1.0, f"mom_{fold_year}")
 
         # 15. VOL_MOMENTUM_21
         if configured_policies is None or "VOL_MOMENTUM_21" in configured_policies:
-            vol_mom = mom_val / (vol_val + 1e-4)
-            _add_record(qid, sec, mkt, sess, "VOL_MOMENTUM_21", None, vol_mom, f"features_{fold_year}")
+            _add_record(qid, sec, mkt, sess, "VOL_MOMENTUM_21", None, 1.0, f"vol_mom_{fold_year}")
 
         # 16. PASSIVE_EQUAL_WEIGHT
         if configured_policies is None or "PASSIVE_EQUAL_WEIGHT" in configured_policies:
             _add_record(qid, sec, mkt, sess, "PASSIVE_EQUAL_WEIGHT", None, 1.0, f"passive_{fold_year}")
 
-    # Serialize and seal with SHA-256
-    serialized = [r.to_dict() for r in records]
+    # Atomically seal predictions artifact
+    payload = [asdict(r) for r in records]
     with open(pred_json_path, "w", encoding="utf-8") as f:
-        f.write(to_canonical_json(serialized))
+        f.write(to_canonical_json(payload))
 
     actual_sha = hashlib.sha256(pred_json_path.read_bytes()).hexdigest()
     manifest_data = {
@@ -809,7 +970,7 @@ def run_continuous_portfolio_simulation(
     volatility_guard: float = 1e-4,
     max_positions: int = 3,
 ) -> Dict[str, Any]:
-    """Execute continuous multi-year portfolio simulation preserving account state across folds."""
+    """Execute continuous multi-year portfolio simulation preserving account state across native market sessions."""
     policy_accounts: Dict[Tuple[str, str, Optional[int]], PortfolioAccount] = {}
     all_decisions: Dict[Tuple[str, str, Optional[int]], List[DecisionRecord]] = collections.defaultdict(list)
 
@@ -820,26 +981,35 @@ def run_continuous_portfolio_simulation(
             all_account_keys.add((r.policy_id, r.market, r.realization_id))
 
     sorted_account_keys = sorted(all_account_keys, key=lambda k: (k[0], k[1], k[2] if k[2] is not None else -1))
+    first_fold_data = fold_data_by_year[folds_to_run[0]]
 
-    # Initialize continuous accounts
+    # Initialize continuous accounts (Active PortfolioAccount vs PassiveEqualWeightAccount)
     for k in sorted_account_keys:
-        policy_accounts[k] = PortfolioAccount(
-            initial_capital=initial_capital,
-            commission=commission,
-            slippage=slippage,
-            max_positions=max_positions,
-        )
+        pol_id, mkt, real_id = k
+        if pol_id == "PASSIVE_EQUAL_WEIGHT":
+            market_secs = [s for s, s_data in first_fold_data["sec_info"].items() if s_data.get("market", "US") == mkt]
+            policy_accounts[k] = PassiveEqualWeightAccount(
+                initial_capital=initial_capital,
+                commission=commission,
+                slippage=slippage,
+                cash_budget_fraction=0.95,
+                universe_size=max(len(market_secs), 1),
+            )
+        else:
+            policy_accounts[k] = PortfolioAccount(
+                initial_capital=initial_capital,
+                commission=commission,
+                slippage=slippage,
+                max_positions=max_positions,
+            )
+
+    unique_markets = sorted(list(set(k[1] for k in sorted_account_keys)))
 
     for fold_idx, fold_year in enumerate(folds_to_run):
         is_last_fold = (fold_idx == len(folds_to_run) - 1)
         fold_data = fold_data_by_year[fold_year]
         sec_info = fold_data["sec_info"]
-        eval_recs = fold_data["eval_records"]
-
-        if not eval_recs:
-            continue
-
-        eval_sessions = sorted(list(set(r.session for r in eval_recs)))
+        market_calendars = fold_data.get("market_calendars", {})
 
         # Pre-index price, feature, and prediction lookups for O(1) step access
         open_map: Dict[str, Dict[str, float]] = collections.defaultdict(dict)
@@ -861,115 +1031,161 @@ def run_continuous_portfolio_simulation(
                 mom_map[s][sess_str] = float(row["momentum_21"])
             for _, row in s_data["val_df"].iterrows():
                 sess_str = str(row["session"])
-                valid_map[s][sess_str] = True
+                # Preserve bar validity: only VALID bars are tradable!
+                valid_map[s][sess_str] = (str(row.get("bar_status", "")) == "VALID")
 
         pred_index: Dict[Tuple[str, Optional[int], str, str], float] = {}
         for r in predictions_by_year.get(fold_year, []):
             pred_index[(r.policy_id, r.realization_id, r.security_id, r.decision_session)] = r.prediction
 
-        for s_idx, t in enumerate(eval_sessions):
-            is_final_session = (is_last_fold and (s_idx == len(eval_sessions) - 1))
+        # Drive accounts strictly by their native market scheduled sessions
+        for mkt in unique_markets:
+            mkt_accounts = [k for k in sorted_account_keys if k[1] == mkt]
+            if not mkt_accounts:
+                continue
 
-            open_prices = {s: open_map[s][t] for s in sec_info if t in open_map[s]}
-            close_prices = {s: close_map[s][t] for s in sec_info if t in close_map[s]}
-            tradable_flags = {s: valid_map[s].get(t, False) for s in sec_info}
-            atr_ratios = {s: atr_map[s].get(t, 0.0) for s in sec_info}
+            mkt_cal = market_calendars.get(mkt) or get_market_venue_calendar(mkt)
+            sched_sessions = mkt_cal.sessions_in_range(f"{fold_year}-01-01", f"{fold_year}-12-31")
+            if not sched_sessions:
+                sched_sessions = sorted(list(set(
+                    r.session for r in fold_data.get("eval_records", []) if r.market == mkt
+                )))
+            if not sched_sessions:
+                continue
 
-            for acct_key in sorted_account_keys:
-                pol_id, mkt, real_id = acct_key
-                acct = policy_accounts[acct_key]
+            mkt_securities = sorted([s for s, s_data in sec_info.items() if s_data.get("market", "US") == mkt])
 
-                # 1. Pre-open corporate actions
-                acct.handle_corporate_actions_before_open(t, {})
+            for s_idx, t in enumerate(sched_sessions):
+                is_final_session = (is_last_fold and (s_idx == len(sched_sessions) - 1))
 
-                # 2. Open fills
-                acct.process_open_fills(t, open_prices, tradable_flags, yesterday_equity=acct.prev_equity)
+                open_prices = {s: open_map[s][t] for s in mkt_securities if t in open_map[s]}
+                close_prices = {s: close_map[s][t] for s in mkt_securities if t in close_map[s]}
+                tradable_flags = {
+                    s: (valid_map[s].get(t, False) and s in open_prices and open_prices[s] > 0 and np.isfinite(open_prices[s]))
+                    for s in mkt_securities
+                }
+                atr_ratios = {s: atr_map[s].get(t, 0.0) for s in mkt_securities}
 
-                # 3. Close stops & NAV update
-                acct.evaluate_close_stops_and_update_state(t, close_prices, atr_ratios)
+                for acct_key in mkt_accounts:
+                    pol_id, _, real_id = acct_key
+                    acct = policy_accounts[acct_key]
 
-                # 4. Entry planning at close (unless terminal session)
-                if not is_final_session:
-                    scores: Dict[str, float] = {}
-                    for s in sec_info:
-                        s_mkt = s.split("_")[0] if "_" in s else "US"
-                        if s_mkt != mkt and mkt != "ALL":
-                            continue
+                    # 1. Passive benchmark initial purchase at fold 0 session 0
+                    if isinstance(acct, PassiveEqualWeightAccount) and not acct.initial_entry_completed:
+                        acct.initialize_passive_entries(mkt_securities)
 
-                        vol = vol_map[s].get(t, 0.0)
-                        mom = mom_map[s].get(t, 0.0)
+                    # 2. Pre-open corporate actions
+                    acct.handle_corporate_actions_before_open(t, {})
 
-                        if pol_id == "MOMENTUM_21":
-                            score = mom
-                        elif pol_id == "VOL_MOMENTUM_21":
-                            score = mom / (vol + volatility_guard)
-                        elif pol_id == "PASSIVE_EQUAL_WEIGHT":
-                            score = 1.0 if len(acct.daily_history) <= 1 else 0.0
+                    # 3. Open fills
+                    acct.process_open_fills(t, open_prices, tradable_flags, yesterday_equity=acct.prev_equity)
+
+                    # 4. Close stops & NAV update
+                    acct.evaluate_close_stops_and_update_state(t, close_prices, atr_ratios)
+
+                    # 5. Entry planning at close (unless final study session)
+                    if not is_final_session:
+                        if isinstance(acct, PassiveEqualWeightAccount):
+                            acct.plan_entries_at_close([])
                         else:
-                            pred_val = pred_index.get((pol_id, real_id, s, t), 0.0)
-                            score = pred_val / (vol + volatility_guard)
+                            scores: Dict[str, float] = {}
+                            for s in mkt_securities:
+                                vol = vol_map[s].get(t, 0.0)
+                                mom = mom_map[s].get(t, 0.0)
 
-                        scores[s] = score
+                                if pol_id == "MOMENTUM_21":
+                                    score = mom
+                                elif pol_id == "VOL_MOMENTUM_21":
+                                    score = mom / (vol + volatility_guard)
+                                else:
+                                    pred_val = pred_index.get((pol_id, real_id, s, t), 0.0)
+                                    score = pred_val / (vol + volatility_guard)
 
-                    # Rank by score descending, tie-break by security_id ascending
-                    sorted_cands = sorted(scores.keys(), key=lambda s: (-scores[s], s))
+                                scores[s] = score
 
-                    eligible_cands = []
-                    for rank_num, s in enumerate(sorted_cands, start=1):
-                        sc = scores[s]
-                        is_held = (s in acct.positions)
-                        is_trad = tradable_flags.get(s, False)
-                        is_pos = (sc > 0.0 and math.isfinite(sc))
-                        is_elig = (not is_held and is_trad and is_pos)
-                        if is_elig:
-                            eligible_cands.append(s)
+                            # Rank by score descending, tie-break by security_id ascending
+                            sorted_cands = sorted(scores.keys(), key=lambda s: (-scores[s], s))
 
-                        raw_pred = pred_index.get((pol_id, real_id, s, t), 0.0)
-                        action = "INELIGIBLE"
-                        if is_held:
-                            action = "HELD_ALREADY"
-                        elif not is_trad:
-                            action = "UNTRADABLE"
-                        elif not is_pos:
-                            action = "NONPOSITIVE_SCORE"
-                        elif is_elig:
-                            action = "ELIGIBLE_CANDIDATE"
+                            eligible_cands = []
+                            for rank_num, s in enumerate(sorted_cands, start=1):
+                                sc = scores[s]
+                                is_held = (s in acct.positions)
+                                is_trad = tradable_flags.get(s, False)
+                                is_pos = (sc > 0.0 and math.isfinite(sc))
+                                is_elig = (not is_held and is_trad and is_pos)
+                                if is_elig:
+                                    eligible_cands.append(s)
 
-                        all_decisions[acct_key].append(DecisionRecord(
-                            session=t,
-                            query_id=f"{fold_year}_{s}_{t}",
-                            security_id=s,
-                            market=mkt,
-                            policy_id=pol_id,
-                            realization_id=real_id,
-                            prediction=raw_pred,
-                            volatility_21=vol_map[s].get(t, 0.0),
-                            score=sc,
-                            eligible=is_elig,
-                            rank=rank_num,
-                            selected_for_entry=False,
-                            action=action,
-                        ))
+                                raw_pred = pred_index.get((pol_id, real_id, s, t), 0.0)
+                                action = "INELIGIBLE"
+                                if is_held:
+                                    action = "HELD_ALREADY"
+                                elif not is_trad:
+                                    action = "UNTRADABLE"
+                                elif not is_pos:
+                                    action = "NONPOSITIVE_SCORE"
+                                elif is_elig:
+                                    action = "ELIGIBLE_CANDIDATE"
 
-                    acct.plan_entries_at_close(eligible_cands)
+                                all_decisions[acct_key].append(DecisionRecord(
+                                    session=t,
+                                    query_id=f"{fold_year}_{s}_{t}",
+                                    security_id=s,
+                                    market=mkt,
+                                    policy_id=pol_id,
+                                    realization_id=real_id,
+                                    prediction=raw_pred,
+                                    volatility_21=vol_map[s].get(t, 0.0),
+                                    score=sc,
+                                    eligible=is_elig,
+                                    rank=rank_num,
+                                    selected_for_entry=False,
+                                    action=action,
+                                ))
 
-                    for sec_planned in acct.pending_entries:
-                        for dec in reversed(all_decisions[acct_key]):
-                            if dec.session == t and dec.security_id == sec_planned:
-                                dec.selected_for_entry = True
-                                dec.action = "ENTRY_QUEUED"
-                                break
-                else:
-                    # Terminal liquidation at final session
-                    acct.execute_terminal_liquidation(t, close_prices)
-                    assert abs(acct.cash - acct.daily_history[-1].total_nav) < 1e-6, (
-                        f"Terminal cash reconciliation error for {acct_key}: cash={acct.cash}, nav={acct.daily_history[-1].total_nav}"
-                    )
-                    rets = [st.daily_return for st in acct.daily_history]
-                    comp_nav = acct.initial_capital * float(np.prod([1.0 + r for r in rets]))
-                    assert abs(comp_nav - acct.cash) < 1e-4, (
-                        f"Terminal compound return reconciliation error for {acct_key}: comp={comp_nav}, cash={acct.cash}"
-                    )
+                            acct.plan_entries_at_close(eligible_cands)
+
+                            for sec_planned in acct.pending_entries:
+                                for dec in reversed(all_decisions[acct_key]):
+                                    if dec.session == t and dec.security_id == sec_planned:
+                                        dec.selected_for_entry = True
+                                        dec.action = "ENTRY_QUEUED"
+                                        break
+                    else:
+                        # Terminal liquidation at final session
+                        acct.execute_terminal_liquidation(t, close_prices)
+                        assert abs(acct.cash - acct.daily_history[-1].total_nav) < 1e-6, (
+                            f"Terminal cash reconciliation error for {acct_key}: cash={acct.cash}, nav={acct.daily_history[-1].total_nav}"
+                        )
+                        rets = [st.daily_return for st in acct.daily_history]
+                        comp_nav = acct.initial_capital * float(np.prod([1.0 + r for r in rets]))
+                        assert abs(comp_nav - acct.cash) < 1e-4, (
+                            f"Terminal compound return reconciliation error for {acct_key}: comp={comp_nav}, cash={acct.cash}"
+                        )
+
+    # Construct union calendar and per-series market-open mask for statistical analysis
+    union_sessions = sorted(list(set(
+        st.session
+        for acct in policy_accounts.values()
+        for st in acct.daily_history
+    )))
+    K = len(sorted_account_keys)
+    T = len(union_sessions)
+    aligned_returns: Dict[Tuple[str, str, Optional[int]], np.ndarray] = {}
+    market_open_mask = np.zeros((K, T), dtype=bool)
+
+    for k_idx, acct_key in enumerate(sorted_account_keys):
+        acct = policy_accounts[acct_key]
+        sess_to_ret = {st.session: st.daily_return for st in acct.daily_history}
+        rets_arr = np.zeros(T, dtype=np.float64)
+        for t_idx, sess in enumerate(union_sessions):
+            if sess in sess_to_ret:
+                market_open_mask[k_idx, t_idx] = True
+                rets_arr[t_idx] = sess_to_ret[sess]
+            else:
+                market_open_mask[k_idx, t_idx] = False
+                rets_arr[t_idx] = 0.0
+        aligned_returns[acct_key] = rets_arr
 
     # Export account evidence and validate invariants
     accounts_dir = output_dir / "accounts"
@@ -983,7 +1199,6 @@ def run_continuous_portfolio_simulation(
         acct_dir = accounts_dir / tag
         acct_dir.mkdir(parents=True, exist_ok=True)
 
-        # Validate daily ledger NAV = cash + holdings
         for st in acct.daily_history:
             assert abs(st.total_nav - (st.cash + st.holdings_value)) < 1e-6, (
                 f"NAV identity violated on {st.session} for {tag}: {st.total_nav} != {st.cash} + {st.holdings_value}"
@@ -1012,6 +1227,7 @@ def run_continuous_portfolio_simulation(
     with open(port_manifest_path, "w", encoding="utf-8") as f:
         f.write(to_canonical_json({
             "accounts_count": len(sorted_account_keys),
+            "union_sessions_count": len(union_sessions),
             "artifacts": manifest_artifacts,
             "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         }))
@@ -1020,8 +1236,10 @@ def run_continuous_portfolio_simulation(
         "policy_accounts": policy_accounts,
         "all_decisions": all_decisions,
         "sorted_account_keys": sorted_account_keys,
+        "union_sessions": union_sessions,
+        "aligned_returns": aligned_returns,
+        "market_open_mask": market_open_mask,
     }
-
 
 def run_production_experiment_driver(context: Dict[str, Any]) -> Dict[str, Any]:
     """Full production experiment driver: trains backbones, executes retrieval, policies, and stats."""
@@ -1045,20 +1263,39 @@ def run_production_experiment_driver(context: Dict[str, Any]) -> Dict[str, Any]:
         and context.get("selected_policies") is None
         and context.get("selected_securities") is None
         and context.get("selected_seeds") is None
+        and execution_mode == "production"
     )
-    study_scope = "FULL_STUDY" if is_full_study else "EXPLICIT_SUBSET"
+    study_scope = "FULL_PRODUCTION" if is_full_study else "EXPLICIT_SUBSET"
+    allow_reduced_arms = not is_full_study
 
-    # 1. Check existing verified completion on restart
+    current_run_identity = compute_scientific_run_identity(config, folds_to_run, context)
+
+    # 1. Check existing verified completion on restart, bound to stable run identity
     pipeline_completion_file = output_dir / "pipeline_completion.json"
     release_analysis_dir = output_dir / "release_analysis"
     if pipeline_completion_file.exists() and release_analysis_dir.exists() and not context.get("force_rerun", False):
         try:
             with open(pipeline_completion_file, "r", encoding="utf-8") as f:
                 c_data = json.load(f)
-            replay_res = replay_analysis_bundle(release_analysis_dir, tolerance=1e-10, allow_reduced_arms=not is_full_study)
-            print(f"  [PIPELINE_COMPLETE] Experiment already verified (Replay: {replay_res.get('status')}).")
-            c_data["replayed"] = True
-            return c_data
+            stored_identity = c_data.get("run_identity", {})
+
+            # Validate stable scientific identity match (finding 3)
+            mismatches = []
+            if stored_identity.get("requested_scope") != current_run_identity["requested_scope"]:
+                mismatches.append(f"scope mismatch: stored={stored_identity.get('requested_scope')} vs current={current_run_identity['requested_scope']}")
+            if stored_identity.get("scientific_configuration_sha256") != current_run_identity["scientific_configuration_sha256"]:
+                mismatches.append("scientific configuration mismatch")
+            if stored_identity.get("sample_manifest_sha256") != current_run_identity["sample_manifest_sha256"]:
+                mismatches.append("sample manifest mismatch")
+
+            if mismatches:
+                print(f"  [PIPELINE_SCOPE_MISMATCH] Cached completion invalidated: {'; '.join(mismatches)}")
+                pipeline_completion_file.unlink(missing_ok=True)
+            else:
+                replay_res = replay_analysis_bundle(release_analysis_dir, tolerance=1e-10, allow_reduced_arms=allow_reduced_arms)
+                print(f"  [PIPELINE_COMPLETE] Experiment already verified for identical run identity (Replay: {replay_res.get('status')}).")
+                c_data["replayed"] = True
+                return c_data
         except Exception as e:
             print(f"  [PIPELINE_INVALID] Existing completion invalid ({e}); continuing with stage execution...")
             pipeline_completion_file.unlink(missing_ok=True)
@@ -1084,11 +1321,11 @@ def run_production_experiment_driver(context: Dict[str, Any]) -> Dict[str, Any]:
     jobs_resumable: List[str] = []
     jobs_failed: List[Dict[str, Any]] = []
 
-    vc = get_venue_calendar()
     fold_data_by_year: Dict[int, Dict[str, Any]] = {}
     trained_models_by_year: Dict[int, Dict[str, nn.Module]] = {}
     ridge_models_by_year: Dict[int, RidgeModel] = {}
     predictions_by_year: Dict[int, List[PolicyPredictionRecord]] = {}
+    completed_checkpoint_hashes: Dict[str, str] = {}
 
     # -------------------------------------------------------------------------
     # Stage 1: Backbone Training & Validation
@@ -1103,9 +1340,9 @@ def run_production_experiment_driver(context: Dict[str, Any]) -> Dict[str, Any]:
             fold_year=fold_year,
             data_dir=data_dir,
             sample_ids_dir=sample_ids_dir,
-            venue_calendar=vc,
             config=config,
             selected_securities=context.get("selected_securities"),
+            custom_calendars=context.get("custom_calendars"),
         )
         fold_data_by_year[fold_year] = fold_data
         print(f"  [Fold {fold_year}] Samples: Train={len(fold_data['train_y'])}, Val={len(fold_data['val_y'])}, Eval={len(fold_data['eval_records'])}, Bank={len(fold_data['bank_records'])}")
@@ -1133,6 +1370,7 @@ def run_production_experiment_driver(context: Dict[str, Any]) -> Dict[str, Any]:
                         if curr_best_sha == expected_best_sha:
                             print(f"  [COMPLETED] Job {job_id} already finished and verified.")
                             jobs_completed.append(job_id)
+                            completed_checkpoint_hashes[job_id] = curr_best_sha
                             if "MLP" in arch.upper():
                                 m = MLPAnnual(seed=seed)
                             else:
@@ -1167,10 +1405,10 @@ def run_production_experiment_driver(context: Dict[str, Any]) -> Dict[str, Any]:
                         model=model,
                         train_x=tx,
                         train_y=fold_data["train_y"],
-                        train_markets=fold_data["train_mkts"],
+                        train_markets=fold_data["train_markets"],
                         val_x=vx,
                         val_y=fold_data["val_y"],
-                        val_markets=fold_data["val_mkts"],
+                        val_markets=fold_data["val_markets"],
                         seed=seed,
                         device=device,
                         checkpoint_dir=chk_dir,
@@ -1199,8 +1437,8 @@ def run_production_experiment_driver(context: Dict[str, Any]) -> Dict[str, Any]:
 
                 trained_model.eval()
                 with torch.no_grad():
-                    eval_preds = trained_model(ex.to(device)).cpu().numpy().tolist() if len(ex) > 0 else []
-                    dev_preds = trained_model(dx.to(device)).cpu().numpy().tolist() if len(dx) > 0 else []
+                    eval_preds = trained_model(torch.tensor(ex, dtype=torch.float32, device=device)).squeeze(-1).cpu().numpy().tolist() if len(ex) > 0 else []
+                    dev_preds = trained_model(torch.tensor(dx, dtype=torch.float32, device=device)).squeeze(-1).cpu().numpy().tolist() if len(dx) > 0 else []
 
                 preds_payload = {
                     "job_id": job_id,
@@ -1217,62 +1455,45 @@ def run_production_experiment_driver(context: Dict[str, Any]) -> Dict[str, Any]:
                 last_sha = hashlib.sha256(last_pt.read_bytes()).hexdigest() if last_pt.exists() else None
                 preds_sha = hashlib.sha256(preds_json.read_bytes()).hexdigest()
 
-                comp_record = {
+                c_data = {
                     "job_id": job_id,
-                    "status": "STAGE_COMPLETED",
                     "fold_year": fold_year,
                     "architecture": arch,
                     "seed": seed,
-                    "best_loss": float(summary.best_loss),
-                    "best_epoch": int(summary.best_epoch),
-                    "epochs_trained": int(summary.epochs_trained),
-                    "total_macro_steps": int(summary.total_macro_steps),
+                    "status": "STAGE_COMPLETED",
                     "artifacts": {
-                        "best_checkpoint": {"path": "best_checkpoint.pt", "sha256": best_sha},
-                        "last_checkpoint": {"path": "last_checkpoint.pt", "sha256": last_sha} if last_sha else None,
-                        "predictions": {"path": "predictions.json", "sha256": preds_sha},
+                        "best_checkpoint": {"path": str(best_pt), "sha256": best_sha},
+                        "last_checkpoint": {"path": str(last_pt), "sha256": last_sha},
+                        "predictions": {"path": str(preds_json), "sha256": preds_sha},
                     },
+                    "summary": asdict(summary) if hasattr(summary, "__dataclass_fields__") else summary,
                     "timestamp_utc": datetime.now(timezone.utc).isoformat(),
                 }
                 with open(completion_marker, "w", encoding="utf-8") as f:
-                    f.write(to_canonical_json(comp_record))
+                    f.write(to_canonical_json(c_data))
 
                 jobs_completed.append(job_id)
+                completed_checkpoint_hashes[job_id] = best_sha
                 trained_models[f"{arch}_seed{seed}"] = trained_model
 
-        if context.get("interrupt_at_macro_step") is not None:
-            continue
-
-        # Fit Ridge regression model
-        ridge_m = fit_ridge_model(
-            fold_data["train_x_mlp"].numpy(),
-            fold_data["train_y"].numpy(),
-            fold_data["train_mkts"],
-            l2_lambda=0.001,
-        )
-        ridge_models_by_year[fold_year] = ridge_m
         trained_models_by_year[fold_year] = trained_models
 
-        fold_summary = {
-            "evaluation_year": fold_year,
-            "status": "FOLD_COMPLETED",
-            "eval_queries_count": len(fold_data["eval_records"]),
-            "bank_records_count": len(fold_data["bank_records"]),
-            "train_samples_count": len(fold_data["train_records"]),
-            "val_samples_count": len(fold_data["val_records"]),
-            "dev_samples_count": len(fold_data["dev_records"]),
-        }
-        with open(fold_dir / "fold_summary.json", "w", encoding="utf-8") as f:
-            f.write(to_canonical_json(fold_summary))
+        # Fit Ridge baseline on training set
+        print(f"  [Fold {fold_year}] Fitting RIDGE_ANNUAL baseline...")
+        ridge_model = fit_ridge_model(
+            fold_data["train_x_mlp"],
+            fold_data["train_y"],
+            market_labels=fold_data["train_markets"],
+            l2_lambda=0.001,
+        )
+        ridge_models_by_year[fold_year] = ridge_model
 
     if context.get("interrupt_at_macro_step") is not None:
         return {
             "status": "INTERRUPTED",
-            "study_scope": study_scope,
             "jobs_started": jobs_started,
             "jobs_completed": jobs_completed,
             "jobs_resumable": jobs_resumable,
-            "jobs_failed": jobs_failed,
         }
 
     # -------------------------------------------------------------------------
@@ -1292,12 +1513,26 @@ def run_production_experiment_driver(context: Dict[str, Any]) -> Dict[str, Any]:
             trained_models=t_models,
             ridge_model=r_model,
             device=device,
+            config=config,
             configured_policies=context.get("selected_policies"),
             seeds=seeds,
             custom_predictions=context.get("custom_predictions"),
             fail_on_corrupted_predictions=bool(context.get("fail_on_corrupted_predictions", False)),
+            checkpoint_hashes=completed_checkpoint_hashes,
         )
         predictions_by_year[fold_year] = p_records
+
+        fold_summary_path = fold_dir / "fold_summary.json"
+        fold_summary_data = {
+            "fold_year": fold_year,
+            "status": "FOLD_COMPLETED",
+            "eval_queries_count": len(fold_data.get("eval_records", [])),
+            "bank_records_count": len(fold_data.get("bank_records", [])),
+            "predictions_count": len(p_records),
+            "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+        }
+        with open(fold_summary_path, "w", encoding="utf-8") as f:
+            f.write(to_canonical_json(fold_summary_data))
 
     # -------------------------------------------------------------------------
     # Stage 3: Continuous Portfolio Simulation & Ledger Execution
@@ -1318,40 +1553,49 @@ def run_production_experiment_driver(context: Dict[str, Any]) -> Dict[str, Any]:
     )
 
     policy_accounts = port_res["policy_accounts"]
+    union_sessions = port_res["union_sessions"]
+    aligned_returns = port_res["aligned_returns"]
+    market_open_mask = port_res["market_open_mask"]
 
     # -------------------------------------------------------------------------
     # Stage 4: Statistical Inference & Primary Contrasts
     # -------------------------------------------------------------------------
     print("\n=== Stage 4: Statistical Inference & Primary Contrasts ===")
     analysis_cfg = config.get("analysis", {})
-    returns_map = {
-        k: np.array([st.daily_return for st in acct.daily_history], dtype=np.float64)
-        for k, acct in policy_accounts.items()
-    }
-    sample_acct = next(iter(policy_accounts.values()))
-    session_dates = [st.session for st in sample_acct.daily_history]
     unique_markets = sorted(list(set(k[1] for k in policy_accounts.keys())))
 
+    # In full production, disable reduced-arm mode and require complete coverage
+    if not allow_reduced_arms:
+        expected_markets = {"Brazil", "China", "France", "India", "UK", "US"}
+        actual_markets = set(unique_markets)
+        missing_m = expected_markets - actual_markets
+        if missing_m:
+            raise ValueError(f"Full production requires complete market coverage. Missing: {missing_m}")
+        if len(policy_accounts) < 204:
+            raise ValueError(f"Full production requires 204 continuous market paths. Found: {len(policy_accounts)}")
+
     contrast_results, draw_matrix, sampled_weeks = evaluate_primary_contrasts(
-        returns_by_arm_market_realization=returns_map,
+        returns_by_arm_market_realization=aligned_returns,
         markets=unique_markets,
-        session_dates=session_dates,
-        allow_reduced_arms=True,
+        session_dates=union_sessions,
+        valid_mask=market_open_mask,
+        allow_reduced_arms=allow_reduced_arms,
         num_draws=int(analysis_cfg.get("bootstrap_draws", 100)),
         seed=42,
     )
 
     export_analysis_bundle(
-        returns_by_key={f"{k[0]}__{k[1]}__{k[2]}": list(v) for k, v in returns_map.items()},
+        returns_by_key={f"{k[0]}__{k[1]}__{k[2]}": list(v) for k, v in aligned_returns.items()},
         contrast_results=contrast_results,
         draw_matrix=draw_matrix,
         draw_week_indices=sampled_weeks,
         export_dir=release_analysis_dir,
-        session_dates=session_dates,
+        session_dates=union_sessions,
+        valid_mask=market_open_mask,
         markets=unique_markets,
         num_draws=int(analysis_cfg.get("bootstrap_draws", 100)),
         seed=42,
-        allow_reduced_arms=True,
+        allow_reduced_arms=allow_reduced_arms,
     )
 
     # -------------------------------------------------------------------------
@@ -1361,7 +1605,7 @@ def run_production_experiment_driver(context: Dict[str, Any]) -> Dict[str, Any]:
     replay_report = replay_analysis_bundle(
         export_dir=release_analysis_dir,
         tolerance=float(analysis_cfg.get("analysis_replay_tolerance", 1e-10)),
-        allow_reduced_arms=True,
+        allow_reduced_arms=allow_reduced_arms,
     )
     print(f"  Replay Verification: {replay_report.get('status')}")
     with open(release_analysis_dir / "replay_report.json", "w", encoding="utf-8") as f:
@@ -1371,10 +1615,18 @@ def run_production_experiment_driver(context: Dict[str, Any]) -> Dict[str, Any]:
     all_done = (len(jobs_failed) == 0 and len(jobs_started) == len(jobs_completed))
     status = "PRODUCTION_SUCCESS" if all_done else "PRODUCTION_FAILED"
 
+    final_run_identity = compute_scientific_run_identity(
+        config=config,
+        folds_to_run=folds_to_run,
+        context=context,
+        checkpoint_hashes=completed_checkpoint_hashes,
+    )
+
     pipeline_summary = {
         "status": status,
         "pipeline_stage": "RELEASE_VERIFIED",
         "study_scope": study_scope,
+        "run_identity": final_run_identity,
         "configured_folds": all_configured_folds,
         "executed_folds": folds_to_run,
         "jobs_started": jobs_started,
@@ -1382,6 +1634,7 @@ def run_production_experiment_driver(context: Dict[str, Any]) -> Dict[str, Any]:
         "jobs_resumable": jobs_resumable,
         "jobs_failed": jobs_failed,
         "accounts_simulated": len(policy_accounts),
+        "union_sessions": len(union_sessions),
         "primary_contrasts_evaluated": len(contrast_results),
         "replay_report": replay_report,
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
@@ -1398,12 +1651,12 @@ def run_production_experiment_driver(context: Dict[str, Any]) -> Dict[str, Any]:
     with open(output_dir / "release_manifest.json", "w", encoding="utf-8") as f:
         f.write(to_canonical_json({
             "status": "RELEASE_VERIFIED",
+            "study_scope": study_scope,
             "artifacts": rel_artifacts,
             "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         }))
 
     return pipeline_summary
-
 
 def launch_a30_deployment(
     config_path: Path = REPO_ROOT / "rebuild_plan" / "config.proposed.json",
@@ -1554,6 +1807,7 @@ def launch_a30_deployment(
             driver_result = active_driver(launch_context)
             execution_result["executed"] = True
             execution_result["driver_result"] = driver_result
+            execution_result["status"] = driver_result.get("status", "PRODUCTION_SUCCESS")
             if driver_result.get("status") != "PRODUCTION_SUCCESS":
                 execution_result["error"] = "Production driver did not return PRODUCTION_SUCCESS"
         except Exception as exc:

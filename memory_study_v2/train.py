@@ -435,6 +435,14 @@ def train_backbone_model(
 
     selector = EarlyStoppingSelector(min_epochs=min_epochs, max_epochs=max_epochs, patience=patience)
 
+    if isinstance(train_x, np.ndarray):
+        train_x = torch.from_numpy(train_x).float()
+    if isinstance(train_y, np.ndarray):
+        train_y = torch.from_numpy(train_y).float()
+    if isinstance(val_x, np.ndarray):
+        val_x = torch.from_numpy(val_x).float()
+    if isinstance(val_y, np.ndarray):
+        val_y = torch.from_numpy(val_y).float()
 
     N_train = len(train_y)
     weights_np = compute_equal_market_weights(train_markets, target_num_markets=len(np.unique(train_markets)))

@@ -122,9 +122,16 @@ class VenueCalendar:
     status classifications, and reindexed DataFrames come from this object.
     """
 
-    def __init__(self, fixture_path: Optional[Path] = None) -> None:
-        path = fixture_path or _FIXTURE_PATH
-        self.sessions: List[str] = _load_sessions_from_fixture(path)
+    def __init__(
+        self,
+        fixture_path: Optional[Path] = None,
+        sessions: Optional[List[str]] = None,
+    ) -> None:
+        if sessions is not None:
+            self.sessions = sorted(list(set(str(s).strip() for s in sessions if str(s).strip())))
+        else:
+            path = fixture_path or _FIXTURE_PATH
+            self.sessions = _load_sessions_from_fixture(path)
         self._session_set: Set[str] = set(self.sessions)
         # 0-based ordinal for each session date string
         self.ordinal: Dict[str, int] = {s: i for i, s in enumerate(self.sessions)}
@@ -285,3 +292,66 @@ def get_venue_calendar() -> VenueCalendar:
     if _GLOBAL_CALENDAR is None:
         _GLOBAL_CALENDAR = VenueCalendar()
     return _GLOBAL_CALENDAR
+
+
+_MARKET_CALENDARS: Dict[str, VenueCalendar] = {}
+
+
+def get_market_venue_calendar(
+    market: str,
+    custom_calendars: Optional[Dict[str, VenueCalendar]] = None,
+    fixture_dir: Optional[Path] = None,
+    data_cache_dir: Optional[Path] = None,
+) -> VenueCalendar:
+    """Resolve authoritative venue calendar for a specific market.
+
+    Order of resolution:
+    1. Direct override via `custom_calendars`.
+    2. US standard fixture via `get_venue_calendar()`.
+    3. Market fixture CSV `data/fixtures/{market.lower()}_trading_sessions.csv`.
+    4. Unique sorted session dates across parquets in `data_cache_dir` for `{market}_*.parquet`.
+    """
+    m_clean = str(market).strip()
+    if custom_calendars and m_clean in custom_calendars:
+        return custom_calendars[m_clean]
+
+    if m_clean in _MARKET_CALENDARS:
+        return _MARKET_CALENDARS[m_clean]
+
+    if m_clean.upper() == "US":
+        cal = get_venue_calendar()
+        _MARKET_CALENDARS[m_clean] = cal
+        return cal
+
+    f_dir = fixture_dir or (_FIXTURE_PATH.parent)
+    cand_csv = f_dir / f"{m_clean.lower()}_trading_sessions.csv"
+    if cand_csv.exists():
+        sessions: List[str] = []
+        with open(cand_csv, "r", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                s = str(row.get("session", "")).strip()
+                if s:
+                    sessions.append(s)
+        cal = VenueCalendar(sessions=sessions)
+        _MARKET_CALENDARS[m_clean] = cal
+        return cal
+
+    c_dir = data_cache_dir or (_FIXTURE_PATH.parents[1] / "data" / "cache" / "ohlcv")
+    if c_dir.exists():
+        all_dates: Set[str] = set()
+        for pq_path in c_dir.glob(f"{m_clean}_*.parquet"):
+            try:
+                df = pd.read_parquet(pq_path, columns=["date"])
+                all_dates.update(df["date"].astype(str).tolist())
+            except Exception:
+                continue
+        if all_dates:
+            cal = VenueCalendar(sessions=sorted(list(all_dates)))
+            _MARKET_CALENDARS[m_clean] = cal
+            return cal
+
+    # Fallback to US calendar if no market-specific calendar can be found
+    cal = get_venue_calendar()
+    _MARKET_CALENDARS[m_clean] = cal
+    return cal

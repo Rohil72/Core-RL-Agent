@@ -821,4 +821,279 @@ def test_corrupted_prediction_artifact_rejects_completion(real_driver_env):
             },
         )
 
+def test_multi_market_calendar_holiday_isolation(tmp_path):
+    """Two market calendars with different holidays: closed market does not age positions or record observations."""
+    from memory_study_v2.venue_calendar import VenueCalendar
+    from scripts.launch_a30_production import run_continuous_portfolio_simulation, PolicyPredictionRecord
+    import pandas as pd
+    import numpy as np
 
+    # M1 open all 4 sessions, M2 closed on 2020-01-06 (holiday)
+    m1_sessions = ["2020-01-02", "2020-01-03", "2020-01-06", "2020-01-07"]
+    m2_sessions = ["2020-01-02", "2020-01-03", "2020-01-07"]
+    cal1 = VenueCalendar(sessions=m1_sessions)
+    cal2 = VenueCalendar(sessions=m2_sessions)
+
+    # Build synthetic sec_info for M1_SEC1 and M2_SEC2
+    def _make_sec_data(sec_id, market, sessions, price):
+        tr_df = pd.DataFrame({
+            "session": sessions,
+            "raw_open": [price] * len(sessions),
+            "raw_close": [price] * len(sessions),
+        })
+        val_df = pd.DataFrame({
+            "session": sessions,
+            "bar_status": ["VALID"] * len(sessions),
+        })
+        feats_df = pd.DataFrame({
+            "session": sessions,
+            "volatility_21": [0.01] * len(sessions),
+            "atr_ratio_14": [0.01] * len(sessions),
+            "momentum_21": [0.05] * len(sessions),
+        })
+        return {
+            "market": market,
+            "calendar": cal1 if market == "M1" else cal2,
+            "tr_df": tr_df,
+            "val_df": val_df,
+            "feats_df": feats_df,
+            "sess_to_row": {s: i for i, s in enumerate(sessions)},
+        }
+
+    sec_info = {
+        "M1_SEC1": _make_sec_data("M1_SEC1", "M1", m1_sessions, 100.0),
+        "M2_SEC2": _make_sec_data("M2_SEC2", "M2", m2_sessions, 50.0),
+    }
+
+    fold_data_by_year = {
+        2020: {
+            "sec_info": sec_info,
+            "market_calendars": {"M1": cal1, "M2": cal2},
+            "eval_records": [],
+        }
+    }
+
+    # Queue entry predictions on session 0
+    preds = [
+        PolicyPredictionRecord(
+            query_id="2020_M1_SEC1_2020-01-02",
+            security_id="M1_SEC1",
+            market="M1",
+            decision_session="2020-01-02",
+            fold=2020,
+            policy_id="MLP_BASE",
+            realization_id=7,
+            prediction=0.05,
+            source_artifact_id="art1",
+        ),
+        PolicyPredictionRecord(
+            query_id="2020_M2_SEC2_2020-01-02",
+            security_id="M2_SEC2",
+            market="M2",
+            decision_session="2020-01-02",
+            fold=2020,
+            policy_id="MLP_BASE",
+            realization_id=7,
+            prediction=0.05,
+            source_artifact_id="art2",
+        ),
+    ]
+
+    out_dir = tmp_path / "multi_mkt_sim"
+    res = run_continuous_portfolio_simulation(
+        folds_to_run=[2020],
+        fold_data_by_year=fold_data_by_year,
+        predictions_by_year={2020: preds},
+        output_dir=out_dir,
+    )
+
+    accts = res["policy_accounts"]
+    acct1 = accts[("MLP_BASE", "M1", 7)]
+    acct2 = accts[("MLP_BASE", "M2", 7)]
+
+    # M1 was open for 4 sessions
+    assert len(acct1.daily_history) == 4
+    m1_dates = [st.session for st in acct1.daily_history]
+    assert m1_dates == ["2020-01-02", "2020-01-03", "2020-01-06", "2020-01-07"]
+
+    # M2 was open for 3 sessions (holiday on 2020-01-06)
+    assert len(acct2.daily_history) == 3
+    m2_dates = [st.session for st in acct2.daily_history]
+    assert m2_dates == ["2020-01-02", "2020-01-03", "2020-01-07"]
+
+    # On 2020-01-06, M2 did NOT step and did NOT record an observation
+    assert "2020-01-06" not in m2_dates
+
+    # Union calendar and market open mask verification
+    union_dates = res["union_sessions"]
+    assert union_dates == ["2020-01-02", "2020-01-03", "2020-01-06", "2020-01-07"]
+    open_mask = res["market_open_mask"]
+
+    # Account 1 (M1) mask: True on all 4 sessions
+    idx1 = res["sorted_account_keys"].index(("MLP_BASE", "M1", 7))
+    assert list(open_mask[idx1]) == [True, True, True, True]
+
+    # Account 2 (M2) mask: False on 2020-01-06 (index 2)
+    idx2 = res["sorted_account_keys"].index(("MLP_BASE", "M2", 7))
+    assert list(open_mask[idx2]) == [True, True, False, True]
+
+
+def test_select_mixture_sr_development_ledger_scores():
+    """select_mixture_sr uses dev_eval_fn to score against actual development portfolio Sharpe ratios."""
+    from memory_study_v2.integration import select_mixture_sr
+    import numpy as np
+
+    # Synthetic dev predictions for 2 seeds in 1 market
+    dev_base = {
+        7: np.array([0.01, -0.02, 0.03, -0.01]),
+        17: np.array([0.02, -0.01, 0.02, -0.02]),
+    }
+    dev_mem = np.array([0.05, 0.06, 0.04, 0.05])
+    dev_y = np.array([0.05, 0.04, 0.03, 0.05])
+    dev_mkts = np.array(["US", "US", "US", "US"])
+
+    # Callback simulating development portfolio Sharpe
+    # lam=0.0 -> poor Sharpe (-0.5), lam=1.0 -> excellent Sharpe (+2.5)
+    def mock_dev_eval(lam: float, seed: int, market: str) -> float:
+        if lam == 1.0:
+            return 2.5
+        elif lam == 0.5:
+            return 1.2
+        elif lam == 0.25:
+            return 0.5
+        elif lam == 0.10:
+            return 0.1
+        else:
+            return -0.5
+
+    sel = select_mixture_sr(
+        dev_base_by_seed=dev_base,
+        dev_mem_preds=dev_mem,
+        dev_targets=dev_y,
+        dev_markets=dev_mkts,
+        lambda_grid=[0.0, 0.10, 0.25, 0.50, 1.00],
+        dev_eval_fn=mock_dev_eval,
+    )
+
+    assert sel.selected_lambda == 1.0
+    assert sel.grid_scores[1.0] == 2.5
+    assert sel.grid_scores[0.0] == -0.5
+    assert sel.grid_scores[1.0] > sel.grid_scores[0.0]
+
+
+def test_passive_benchmark_holds_beyond_max_holding_sessions():
+    """PASSIVE_EQUAL_WEIGHT holds beyond active 63-session horizon without stops or age exits."""
+    from memory_study_v2.execution import PassiveEqualWeightAccount, PortfolioAccount
+
+    # Setup 70 sessions (> 63 max holding sessions)
+    sessions = [f"2020-01-{i+1:02d}" for i in range(70)]
+
+    active_acct = PortfolioAccount(
+        initial_capital=100000.0,
+        max_positions=3,
+        max_holding_sessions=63,
+    )
+    passive_acct = PassiveEqualWeightAccount(
+        initial_capital=100000.0,
+        universe_size=2,
+    )
+
+    # Initialize entries at session 0
+    passive_acct.initialize_passive_entries(["SEC_A", "SEC_B"])
+    active_acct.pending_entries = ["SEC_A"]
+
+    open_p = {"SEC_A": 100.0, "SEC_B": 100.0}
+    trad_flags = {"SEC_A": True, "SEC_B": True}
+    close_p = {"SEC_A": 100.0, "SEC_B": 100.0}
+    atr = {"SEC_A": 0.01, "SEC_B": 0.01}
+
+    # Step through all 70 sessions
+    for idx, sess in enumerate(sessions):
+        is_terminal = (idx == len(sessions) - 1)
+
+        # Open fills
+        active_acct.process_open_fills(sess, open_p, trad_flags)
+        passive_acct.process_open_fills(sess, open_p, trad_flags)
+
+        # Close valuation & stop evaluation
+        active_acct.evaluate_close_stops_and_update_state(sess, close_p, atr)
+        passive_acct.evaluate_close_stops_and_update_state(sess, close_p, atr)
+
+        if not is_terminal:
+            active_acct.plan_entries_at_close([])
+            passive_acct.plan_entries_at_close([])
+        else:
+            active_acct.execute_terminal_liquidation(sess, close_p)
+            passive_acct.execute_terminal_liquidation(sess, close_p)
+
+    # Passive held both securities through session 69 with NO MAX_AGE exit
+    passive_trade_reasons = [t.reason for t in passive_acct.trades]
+    assert "MAX_AGE" not in passive_trade_reasons
+    assert "STOP" not in passive_trade_reasons
+    assert passive_trade_reasons[0] == "PASSIVE_INITIAL_ENTRY"
+    assert passive_trade_reasons[1] == "PASSIVE_INITIAL_ENTRY"
+    assert "TERMINAL" in passive_trade_reasons
+
+    # Active queued MAX_AGE exit on session 63 and sold on session 64
+    active_trade_sides = [t.side for t in active_acct.trades]
+    assert "SELL_MAX_AGE" in active_trade_sides
+
+
+def test_cached_completion_invalidates_on_scope_or_config_change(real_driver_env, tmp_path):
+    """Reusing an output directory with changed scope or config invalidates cached completion."""
+    from scripts.launch_a30_production import launch_a30_deployment
+    import json
+
+    out_dir = tmp_path / "cache_binding_test"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # First run on US_AAPL only
+    receipt1 = launch_a30_deployment(
+        config_path=real_driver_env["config_path"],
+        data_dir=real_driver_env["data_dir"],
+        output_dir=out_dir,
+        sample_ids_dir=real_driver_env["sample_ids_dir"],
+        authorize_production=True,
+        check_only=False,
+        selected_folds=[2020],
+        selected_securities=["US_AAPL"],
+        execution_mode="pilot",
+        driver_fn=None,
+        driver_kwargs={
+            "max_epochs": 1,
+            "micro_batch_size": 16,
+            "effective_batch_size": 32,
+        },
+    )
+    assert receipt1["execution"]["status"] == "PRODUCTION_SUCCESS"
+
+    comp_file = out_dir / "pipeline_completion.json"
+    assert comp_file.exists()
+    with open(comp_file, "r", encoding="utf-8") as f:
+        comp_data = json.load(f)
+    assert comp_data["run_identity"]["requested_scope"]["securities"] == ["US_AAPL"]
+
+    # Second run reusing out_dir, but changing selected securities to US_AAPL + US_MSFT
+    receipt2 = launch_a30_deployment(
+        config_path=real_driver_env["config_path"],
+        data_dir=real_driver_env["data_dir"],
+        output_dir=out_dir,
+        sample_ids_dir=real_driver_env["sample_ids_dir"],
+        authorize_production=True,
+        check_only=False,
+        selected_folds=[2020],
+        selected_securities=["US_AAPL", "US_MSFT"],
+        execution_mode="pilot",
+        driver_fn=None,
+        driver_kwargs={
+            "max_epochs": 1,
+            "micro_batch_size": 16,
+            "effective_batch_size": 32,
+        },
+    )
+
+    # Must NOT have returned cached run; must have executed for new scope
+    assert receipt2["execution"]["status"] == "PRODUCTION_SUCCESS"
+    with open(comp_file, "r", encoding="utf-8") as f:
+        comp_data2 = json.load(f)
+    assert sorted(comp_data2["run_identity"]["requested_scope"]["securities"]) == ["US_AAPL", "US_MSFT"]

@@ -431,3 +431,161 @@ class PortfolioAccount:
             ))
             self.prev_equity = final_nav
         return final_nav
+
+
+class PassiveEqualWeightAccount(PortfolioAccount):
+    """Passive equal-weight buy-and-hold benchmark account (Section 8.4).
+
+    Rules:
+    - Purchases at the first portfolio open, assigning equal initial budgets to
+      primary securities with valid positive tradable opens at that date:
+        budget_per_sec = (initial_capital * cash_budget_fraction) / num_eligible
+      Uses integer shares, deducting commission and slippage; residual cash remains cash.
+    - No 3-position active cap: holds all eligible market securities in parallel.
+    - No active entry ranking: `plan_entries_at_close` is a no-op after initial entry.
+    - No active exits: disables Chandelier drawdown stops and max-holding-age exits.
+      Holds continuously beyond the active 63-session horizon across all folds.
+    - Preserves corporate actions (cash dividends credited, splits adjust shares/basis).
+    - Preserves missing quote handling (action-adjusted last valid price).
+    - Synthetic terminal liquidation at the final study session close with fee and slippage.
+    """
+
+    def __init__(
+        self,
+        initial_capital: float = 100000.0,
+        commission: float = 0.001,
+        slippage: float = 0.0005,
+        cash_budget_fraction: float = 0.95,
+        universe_size: int = 100,
+    ):
+        super().__init__(
+            initial_capital=initial_capital,
+            max_positions=universe_size,
+            commission=commission,
+            slippage=slippage,
+            cash_budget_fraction=cash_budget_fraction,
+            atr_multiplier=0.0,
+            min_stop_fraction=float("inf"),
+            max_holding_sessions=999999,
+        )
+        self.initial_entry_completed: bool = False
+
+    def initialize_passive_entries(self, eligible_candidates: List[str]) -> None:
+        """Queue initial buy instructions across all eligible universe assets."""
+        if not self.initial_entry_completed and eligible_candidates:
+            self.pending_entries = list(eligible_candidates)
+            self.max_positions = max(len(eligible_candidates), self.max_positions)
+
+    def process_open_fills(
+        self,
+        session: str,
+        open_prices: Dict[str, float],
+        tradable_flags: Dict[str, bool],
+        yesterday_equity: Optional[float] = None,
+        close_decision_equity: Optional[float] = None,
+    ) -> None:
+        """Process equal-weight entry at first open, allocating equal budget to all eligible."""
+        if not self.initial_entry_completed and self.pending_entries:
+            valid_cands = [
+                sec for sec in self.pending_entries
+                if tradable_flags.get(sec, False)
+                and sec in open_prices
+                and np.isfinite(open_prices[sec])
+                and open_prices[sec] > 0.0
+            ]
+            if valid_cands:
+                per_sec_budget = (self.cash_budget_fraction * self.cash) / float(len(valid_cands))
+                for sec_id in valid_cands:
+                    raw_open = open_prices[sec_id]
+                    buy_fill = raw_open * (1.0 + self.slippage)
+                    max_shares = int(math.floor(per_sec_budget / (buy_fill * (1.0 + self.commission))))
+                    if max_shares < 1:
+                        continue
+                    gross = max_shares * buy_fill
+                    comm = self.commission * gross
+                    total_cost = gross + comm
+                    if total_cost > self.cash:
+                        continue
+                    self.cash -= total_cost
+                    self.positions[sec_id] = Position(
+                        security_id=sec_id,
+                        quantity=max_shares,
+                        cost_basis=buy_fill,
+                        peak_price=buy_fill,
+                        last_valid_price=buy_fill,
+                        stale_sessions=0,
+                        age_sessions=0,
+                    )
+                    slip = raw_open * self.slippage * max_shares
+                    self.trades.append(TradeRecord(
+                        session=session,
+                        security_id=sec_id,
+                        side="BUY",
+                        quantity=max_shares,
+                        raw_price=raw_open,
+                        fill_price=buy_fill,
+                        gross_notional=gross,
+                        commission=comm,
+                        slippage=slip,
+                        reason="PASSIVE_INITIAL_ENTRY",
+                    ))
+            self.pending_entries = []
+            self.initial_entry_completed = True
+        else:
+            super().process_open_fills(
+                session=session,
+                open_prices=open_prices,
+                tradable_flags=tradable_flags,
+                yesterday_equity=yesterday_equity,
+                close_decision_equity=close_decision_equity,
+            )
+
+    def evaluate_close_stops_and_update_state(
+        self,
+        session: str,
+        close_prices: Dict[str, float],
+        atr_ratios: Dict[str, float],
+    ) -> float:
+        """Track holdings value and NAV without triggering Chandelier stops or max age exits."""
+        holdings_value = 0.0
+        for sec_id, pos in list(self.positions.items()):
+            has_valid_close = (
+                sec_id in close_prices
+                and np.isfinite(close_prices[sec_id])
+                and close_prices[sec_id] > 0.0
+            )
+            if has_valid_close:
+                c = close_prices[sec_id]
+                pos.last_valid_price = c
+                pos.stale_sessions = 0
+                pos.peak_price = max(pos.peak_price, c)
+                holdings_value += pos.quantity * c
+            else:
+                pos.stale_sessions += 1
+                holdings_value += pos.quantity * pos.last_valid_price
+
+            pos.age_sessions += 1
+
+        total_nav = self.cash + holdings_value
+        executed_notional = sum(
+            t.gross_notional for t in self.trades if t.session == session
+        )
+
+        daily_ret = (total_nav / self.prev_equity) - 1.0 if self.prev_equity > 0.0 else 0.0
+        self.prev_equity = total_nav
+
+        state = DailyLedgerState(
+            session=session,
+            cash=self.cash,
+            holdings_value=holdings_value,
+            total_nav=total_nav,
+            daily_return=daily_ret,
+            turnover_notional=executed_notional,
+            num_positions=len(self.positions),
+        )
+        self.daily_history.append(state)
+        return total_nav
+
+    def plan_entries_at_close(self, ranked_candidates: List[str]) -> None:
+        """Passive benchmark does not enter new positions after initial open."""
+        self.pending_entries = []
