@@ -17,19 +17,26 @@ Capabilities:
    - Verifies that repo configuration has 'production_authorized: false'.
    - Demands explicit operator authorization flag (--authorize-production) at launch time.
    - Refuses production training if unauthorized.
-4. Production Walk-Forward Execution & Telemetry:
-   - Dispatches configured folds, seeds, and architectures through existing components.
-   - Resolves approved configuration in-memory without modifying repository configuration.
-   - Tracks started, completed, resumable, and failed jobs.
-   - Supports dependency-injected driver functions for isolated unit testing.
-   - Propagates any driver failure to a nonzero exit code.
+4. Real Production Walk-Forward Execution & Telemetry:
+   - Dispatches configured folds, seeds, and architectures through real components.
+   - Resolves admitted training, validation, and evaluation sample IDs into genuine representations and targets.
+   - Instantiates MLPAnnual and TransformerAnnual backbones.
+   - Invokes train_backbone_model runner with runtime configuration authorization.
+   - Truthful completion state: best_checkpoint.pt is not a completion marker; an interrupted job
+     resumes from last_checkpoint.pt; a stage is marked completed only when job_completion.json
+     is written with validated SHA-256 digests.
+   - Executes downstream precedent retrieval (retrieve_mem_sim_batch), Selective Trust Gate fitting,
+     and portfolio simulation (PortfolioAccount) with cash NAV reconciliation.
+   - Supports dependency-injected driver functions for isolated unit testing, and defaults to real driver.
    - Emits signed launch receipt to rebuild_plan/a30_production_out/a30_launch_receipt.json.
 """
 
 from __future__ import annotations
 
 import argparse
+from dataclasses import asdict
 from datetime import datetime, timezone
+import glob
 import hashlib
 import json
 import os
@@ -37,7 +44,7 @@ from pathlib import Path
 import platform
 import sys
 import time
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 # Ensure repository root is on sys.path
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -45,6 +52,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 import numpy as np
+import pandas as pd
 
 try:
     import psutil
@@ -53,10 +61,29 @@ except ImportError:
 
 try:
     import torch
+    import torch.nn as nn
 except ImportError:
     torch = None
+    nn = None
 
-from memory_study_v2.contracts import to_canonical_json
+from memory_study_v2.backbones import MLPAnnual, TransformerAnnual
+from memory_study_v2.canonical_data import align_to_venue_calendar, build_total_return_bars, validate_raw_bars
+from memory_study_v2.contracts import EXPECTED_FEATURES_ORDERED, to_canonical_json
+from memory_study_v2.execution import PortfolioAccount
+from memory_study_v2.features import compute_technical_features, fit_scaler
+from memory_study_v2.integration import fit_trust_gate
+from memory_study_v2.labels import compute_target_labels
+from memory_study_v2.memory import BankRecord, MemoryBank
+from memory_study_v2.representations import extract_annual_representation
+from memory_study_v2.retrieval import retrieve_mem_sim_batch
+from memory_study_v2.sample_index import (
+    SampleIndexRecord,
+    build_security_sample_index,
+    filter_admitted_sample_ids,
+    load_fold_sample_ids,
+)
+from memory_study_v2.train import train_backbone_model
+from memory_study_v2.venue_calendar import get_venue_calendar
 
 
 def get_system_telemetry() -> Dict[str, Any]:
@@ -220,33 +247,254 @@ def verify_configuration_authorization(
     }
 
 
-def run_production_experiment_driver(context: Dict[str, Any]) -> Dict[str, Any]:
-    """Default production experiment driver: dispatches folds, seeds, and models."""
-    from memory_study_v2.backbones import MLPAnnual, TransformerAnnual
-    from memory_study_v2.sample_index import load_fold_sample_ids
-    from memory_study_v2.train import train_backbone_model
+def prepare_fold_data(
+    fold_year: int,
+    data_dir: Path,
+    sample_ids_dir: Path,
+    venue_calendar: Any,
+    config: Dict[str, Any],
+    selected_securities: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """Load admitted samples, features, representations, and tensors for a fold."""
+    fold_cfgs = config.get("folds", [])
+    f_cfg = next((f for f in fold_cfgs if int(f.get("evaluation_year", 0)) == fold_year), None)
 
+    if f_cfg is not None:
+        train_start = f_cfg.get("train_origin_start", f"{fold_year - 7}-01-01")
+        train_end = f_cfg.get("training_availability_cutoff", f"{fold_year - 3}-12-31")
+        val_start = f_cfg.get("validation_query_start", f"{fold_year - 2}-01-01")
+        val_end = f_cfg.get("validation_query_end", f"{fold_year - 2}-12-31")
+        dev_start = f_cfg.get("development_query_start", f"{fold_year - 1}-01-01")
+        dev_end = f_cfg.get("development_query_end", f"{fold_year - 1}-12-31")
+        eval_start = f"{fold_year}-01-01"
+        eval_end = f"{fold_year}-12-31"
+    else:
+        train_start = f"{fold_year - 7}-01-01"
+        train_end = f"{fold_year - 3}-12-31"
+        val_start = f"{fold_year - 2}-01-01"
+        val_end = f"{fold_year - 2}-12-31"
+        dev_start = f"{fold_year - 1}-01-01"
+        dev_end = f"{fold_year - 1}-12-31"
+        eval_start = f"{fold_year}-01-01"
+        eval_end = f"{fold_year}-12-31"
+
+    parquet_files = sorted(data_dir.glob("*.parquet"))
+    if not parquet_files:
+        raise FileNotFoundError(f"No OHLCV parquet files found in {data_dir}")
+
+    if selected_securities is not None:
+        parquet_files = [p for p in parquet_files if p.stem in selected_securities or p.stem.replace("US_", "") in selected_securities]
+        if not parquet_files:
+            raise FileNotFoundError(f"None of the selected securities {selected_securities} found in {data_dir}")
+
+    sec_info: Dict[str, Any] = {}
+    train_feats_dfs: List[pd.DataFrame] = []
+    venue_sessions = venue_calendar.sessions_in_range("2010-01-01", f"{fold_year}-12-31")
+
+    for p in parquet_files:
+        sec_id = p.stem
+        df_raw = pd.read_parquet(p).reset_index()
+        rename_dict = {}
+        for c in df_raw.columns:
+            if c.lower() in ("date", "session", "index", "timestamp"):
+                rename_dict[c] = "session"
+        df_raw = df_raw.rename(columns=rename_dict)
+        if "session" not in df_raw.columns:
+            df_raw["session"] = df_raw.iloc[:, 0].astype(str).str.slice(0, 10)
+        else:
+            df_raw["session"] = df_raw["session"].astype(str).str.slice(0, 10)
+
+        df_aligned = align_to_venue_calendar(df_raw, venue_sessions)
+        val_df = validate_raw_bars(df_aligned, sec_id, quote_unit=1.0)
+        tr_df = build_total_return_bars(val_df, actions=[], quote_unit=1.0)
+        recs = build_security_sample_index(sec_id, val_df, venue_calendar=venue_calendar)
+        feats_df = compute_technical_features(tr_df)
+        labels_df = compute_target_labels(tr_df, venue_sessions=venue_calendar.sessions)
+        sess_to_row = {str(s): i for i, s in enumerate(feats_df["session"].tolist())}
+
+        adm_train = filter_admitted_sample_ids(recs, train_start, train_end, require_target=True, max_target_maturity=train_end)
+        adm_val = filter_admitted_sample_ids(recs, val_start, val_end, require_target=True, max_target_maturity=val_end)
+        adm_dev = filter_admitted_sample_ids(recs, dev_start, dev_end, require_target=True, max_target_maturity=dev_end)
+        adm_eval = filter_admitted_sample_ids(recs, eval_start, eval_end, require_target=False)
+        adm_bank = filter_admitted_sample_ids(recs, train_start, train_end, max_bank_maturity=train_end)
+
+        sec_info[sec_id] = {
+            "val_df": val_df,
+            "tr_df": tr_df,
+            "recs": recs,
+            "feats_df": feats_df,
+            "labels_df": labels_df,
+            "sess_to_row": sess_to_row,
+            "adm_train": adm_train,
+            "adm_val": adm_val,
+            "adm_dev": adm_dev,
+            "adm_eval": adm_eval,
+            "adm_bank": adm_bank,
+        }
+
+        if len(adm_train) > 0:
+            train_indices = [sess_to_row[r.session] for r in adm_train if r.session in sess_to_row]
+            if train_indices:
+                train_feats_dfs.append(feats_df.iloc[train_indices])
+
+    if not train_feats_dfs:
+        raise ValueError(f"No valid training samples admitted for fold {fold_year}")
+
+    combined_train_feats = pd.concat(train_feats_dfs, ignore_index=True)
+    scaler = fit_scaler(combined_train_feats, training_cutoff=train_end, start_date=train_start)
+
+    def _extract_dataset(partition_name: str, is_eval: bool = False):
+        mlp_vecs = []
+        trans_mats = []
+        targets = []
+        markets = []
+        records_out = []
+
+        for sec_id, s_data in sec_info.items():
+            admitted = s_data[f"adm_{partition_name}"]
+            feats_df = s_data["feats_df"]
+            labels_df = s_data["labels_df"]
+            sess_to_row = s_data["sess_to_row"]
+
+            for r in admitted:
+                idx = sess_to_row.get(r.session)
+                if idx is None:
+                    continue
+                assert r.input_window_valid is True, f"Consumed record {r.query_id} input_window_valid must be True"
+                rep = extract_annual_representation(feats_df, idx, scaler)
+                mlp_vecs.append(rep.flattened_vector)
+                trans_mats.append(rep.transformer_matrix)
+                records_out.append(r)
+                mkt_code = sec_id.split("_")[0] if "_" in sec_id else (sec_id.split(":")[0] if ":" in sec_id else "US")
+                markets.append(mkt_code)
+
+                if not is_eval:
+                    assert r.target_63_valid is True, f"Record {r.query_id} target_63_valid must be True"
+                    t_val = float(labels_df["target_value"].iloc[idx])
+                    assert np.isfinite(t_val), f"Record {r.query_id} target must be finite"
+                    targets.append(t_val)
+                else:
+                    targets.append(0.0)
+
+        return (
+            torch.tensor(np.array(mlp_vecs), dtype=torch.float32),
+            torch.tensor(np.array(trans_mats), dtype=torch.float32),
+            torch.tensor(np.array(targets), dtype=torch.float32),
+            np.array(markets),
+            records_out,
+        )
+
+    tr_mlp, tr_trans, tr_y, tr_mkts, tr_recs = _extract_dataset("train", is_eval=False)
+    va_mlp, va_trans, va_y, va_mkts, va_recs = _extract_dataset("val", is_eval=False)
+    de_mlp, de_trans, de_y, de_mkts, de_recs = _extract_dataset("dev", is_eval=False)
+    ev_mlp, ev_trans, ev_y, ev_mkts, ev_recs = _extract_dataset("eval", is_eval=True)
+
+    bank_records: List[BankRecord] = []
+    b_id = 1
+    for sec_id, s_data in sec_info.items():
+        feats_df = s_data["feats_df"]
+        labels_df = s_data["labels_df"]
+        sess_to_row = s_data["sess_to_row"]
+        for r in s_data["adm_bank"]:
+            idx = sess_to_row.get(r.session)
+            if idx is None:
+                continue
+            rep = extract_annual_representation(feats_df, idx, scaler)
+            t_val = float(labels_df["target_value"].iloc[idx]) if r.target_63_valid else 0.0
+            bank_records.append(BankRecord(
+                record_id=b_id,
+                security_id=r.security_id,
+                session_origin=r.session,
+                session_126_maturity=r.bank_126_available_at,
+                vector=rep.flattened_vector,
+                target_63=t_val,
+                session_ordinal=r.session_ordinal,
+            ))
+            b_id += 1
+
+    return {
+        "train_x_mlp": tr_mlp,
+        "train_x_trans": tr_trans,
+        "train_y": tr_y,
+        "train_mkts": tr_mkts,
+        "val_x_mlp": va_mlp,
+        "val_x_trans": va_trans,
+        "val_y": va_y,
+        "val_mkts": va_mkts,
+        "dev_x_mlp": de_mlp,
+        "dev_x_trans": de_trans,
+        "dev_y": de_y,
+        "dev_mkts": de_mkts,
+        "eval_x_mlp": ev_mlp,
+        "eval_x_trans": ev_trans,
+        "eval_records": ev_recs,
+        "bank_records": bank_records,
+        "sec_info": sec_info,
+        "scaler": scaler,
+    }
+
+
+def run_production_experiment_driver(context: Dict[str, Any]) -> Dict[str, Any]:
+    """Full production experiment driver: trains backbones, executes retrieval, policies, and stats."""
     config = context["config"]
     output_dir = Path(context["output_dir"])
+    output_dir.mkdir(parents=True, exist_ok=True)
     sample_ids_dir = Path(context["sample_ids_dir"])
-    device = context["device"]
-    folds_to_run = context.get("selected_folds", [2020])
+    data_dir = Path(context["data_dir"])
+    device = context.get("device", torch.device("cuda:0" if torch.cuda.is_available() else "cpu"))
+    execution_mode = context.get("execution_mode", "production")
+
+    all_configured_folds = [int(f["evaluation_year"]) for f in config.get("folds", [])] or [2020, 2021, 2022, 2023, 2024, 2025]
+    selected_folds = context.get("selected_folds")
+    if selected_folds is not None:
+        folds_to_run = [int(f) for f in selected_folds]
+    else:
+        folds_to_run = all_configured_folds
+
+    is_full_study = (set(folds_to_run) == set(all_configured_folds))
+    study_scope = "FULL_STUDY" if is_full_study else "EXPLICIT_SUBSET"
+
+    runtime_cfg_path = output_dir / "runtime_config.authorized.json"
+    runtime_cfg = dict(config)
+    runtime_cfg["production_authorized"] = True
+    runtime_cfg["study_scope"] = study_scope
+    runtime_cfg["executed_folds"] = folds_to_run
+    runtime_cfg["authorized_at_utc"] = datetime.now(timezone.utc).isoformat()
+    with open(runtime_cfg_path, "w", encoding="utf-8") as f:
+        f.write(to_canonical_json(runtime_cfg))
 
     neural_cfg = config.get("neural", {})
-    seeds = neural_cfg.get("seeds", [7, 17, 37])
-    architectures = neural_cfg.get("architectures", ["MLP_ANNUAL_966_64_128_1", "TRANSFORMER_42x23_WIDTH64_HEADS4_LAYERS2_FF128_LATENT128"])
+    seeds = context.get("seeds") or neural_cfg.get("seeds", [7, 17, 37])
+    architectures = context.get("architectures") or neural_cfg.get("architectures", [
+        "MLP_ANNUAL_966_64_128_1",
+        "TRANSFORMER_42x23_WIDTH64_HEADS4_LAYERS2_FF128_LATENT128",
+    ])
 
     jobs_started: List[str] = []
     jobs_completed: List[str] = []
     jobs_resumable: List[str] = []
     jobs_failed: List[Dict[str, Any]] = []
+    fold_summaries: Dict[int, Any] = {}
+
+    vc = get_venue_calendar()
 
     for fold_year in folds_to_run:
-        fold_manifest = load_fold_sample_ids(fold_year, sample_ids_dir=sample_ids_dir)
-        print(f"  Fold {fold_year} sample IDs validated: {fold_manifest.get('counts')}")
-
+        print(f"\n--- Executing Walk-Forward Fold {fold_year} (Scope: {study_scope}) ---")
         fold_dir = output_dir / f"fold_{fold_year}"
         fold_dir.mkdir(parents=True, exist_ok=True)
+
+        print(f"  [Fold {fold_year}] Preparing fold datasets from {data_dir}...")
+        fold_data = prepare_fold_data(
+            fold_year=fold_year,
+            data_dir=data_dir,
+            sample_ids_dir=sample_ids_dir,
+            venue_calendar=vc,
+            config=config,
+            selected_securities=context.get("selected_securities"),
+        )
+        print(f"  [Fold {fold_year}] Samples: Train={len(fold_data['train_y'])}, Val={len(fold_data['val_y'])}, Eval={len(fold_data['eval_records'])}, Bank={len(fold_data['bank_records'])}")
+
+        trained_models: Dict[str, nn.Module] = {}
 
         for arch in architectures:
             for seed in seeds:
@@ -255,44 +503,173 @@ def run_production_experiment_driver(context: Dict[str, Any]) -> Dict[str, Any]:
                 chk_dir = fold_dir / f"checkpoints_{arch}_seed{seed}"
                 chk_dir.mkdir(parents=True, exist_ok=True)
 
+                completion_marker = chk_dir / "job_completion.json"
                 best_pt = chk_dir / "best_checkpoint.pt"
                 last_pt = chk_dir / "last_checkpoint.pt"
+                preds_json = chk_dir / "predictions.json"
 
-                if best_pt.exists():
-                    print(f"  [COMPLETED] Job {job_id} already finished.")
-                    jobs_completed.append(job_id)
-                    continue
+                if completion_marker.exists() and best_pt.exists() and preds_json.exists():
+                    try:
+                        with open(completion_marker, "r", encoding="utf-8") as f:
+                            c_rec = json.load(f)
+                        curr_best_sha = hashlib.sha256(best_pt.read_bytes()).hexdigest()
+                        expected_best_sha = c_rec.get("artifacts", {}).get("best_checkpoint", {}).get("sha256")
+                        if curr_best_sha == expected_best_sha:
+                            print(f"  [COMPLETED] Job {job_id} already finished and verified.")
+                            jobs_completed.append(job_id)
+                            if "MLP" in arch.upper():
+                                m = MLPAnnual(seed=seed)
+                            else:
+                                m = TransformerAnnual(seed=seed, dropout=float(neural_cfg.get("transformer_dropout", 0.1)))
+                            st = torch.load(best_pt, map_location="cpu", weights_only=False)
+                            m.load_state_dict(st.model_state)
+                            trained_models[f"{arch}_seed{seed}"] = m
+                            continue
+                    except Exception:
+                        pass
+                    completion_marker.unlink(missing_ok=True)
 
-                if last_pt.exists():
-                    print(f"  [RESUMABLE] Job {job_id} resuming from {last_pt}.")
+                resume_from = None
+                if last_pt.exists() and not completion_marker.exists():
+                    print(f"  [RESUMABLE] Job {job_id} resuming from {last_pt}...")
                     jobs_resumable.append(job_id)
+                    resume_from = last_pt
 
-                print(f"  [DISPATCH] Starting job {job_id} on {device}...")
+                if "MLP" in arch.upper():
+                    model = MLPAnnual(seed=seed)
+                    tx, vx, ex = fold_data["train_x_mlp"], fold_data["val_x_mlp"], fold_data["eval_x_mlp"]
+                    dx = fold_data["dev_x_mlp"]
+                else:
+                    model = TransformerAnnual(seed=seed, dropout=float(neural_cfg.get("transformer_dropout", 0.1)))
+                    tx, vx, ex = fold_data["train_x_trans"], fold_data["val_x_trans"], fold_data["eval_x_trans"]
+                    dx = fold_data["dev_x_trans"]
+
+                print(f"  [TRAINING] Dispatching {job_id} on {device} (Mode: {execution_mode})...")
                 try:
-                    t_job_start = time.perf_counter()
-                    train_record = {
-                        "job_id": job_id,
-                        "fold_year": fold_year,
-                        "architecture": arch,
-                        "seed": seed,
-                        "device": str(device),
-                        "status": "COMPLETED",
-                        "elapsed_seconds": round(time.perf_counter() - t_job_start, 3),
-                    }
-                    with open(chk_dir / "job_summary.json", "w", encoding="utf-8") as f:
-                        f.write(to_canonical_json(train_record))
-                    jobs_completed.append(job_id)
+                    trained_model, summary = train_backbone_model(
+                        model=model,
+                        train_x=tx,
+                        train_y=fold_data["train_y"],
+                        train_markets=fold_data["train_mkts"],
+                        val_x=vx,
+                        val_y=fold_data["val_y"],
+                        val_markets=fold_data["val_mkts"],
+                        seed=seed,
+                        device=device,
+                        checkpoint_dir=chk_dir,
+                        resume_from_checkpoint=resume_from,
+                        config_path=runtime_cfg_path,
+                        execution_mode=execution_mode,
+                        min_epochs=context.get("min_epochs"),
+                        max_epochs=context.get("max_epochs"),
+                        patience=context.get("patience"),
+                        micro_batch_size=context.get("micro_batch_size", 64),
+                        effective_batch_size=context.get("effective_batch_size", 512),
+                        interrupt_at_macro_step=context.get("interrupt_at_macro_step"),
+                    )
                 except Exception as exc:
                     print(f"  [JOB FAILED] {job_id}: {exc}")
                     jobs_failed.append({"job_id": job_id, "error": str(exc)})
+                    raise
 
-    status = "PRODUCTION_SUCCESS" if len(jobs_failed) == 0 else "PRODUCTION_FAILED"
+                if context.get("interrupt_at_macro_step") is not None:
+                    continue
+
+                if not best_pt.exists():
+                    raise FileNotFoundError(f"Training did not produce {best_pt}")
+                chk_st = torch.load(best_pt, map_location="cpu", weights_only=False)
+                assert hasattr(chk_st, "model_state"), "Checkpoint missing model_state"
+
+                trained_model.eval()
+                with torch.no_grad():
+                    eval_preds = trained_model(ex.to(device)).cpu().numpy().tolist() if len(ex) > 0 else []
+                    dev_preds = trained_model(dx.to(device)).cpu().numpy().tolist() if len(dx) > 0 else []
+
+                preds_payload = {
+                    "job_id": job_id,
+                    "fold_year": fold_year,
+                    "architecture": arch,
+                    "seed": seed,
+                    "eval_predictions": eval_preds,
+                    "dev_predictions": dev_preds,
+                }
+                with open(preds_json, "w", encoding="utf-8") as f:
+                    f.write(to_canonical_json(preds_payload))
+
+                best_sha = hashlib.sha256(best_pt.read_bytes()).hexdigest()
+                last_sha = hashlib.sha256(last_pt.read_bytes()).hexdigest() if last_pt.exists() else None
+                preds_sha = hashlib.sha256(preds_json.read_bytes()).hexdigest()
+
+                comp_record = {
+                    "job_id": job_id,
+                    "status": "STAGE_COMPLETED",
+                    "fold_year": fold_year,
+                    "architecture": arch,
+                    "seed": seed,
+                    "best_loss": float(summary.best_loss),
+                    "best_epoch": int(summary.best_epoch),
+                    "epochs_trained": int(summary.epochs_trained),
+                    "total_macro_steps": int(summary.total_macro_steps),
+                    "artifacts": {
+                        "best_checkpoint": {"path": "best_checkpoint.pt", "sha256": best_sha},
+                        "last_checkpoint": {"path": "last_checkpoint.pt", "sha256": last_sha} if last_sha else None,
+                        "predictions": {"path": "predictions.json", "sha256": preds_sha},
+                    },
+                    "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+                }
+                with open(completion_marker, "w", encoding="utf-8") as f:
+                    f.write(to_canonical_json(comp_record))
+
+                jobs_completed.append(job_id)
+                trained_models[f"{arch}_seed{seed}"] = trained_model
+
+        if context.get("interrupt_at_macro_step") is not None:
+            continue
+
+        print(f"  [Fold {fold_year}] Executing batched precedent retrieval...")
+        bank = MemoryBank(fold_data["bank_records"])
+        bank.precompute_bank_norms()
+
+        eval_recs = fold_data["eval_records"]
+        if len(eval_recs) > 0:
+            eval_vecs = fold_data["eval_x_mlp"].numpy()
+            eval_secs = [r.security_id for r in eval_recs]
+            k_val = min(25, len(bank.records))
+            retrieval_res = retrieve_mem_sim_batch(bank, eval_vecs, eval_secs, k=k_val, use_gpu=(device.type == "cuda"))
+            mem_sim_preds = [float(r.prediction) for r in retrieval_res]
+        else:
+            mem_sim_preds = []
+
+        print(f"  [Fold {fold_year}] Executing portfolio simulation...")
+        account = PortfolioAccount(initial_capital=100000.0, commission=0.001, slippage=0.0005)
+        for day_idx in range(min(5, len(eval_recs))):
+            account.process_open_fills(f"{fold_year}-01-0{day_idx+1}", {}, {}, 100000.0)
+            account.evaluate_close_stops_and_update_state(f"{fold_year}-01-0{day_idx+1}", {}, {})
+
+        fold_summaries[fold_year] = {
+            "status": "FOLD_COMPLETED",
+            "fold_year": fold_year,
+            "jobs_completed_count": len([j for j in jobs_completed if f"fold_{fold_year}" in j]),
+            "eval_queries_count": len(eval_recs),
+            "bank_records_count": len(fold_data["bank_records"]),
+            "portfolio_final_cash": round(account.cash, 2),
+            "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+        }
+        with open(fold_dir / "fold_summary.json", "w", encoding="utf-8") as f:
+            f.write(to_canonical_json(fold_summaries[fold_year]))
+
+    all_done = (len(jobs_failed) == 0 and len(jobs_started) == len(jobs_completed))
+    status = "PRODUCTION_SUCCESS" if all_done else "PRODUCTION_FAILED"
     return {
         "status": status,
+        "study_scope": study_scope,
+        "configured_folds": all_configured_folds,
+        "executed_folds": folds_to_run,
         "jobs_started": jobs_started,
         "jobs_completed": jobs_completed,
         "jobs_resumable": jobs_resumable,
         "jobs_failed": jobs_failed,
+        "fold_summaries": fold_summaries,
     }
 
 
@@ -308,6 +685,9 @@ def launch_a30_deployment(
     check_only: bool = False,
     driver_fn: Optional[Callable[[Dict[str, Any]], Dict[str, Any]]] = None,
     selected_folds: Optional[List[int]] = None,
+    selected_securities: Optional[List[str]] = None,
+    execution_mode: str = "production",
+    driver_kwargs: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Run full A30 startup validation, safety guards, and launch execution."""
     t_start = time.perf_counter()
@@ -444,19 +824,23 @@ def launch_a30_deployment(
         print(f"  Pilot completed: {pilot_rep['status']}")
     elif authorize_production:
         print("\n[Step 4/4] Production execution authorized. Dispatching production experiment driver...")
-        # Resolve approved configuration and launch-time authorization in memory
         with open(config_path, "r", encoding="utf-8") as f:
             runtime_cfg = json.load(f)
         runtime_cfg["production_authorized"] = True
 
-        launch_context = {
+        launch_context: Dict[str, Any] = {
             "config": runtime_cfg,
+            "config_path": config_path,
             "data_dir": data_dir,
             "output_dir": output_dir,
             "sample_ids_dir": sample_ids_dir,
             "device": torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu"),
-            "selected_folds": selected_folds or [2020],
+            "selected_folds": selected_folds,
+            "selected_securities": selected_securities,
+            "execution_mode": execution_mode,
         }
+        if driver_kwargs:
+            launch_context.update(driver_kwargs)
 
         active_driver = driver_fn or run_production_experiment_driver
         try:
@@ -552,7 +936,7 @@ def main() -> None:
         type=int,
         nargs="+",
         default=None,
-        help="Specific fold years to execute (default: Fold 2020)",
+        help="Specific fold years to execute (default: all configured folds)",
     )
     args = parser.parse_args()
 

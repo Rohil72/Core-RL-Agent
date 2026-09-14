@@ -242,7 +242,7 @@ def _compute_config_hash(neural_cfg: Dict[str, Any]) -> str:
 
 
 def load_neural_config(
-    config_path: Optional[Union[str, Path]] = None,
+    config_path: Optional[Union[str, Path, Dict[str, Any]]] = None,
     execution_mode: str = "pilot",
 ) -> Tuple[Dict[str, Any], str]:
     """Load and validate neural training configuration from config.proposed.json (C3, Finding 4).
@@ -257,33 +257,54 @@ def load_neural_config(
       - All REQUIRED_NEURAL_KEYS must be present (ValueError if any missing).
       - Uses explicit ValueError/PermissionError/FileNotFoundError, not assert.
     """
-    if config_path is None:
+    if isinstance(config_path, dict):
+        data = config_path
+    elif config_path is None:
         p = Path("rebuild_plan/config.proposed.json")
+        if not p.exists():
+            if execution_mode == "production":
+                raise FileNotFoundError(f"In production mode, configuration file '{p}' is mandatory.")
+            default_cfg = {
+                "learning_rate": 0.001,
+                "weight_decay": 0.0001,
+                "betas": [0.9, 0.999],
+                "epsilon": 1e-08,
+                "effective_batch": 512,
+                "max_epochs": 50,
+                "min_epochs": 5,
+                "early_stop_patience": 5,
+                "minimum_improvement": 1e-06,
+                "gradient_norm_clip": 1.0,
+                "optimizer": "AdamW",
+                "architectures": [],
+                "seeds": [],
+            }
+            return default_cfg, _compute_config_hash(default_cfg)
+        with open(p, "r", encoding="utf-8") as f:
+            data = json.load(f)
     else:
         p = Path(config_path)
-
-    if not p.exists():
-        if execution_mode == "production":
-            raise FileNotFoundError(f"In production mode, configuration file '{p}' is mandatory.")
-        default_cfg = {
-            "learning_rate": 0.001,
-            "weight_decay": 0.0001,
-            "betas": [0.9, 0.999],
-            "epsilon": 1e-08,
-            "effective_batch": 512,
-            "max_epochs": 50,
-            "min_epochs": 5,
-            "early_stop_patience": 5,
-            "minimum_improvement": 1e-06,
-            "gradient_norm_clip": 1.0,
-            "optimizer": "AdamW",
-            "architectures": [],
-            "seeds": [],
-        }
-        return default_cfg, _compute_config_hash(default_cfg)
-
-    with open(p, "r", encoding="utf-8") as f:
-        data = json.load(f)
+        if not p.exists():
+            if execution_mode == "production":
+                raise FileNotFoundError(f"In production mode, configuration file '{p}' is mandatory.")
+            default_cfg = {
+                "learning_rate": 0.001,
+                "weight_decay": 0.0001,
+                "betas": [0.9, 0.999],
+                "epsilon": 1e-08,
+                "effective_batch": 512,
+                "max_epochs": 50,
+                "min_epochs": 5,
+                "early_stop_patience": 5,
+                "minimum_improvement": 1e-06,
+                "gradient_norm_clip": 1.0,
+                "optimizer": "AdamW",
+                "architectures": [],
+                "seeds": [],
+            }
+            return default_cfg, _compute_config_hash(default_cfg)
+        with open(p, "r", encoding="utf-8") as f:
+            data = json.load(f)
 
     if execution_mode == "production":
         if not data.get("production_authorized", False):
@@ -326,7 +347,7 @@ def train_backbone_model(
     interrupt_at_epoch: Optional[int] = None,
     interrupt_at_macro_step: Optional[int] = None,
     resume_from_checkpoint: Optional[Union[str, Path]] = None,
-    config_path: Optional[Union[str, Path]] = None,
+    config_path: Optional[Union[str, Path, Dict[str, Any]]] = None,
     execution_mode: str = "pilot",
 ) -> Tuple[nn.Module, TrainingSummary]:
     """Complete integrated dataset-to-epoch training runner (R02).
