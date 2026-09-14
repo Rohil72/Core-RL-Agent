@@ -20,9 +20,11 @@ from __future__ import annotations
 
 import csv
 import hashlib
+import math
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
+import numpy as np
 import pandas as pd
 
 
@@ -66,6 +68,51 @@ def _load_sessions_from_fixture(path: Path = _FIXTURE_PATH) -> List[str]:
     if not sessions:
         raise ValueError("Venue calendar fixture is empty.")
     return sessions
+
+
+def _is_valid_bar_row(row: Any) -> bool:
+    """Validate price and volume attributes of an existing bar row.
+
+    Checks that close (or tr_close) is finite and positive, high/low/open/close
+    bounds are consistent if present, and volume is finite and non-negative.
+    """
+    close_val = None
+    for c_col in ("close", "tr_close"):
+        if c_col in row and pd.notna(row[c_col]):
+            try:
+                close_val = float(row[c_col])
+            except (ValueError, TypeError):
+                return False
+            break
+    if close_val is None or not math.isfinite(close_val) or close_val <= 0.0:
+        return False
+
+    has_o = "open" in row and pd.notna(row["open"])
+    has_h = "high" in row and pd.notna(row["high"])
+    has_l = "low" in row and pd.notna(row["low"])
+    if has_o and has_h and has_l:
+        try:
+            o = float(row["open"])
+            h = float(row["high"])
+            l = float(row["low"])
+        except (ValueError, TypeError):
+            return False
+        if not (math.isfinite(o) and math.isfinite(h) and math.isfinite(l)):
+            return False
+        if o <= 0.0 or h <= 0.0 or l <= 0.0:
+            return False
+        if h < l or h < o or h < close_val or l > o or l > close_val:
+            return False
+
+    if "volume" in row and pd.notna(row["volume"]):
+        try:
+            v = float(row["volume"])
+        except (ValueError, TypeError):
+            return False
+        if not math.isfinite(v) or v < 0.0:
+            return False
+
+    return True
 
 
 class VenueCalendar:
@@ -156,33 +203,40 @@ class VenueCalendar:
         if not scheduled:
             return pd.DataFrame(columns=list(security_df.columns) + ["bar_status", "session_ordinal"])
 
-        # Index existing data by session date for O(1) lookup
-        df_indexed = security_df.copy()
-        df_indexed[date_col] = df_indexed[date_col].astype(str)
-        df_indexed = df_indexed.set_index(date_col)
+        sched_df = pd.DataFrame({date_col: scheduled})
+        sched_df["session_ordinal"] = [self.ordinal[s] for s in scheduled]
 
-        rows = []
-        for sess in scheduled:
-            if sess in df_indexed.index:
-                row = df_indexed.loc[sess].copy()
-                row["bar_status"] = "VALID"
-            else:
-                # Missing bar on an open session
-                row = pd.Series({col: float("nan") for col in df_indexed.columns})
-                row["bar_status"] = "MISSING"
-            row["session_ordinal"] = self.ordinal[sess]
-            row.name = sess
-            rows.append(row)
+        sec_df = security_df.copy()
+        sec_df[date_col] = sec_df[date_col].astype(str)
+        sec_df = sec_df.drop_duplicates(subset=[date_col], keep="first")
 
-        result = pd.DataFrame(rows)
-        result.index.name = date_col
-        result = result.reset_index().rename(columns={"index": date_col})
-        # Ensure the session column is correctly named
-        if "level_0" in result.columns:
-            result = result.drop(columns=["level_0"])
-        if date_col not in result.columns and result.index.name == date_col:
-            result = result.reset_index()
+        result = pd.merge(sched_df, sec_df, on=date_col, how="left")
 
+        # Vectorized bar validation
+        is_valid = np.ones(len(result), dtype=bool)
+
+        c_col = "close" if "close" in result.columns else ("tr_close" if "tr_close" in result.columns else None)
+        if c_col is not None:
+            c_vals = pd.to_numeric(result[c_col], errors="coerce").to_numpy(dtype=float)
+            is_valid &= np.isfinite(c_vals) & (c_vals > 0.0)
+        else:
+            is_valid[:] = False
+
+        if all(c in result.columns for c in ("open", "high", "low")):
+            o_vals = pd.to_numeric(result["open"], errors="coerce").to_numpy(dtype=float)
+            h_vals = pd.to_numeric(result["high"], errors="coerce").to_numpy(dtype=float)
+            l_vals = pd.to_numeric(result["low"], errors="coerce").to_numpy(dtype=float)
+            finite_ohl = np.isfinite(o_vals) & np.isfinite(h_vals) & np.isfinite(l_vals)
+            pos_ohl = (o_vals > 0.0) & (h_vals > 0.0) & (l_vals > 0.0)
+            bounds_ok = (h_vals >= l_vals) & (h_vals >= o_vals) & (h_vals >= c_vals) & (l_vals <= o_vals) & (l_vals <= c_vals)
+            is_valid &= finite_ohl & pos_ohl & bounds_ok
+
+        if "volume" in result.columns:
+            v_vals = pd.to_numeric(result["volume"], errors="coerce").to_numpy(dtype=float)
+            valid_vol = np.isfinite(v_vals) & (v_vals >= 0.0)
+            is_valid &= valid_vol
+
+        result["bar_status"] = np.where(is_valid, "VALID", "MISSING")
         return result
 
     def invalidate_windows_with_missing(
@@ -193,8 +247,10 @@ class VenueCalendar:
     ) -> List[bool]:
         """Return a boolean validity mask for origin sessions in *session_dates*.
 
-        A session's window is invalid if *any* session in the look-back window
-        of size *window_size* (including the origin) has status "MISSING".
+        A session's window is invalid if:
+        1. It does not have at least *window_size* sessions of preceding history.
+        2. *Any* session in the look-back window of size *window_size*
+           (including the origin) has status "MISSING".
 
         Args:
             session_dates:      Ordered list of session dates (YYYY-MM-DD).
@@ -207,8 +263,11 @@ class VenueCalendar:
         n = len(session_dates)
         valid = []
         for i in range(n):
-            window_start = max(0, i - window_size + 1)
-            window = session_dates[window_start : i + 1]
+            if i < window_size - 1:
+                # Lookback history is incomplete (< window_size sessions)
+                valid.append(False)
+                continue
+            window = session_dates[i - window_size + 1 : i + 1]
             has_missing = any(status_per_session.get(s, "MISSING") == "MISSING" for s in window)
             valid.append(not has_missing)
         return valid

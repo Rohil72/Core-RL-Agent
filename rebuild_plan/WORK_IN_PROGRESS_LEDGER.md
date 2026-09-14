@@ -136,19 +136,21 @@ Production Status: `production_authorized: false` strictly enforced in `rebuild_
   - `replay_analysis_bundle` reads, validates, and forwards `open_session_mask` to prevent unmasked re-evaluation.
 - Acceptance tests: `tests/memory_study_v2/test_inference_replay_r10.py` (18/18 passed including Sharpe math oracle).
 
-### Finding 3: Admissible Sample Counts from Loader/Bank Functions (C6 Continuation)
-- Rewrote `scripts/generate_fold_manifest.py` to call `partition_fold` from `memory_study_v2.folds` across all 103 canonical market securities for all 6 walk-forward evaluation folds (2020..2025).
-- Sourced all 6 required per-fold population counts:
-  - `train_samples` (and `train_query_samples`): 120,178 to 248,789.
-  - `validation_samples` (and `val_query_samples`): 19,099 to 19,364.
-  - `development_samples` (and `dev_query_samples`): 19,099 to 19,364.
-  - `evaluation_queries` (and `eval_query_samples`): 25,588 to 25,853.
-  - `scored_eval_query_samples`: 25,588 to 25,853 (in 2025: 19,165, strictly separating decision-time query eligibility from future target maturity).
-  - `bank_samples` (and `bank_record_samples`): 113,689 to 242,300 (strictly strictly reflecting 126-session maturity vs 63-session training maturity).
-- Persisted per-fold query IDs under `rebuild_plan/sample_ids/`.
-- Updated `load_measured_fold_dimensions()` in `pilot.py` to fail closed in acceptance/production mode.
+### Finding 3: Unified Sample Index Pipeline & Input-Window Validity (F3 Closure)
+- Implemented `memory_study_v2/sample_index.py` with `SampleIndexRecord` and `build_security_sample_index`.
+- Authentically computes `input_window_valid` requiring 503 preceding bars ($t-503$ to $t-1$) for 252-bar feature warmup and 252-bar representation window.
+- Date boundaries and forward target maturity (63 sessions for train targets, 126 sessions for bank records) are filtered strictly *after* input validity.
+- Optimized `reindex_to_schedule` in `venue_calendar.py` via vectorized pandas merge and `_is_valid_bar_row` validation (speedup from 1,422 ms to 6.5 ms per security). Fixed `invalidate_windows_with_missing` to strictly invalidate origins with incomplete history ($i < \text{window\_size}-1$).
+- Rewrote `scripts/generate_fold_manifest.py` using `sample_index.py` across all 103 securities, producing `rebuild_plan/fold_dimensions_manifest.json` and per-fold sample IDs under `rebuild_plan/sample_ids/`.
+- Updated `MEASURED_FOLD_DIMENSIONS` in `pilot.py` to match authentic counts:
+  - 2020: train=68,369, val=19,157, dev=19,150, eval=25,853, scored_eval=25,853, bank=61,880
+  - 2021: train=94,015, val=19,150, dev=19,364, eval=25,766, scored_eval=25,766, bank=87,526
+  - 2022: train=119,654, val=19,364, dev=19,277, eval=25,707, scored_eval=25,707, bank=113,165
+  - 2023: train=145,507, val=19,277, dev=19,218, eval=25,588, scored_eval=25,588, bank=139,018
+  - 2024: train=171,273, val=19,218, dev=19,099, eval=25,753, scored_eval=25,753, bank=164,784
+  - 2025: train=196,980, val=19,099, dev=19,264, eval=25,654, scored_eval=19,165, bank=190,491
 - Re-executed `pilot.py` to update `rebuild_plan/pilot_report.json` with matching manifest hash.
-- Acceptance tests: `tests/memory_study_v2/test_operational_pilot_a32.py` (4/4 passed).
+- Acceptance tests: `tests/memory_study_v2/test_operational_pilot_a32.py` (5/5 passed including warmup boundary exclusion test).
 
 ### Finding 4: Complete Production Configuration Boundary (C3 Continuation)
 - Added `REQUIRED_NEURAL_KEYS` schema validator in `load_neural_config()`.
@@ -157,11 +159,22 @@ Production Status: `production_authorized: false` strictly enforced in `rebuild_
 - Added canonical JSON SHA-256 config hash stored in checkpoint states and verified on resume.
 - Acceptance tests: `tests/memory_study_v2/test_resume_parity_a16.py` (10/10 passed).
 
-### Finding 5: Batched Retrieval Optimization & A30 Preflight (C6 Continuation)
-- Added `precompute_bank_norms()` and `compute_squared_euclidean_batched()` to `MemoryBank` in `memory_study_v2/memory.py` using BLAS-optimized $\|q\|^2 + \|b\|^2 - 2q^T b$ formula.
-- Added `retrieve_mem_sim_batch()` in `memory_study_v2/retrieval.py` preserving exact tie-breaking, spacing ($\ge 21$), and cap ($\le 3$) rules.
-- Sourced dedicated A30 VM benchmark preflight script `scripts/benchmark_retrieval_a30.py`.
-- Acceptance tests: `tests/memory_study_v2/test_retrieval_reference_a17.py` (6/6 passed).
+### Finding 5: Certified Accelerated Retrieval & A30 Preflight Benchmark (F5 Closure)
+- Added `refine_candidate_distances()` to `MemoryBank` in `memory_study_v2/memory.py` computing direct CPU float64 squared differences ($\sum (q_d - v_{i,d})^2$) for candidate pools.
+- Updated `retrieve_mem_sim_batch()` in `memory_study_v2/retrieval.py`:
+  - Batched candidate proposal via `argpartition` on distance matrix (BLAS CPU or GPU CUDA).
+  - Exact float64 reference refinement on candidate pool.
+  - Stable tie-breaking: primary key refined distance ascending, secondary key `record_id` ascending.
+  - Boundary ambiguity check: compares pool boundary approx distance against max accepted distance; doubles buffer up to $N$ if ambiguity exists, certifying 100% mathematical parity against single-query reference oracle.
+  - Query chunking (`query_chunk_size=256`) to bound peak memory.
+  - Optional GPU distance proposal acceleration via PyTorch CUDA.
+- Overhauled `scripts/benchmark_retrieval_a30.py`:
+  - Representative benchmark scale: $N=20000, D=966, Q=100$.
+  - Verification of 100% reference parity, exact ties, and auditor numerical cancellation fixture ($1.42 \times 10^{-14}$ vs $5.68 \times 10^{-14}$ on 966-d float32 vectors near 1).
+  - Telemetry: platform, CPU count, RAM, CUDA device name, peak RSS, peak VRAM.
+  - Fail-closed: `sys.exit(1)` on any verification failure.
+  - Signed benchmark receipt persisted to `rebuild_plan/a30_retrieval_benchmark.json`.
+- Acceptance tests: `tests/memory_study_v2/test_retrieval_reference_a17.py` (8/8 passed).
 
 ---
 
@@ -169,12 +182,14 @@ Production Status: `production_authorized: false` strictly enforced in `rebuild_
 
 | Suite | Tests | Result | Execution Time |
 |---|:---:|:---:|:---:|
-| `tests/memory_study_v2/` | 136 | **136 / 136 PASSED** | 15.15s |
-| Complete Repository (`tests/`) | 426 | **426 / 426 PASSED** | ~132s |
+| `tests/memory_study_v2/` | 140 | **140 / 140 PASSED** | 16.53s |
+| Complete Repository (`tests/`) | 430 | **430 / 430 PASSED** | 145.17s |
+| A30 Retrieval Benchmark (`python scripts/benchmark_retrieval_a30.py`) | N=20000, D=966, Q=100 | **PASSED (436.76 QPS)** | 0.23s |
 | Connected Pilot CLI (`python -m memory_study_v2.connected_pilot`) | End-to-End | **SUCCESS** | 6.5s |
 | Operational Pilot CLI (`python -m memory_study_v2.pilot`) | End-to-End | **SUCCESS** | 8.8s |
-| Manifest Generator CLI (`python scripts/generate_fold_manifest.py`) | 103 Securities | **SUCCESS** | 11.2s |
+| Manifest Generator CLI (`python scripts/generate_fold_manifest.py`) | 103 Securities | **SUCCESS** | 6.15s |
 
 **Production Guard Verification**:
 - `rebuild_plan/config.proposed.json`: `"production_authorized": false` strictly maintained.
 - `rebuild_plan/pilot_report.json`: `"acceptance_condition_met": false` and `"hardware_preflight_status": "PENDING_A30_VM_EXECUTION"`.
+

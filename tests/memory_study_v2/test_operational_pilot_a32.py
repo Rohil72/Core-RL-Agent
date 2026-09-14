@@ -39,20 +39,20 @@ def test_pilot_report_exists_and_valid():
     assert len(folds) == 6, f"Expected 6 walk-forward folds, got {len(folds)}"
     for f_info in folds:
         assert f_info["evaluation_year"] in range(2020, 2026)
-        assert f_info["train_samples"] > 100000
+        assert f_info["train_samples"] > 50000
         assert f_info["evaluation_queries"] > 20000
-        assert f_info["bank_samples"] > 100000
+        assert f_info["bank_samples"] > 50000
         assert f_info["macro_steps_per_epoch"] > 0
 
     # Cap-based Projection check
     proj = rep.get("projection", {})
     assert proj.get("epochs_cap") == 50
     assert proj.get("fits_count") == 36
-    assert 180000 <= proj.get("average_training_samples_per_fold", 0) <= 200000
+    assert 120000 <= proj.get("average_training_samples_per_fold", 0) <= 150000
     assert proj.get("effective_batch_size") == 512
     assert proj.get("micro_batch_size") == 64
-    assert 350 <= proj.get("macro_steps_per_epoch", 0) <= 400
-    assert proj.get("total_macro_steps_all_fits", 0) > 500000
+    assert 250 <= proj.get("macro_steps_per_epoch", 0) <= 400
+    assert proj.get("total_macro_steps_all_fits", 0) > 400000
     assert proj.get("total_evaluation_queries", 0) > 100000
     assert proj.get("compute_safety_multiplier") == 1.5
     assert proj.get("export_and_verify_reserve_hours", 0) >= 2.0
@@ -170,4 +170,76 @@ def test_manifest_rejection_on_invalid(tmp_path):
 
     with pytest.raises(ValueError, match="does not contain valid 'fold_dimensions'"):
         load_measured_fold_dimensions(bad_manifest, execution_mode="acceptance")
+
+
+def test_f3_early_origin_insufficient_history_excluded_from_manifest_and_loader(tmp_path):
+    """Finding 3 acceptance test:
+    Deliberately include an early origin with a completed forward return but insufficient input history.
+    It must be excluded from both the training manifest and the loader query IDs.
+    Compare complete ID sets, not merely their lengths.
+    """
+    import numpy as np
+    import pandas as pd
+    from memory_study_v2.folds import FoldBoundaries
+    from memory_study_v2.sample_index import (
+        build_security_sample_index,
+        partition_sample_index,
+        save_fold_sample_ids,
+        load_fold_sample_ids,
+    )
+    from memory_study_v2.venue_calendar import VenueCalendar
+
+    vc = VenueCalendar()
+
+    dates = vc.sessions_in_range("2013-01-02", "2017-12-31")[:650]
+    df = pd.DataFrame({
+        "session": dates,
+        "close": np.linspace(100.0, 200.0, len(dates)),
+        "open": np.linspace(100.0, 200.0, len(dates)),
+        "high": np.linspace(102.0, 202.0, len(dates)),
+        "low": np.linspace(98.0, 198.0, len(dates)),
+        "volume": np.ones(len(dates)) * 1000.0,
+    })
+
+    records = build_security_sample_index("TEST_SEC", df, venue_calendar=vc, evaluation_year=2020)
+
+    # Check origin 50 (early origin with completed forward return)
+    early_rec = records[50]
+    assert early_rec.target_63_valid is True, "Forward 63-day return must be completed"
+    assert early_rec.input_window_valid is False, "Early origin (< 503 preceding bars) must have input_window_valid == False"
+    assert early_rec.exclusion_reason == "INSUFFICIENT_INPUT_HISTORY"
+
+    # Check origin 550 (mature origin with sufficient input history)
+    mature_rec = records[550]
+    assert mature_rec.target_63_valid is True
+    assert mature_rec.input_window_valid is True
+    assert mature_rec.exclusion_reason is None
+
+    # Partition fold 2020
+    bound = FoldBoundaries(
+        evaluation_year=2020,
+        train_start="2013-01-01",
+        train_end="2017-12-31",
+        val_start="2018-01-01",
+        val_end="2018-12-31",
+        dev_start="2019-01-01",
+        dev_end="2019-12-31",
+        eval_start="2020-01-01",
+        eval_end="2020-12-31",
+        bank_cutoff="2017-12-31",
+    )
+    part = partition_sample_index(records, bound)
+
+    # 1. Early origin must NOT be in train query IDs; mature origin MUST be in train query IDs
+    assert early_rec.query_id not in part.train_query_ids
+    assert mature_rec.query_id in part.train_query_ids
+
+    # 2. Persist sample IDs and reload via loader function
+    save_fold_sample_ids(tmp_path, 2020, part, records)
+    loaded_ids = load_fold_sample_ids(2020, sample_ids_dir=tmp_path)
+
+    # 3. Compare complete ID sets, not merely lengths!
+    assert set(loaded_ids["train_query_ids"]) == set(part.train_query_ids)
+    assert early_rec.query_id not in set(loaded_ids["train_query_ids"])
+    assert mature_rec.query_id in set(loaded_ids["train_query_ids"])
 

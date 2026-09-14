@@ -31,9 +31,14 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from memory_study_v2.folds import FoldPartitions, get_fold_boundaries, partition_fold
-from memory_study_v2.labels import compute_target_labels
-
+from memory_study_v2.folds import FoldPartitions, get_fold_boundaries
+from memory_study_v2.sample_index import (
+    SampleIndexRecord,
+    build_security_sample_index,
+    partition_sample_index,
+    save_fold_sample_ids,
+)
+from memory_study_v2.venue_calendar import get_venue_calendar
 
 
 def generate_manifest(
@@ -50,10 +55,10 @@ def generate_manifest(
     cfg_p = Path(config_path)
     config_sha256 = hashlib.sha256(cfg_p.read_bytes()).hexdigest() if cfg_p.exists() else "CONFIG_NOT_FOUND"
 
+    vc = get_venue_calendar()
     file_manifest: List[Dict[str, Any]] = []
     annual_totals: Dict[int, int] = {y: 0 for y in range(2013, 2026)}
-    all_sess: List[pd.DataFrame] = []
-    all_lbl: List[pd.DataFrame] = []
+    all_records: List[SampleIndexRecord] = []
 
     for fpath in parquet_files:
         p = Path(fpath)
@@ -62,35 +67,16 @@ def generate_manifest(
         sec_id = p.stem
 
         df = pd.read_parquet(p)
-        if "Date" in df.columns:
-            sessions = df["Date"].astype(str).tolist()
-        elif isinstance(df.index, pd.DatetimeIndex):
-            sessions = [str(d)[:10] for d in df.index]
-        else:
-            sessions = df.iloc[:, 0].astype(str).tolist()
-
-        close = df["close"].to_numpy(dtype=float)
-        valid_bar = np.isfinite(close) & (close > 0)
-
-        tr_df = pd.DataFrame({
-            "session": sessions,
-            "tr_close": close,
-            "is_valid_bar": valid_bar,
-            "security_id": sec_id,
-        })
-
-        lbl = compute_target_labels(tr_df)
-        lbl["security_id"] = sec_id
-
-        all_sess.append(tr_df[["session", "security_id"]])
-        all_lbl.append(lbl)
+        recs = build_security_sample_index(sec_id, df, venue_calendar=vc)
+        all_records.extend(recs)
 
         file_annual: Dict[int, int] = {}
-        for s in sessions:
-            yr = int(s[:4])
-            if 2013 <= yr <= 2025:
-                annual_totals[yr] += 1
-                file_annual[yr] = file_annual.get(yr, 0) + 1
+        for r in recs:
+            if r.input_window_valid:
+                yr = int(r.session[:4])
+                if 2013 <= yr <= 2025:
+                    annual_totals[yr] += 1
+                    file_annual[yr] = file_annual.get(yr, 0) + 1
 
         file_manifest.append({
             "filename": p.name,
@@ -102,9 +88,6 @@ def generate_manifest(
             "annual_admissible_rows": {str(k): v for k, v in sorted(file_annual.items())},
         })
 
-    concat_sess = pd.concat(all_sess, ignore_index=True)
-    concat_lbl = pd.concat(all_lbl, ignore_index=True)
-
     fold_dimensions: List[Dict[str, Any]] = []
     effective_batch = 512
     epochs_cap = 50
@@ -115,11 +98,11 @@ def generate_manifest(
 
     for y in range(2020, 2026):
         bound = get_fold_boundaries(y)
-        part: FoldPartitions = partition_fold(concat_sess, concat_lbl, bound)
+        part: FoldPartitions = partition_sample_index(all_records, bound)
 
         # Scored evaluation queries: subset of eval queries with mature forward target
-        eval_sub = concat_lbl.iloc[part.evaluation_indices]
-        scored_eval_count = int(eval_sub["valid_63"].sum())
+        eval_records = [all_records[i] for i in part.evaluation_indices]
+        scored_eval_count = sum(1 for r in eval_records if r.target_63_valid)
 
         train_s = len(part.train_indices)
         val_s = len(part.validation_indices)
@@ -132,16 +115,7 @@ def generate_manifest(
 
         # Persist sample IDs per fold if directory provided
         if sample_ids_dir:
-            fold_id_file = sample_ids_dir / f"fold_{y}_sample_ids.json"
-            with open(fold_id_file, "w", encoding="utf-8") as f:
-                json.dump({
-                    "evaluation_year": y,
-                    "train_query_ids": part.train_query_ids,
-                    "val_query_ids": part.val_query_ids,
-                    "dev_query_ids": part.dev_query_ids,
-                    "eval_query_ids": part.eval_query_ids,
-                    "bank_query_ids": part.bank_query_ids,
-                }, f)
+            save_fold_sample_ids(sample_ids_dir, y, part, all_records)
 
         fold_dimensions.append({
             "evaluation_year": y,

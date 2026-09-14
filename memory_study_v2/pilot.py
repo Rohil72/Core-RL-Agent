@@ -63,12 +63,12 @@ class PeakMemoryTracker:
 # Measured dimensions across all 6 walk-forward folds (2020..2025)
 # Derived from 103 canonical securities (332,273 bars) in cache
 MEASURED_FOLD_DIMENSIONS: List[Dict[str, int]] = [
-    {"year": 2020, "train_samples": 126667, "val_samples": 25646, "dev_samples": 25639, "eval_queries": 25853, "bank_samples": 126667},
-    {"year": 2021, "train_samples": 152313, "val_samples": 25639, "dev_samples": 25853, "eval_queries": 25766, "bank_samples": 152313},
-    {"year": 2022, "train_samples": 177952, "val_samples": 25853, "dev_samples": 25766, "eval_queries": 25707, "bank_samples": 177952},
-    {"year": 2023, "train_samples": 203805, "val_samples": 25766, "dev_samples": 25707, "eval_queries": 25588, "bank_samples": 203805},
-    {"year": 2024, "train_samples": 229571, "val_samples": 25707, "dev_samples": 25588, "eval_queries": 25753, "bank_samples": 229571},
-    {"year": 2025, "train_samples": 255278, "val_samples": 25588, "dev_samples": 25753, "eval_queries": 25654, "bank_samples": 255278},
+    {"year": 2020, "train_samples": 68369, "val_samples": 19157, "dev_samples": 19150, "eval_queries": 25853, "bank_samples": 61880},
+    {"year": 2021, "train_samples": 94015, "val_samples": 19150, "dev_samples": 19364, "eval_queries": 25766, "bank_samples": 87526},
+    {"year": 2022, "train_samples": 119654, "val_samples": 19364, "dev_samples": 19277, "eval_queries": 25707, "bank_samples": 113165},
+    {"year": 2023, "train_samples": 145507, "val_samples": 19277, "dev_samples": 19218, "eval_queries": 25588, "bank_samples": 139018},
+    {"year": 2024, "train_samples": 171273, "val_samples": 19218, "dev_samples": 19099, "eval_queries": 25753, "bank_samples": 164784},
+    {"year": 2025, "train_samples": 196980, "val_samples": 19099, "dev_samples": 19264, "eval_queries": 25654, "bank_samples": 190491},
 ]
 
 

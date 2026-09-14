@@ -74,6 +74,25 @@ class MemoryBank:
         dist_sq = np.sum(diff ** 2, axis=1)
         return dist_sq
 
+    def refine_candidate_distances(
+        self,
+        query_vector: np.ndarray,
+        candidate_indices: np.ndarray,
+    ) -> np.ndarray:
+        """Compute exact CPU float64 squared Euclidean distance for a candidate subset (Finding 5 / C6).
+
+        Used as the reference distance refinement step in batched retrieval to prevent
+        catastrophic cancellation and numerical ordering drift on near-identical vectors.
+
+        Formula: sum_{d=1}^966 (q_d - v_{i,d})^2 in float64.
+        """
+        if len(candidate_indices) == 0:
+            return np.empty(0, dtype=np.float64)
+        q_64 = np.asarray(query_vector, dtype=np.float64)
+        cand_vecs_64 = self.vectors[candidate_indices].astype(np.float64)
+        diff = cand_vecs_64 - q_64
+        return np.sum(diff ** 2, axis=1)
+
     def propose_candidates(
         self,
         query_vector: np.ndarray,
@@ -124,6 +143,7 @@ class MemoryBank:
     def compute_squared_euclidean_batched(
         self,
         query_batch: np.ndarray,
+        use_gpu: bool = False,
     ) -> np.ndarray:
         """Compute exact float64 squared Euclidean distances for a batch of Q queries (Finding 5 / C6).
 
@@ -134,6 +154,7 @@ class MemoryBank:
 
         Args:
             query_batch: float32 or float64 array of shape (Q, D) where D = bank vector dimension.
+            use_gpu: If True and PyTorch with CUDA is available, accelerate distance proposal on GPU.
 
         Returns:
             dist_sq: float64 array of shape (Q, N) — exact squared distances.
@@ -147,13 +168,29 @@ class MemoryBank:
                 "compute_squared_euclidean_batched requires precompute_bank_norms() to be called first. "
                 "Call bank.precompute_bank_norms() once after bank construction."
             )
-        q_64 = np.asarray(query_batch, dtype=np.float64)
-        if q_64.ndim != 2 or q_64.shape[1] != self.vectors.shape[1]:
+        q_arr = np.asarray(query_batch)
+        if q_arr.ndim != 2 or q_arr.shape[1] != self.vectors.shape[1]:
             raise ValueError(
                 f"query_batch must have shape (Q, D={self.vectors.shape[1]}), "
-                f"got shape {q_64.shape}"
+                f"got shape {q_arr.shape}"
             )
 
+        if use_gpu:
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    with torch.no_grad():
+                        q_t = torch.as_tensor(q_arr, dtype=torch.float32, device="cuda")
+                        v_t = torch.as_tensor(self.vectors, dtype=torch.float32, device="cuda")
+                        bank_norms_t = torch.as_tensor(self._bank_norms_sq, dtype=torch.float32, device="cuda")
+                        q_norms_t = torch.sum(q_t ** 2, dim=1, keepdim=True)
+                        dist_t = q_norms_t - 2.0 * torch.matmul(q_t, v_t.T) + bank_norms_t.unsqueeze(0)
+                        torch.clamp_min_(dist_t, 0.0)
+                        return dist_t.cpu().numpy().astype(np.float64)
+            except Exception:
+                pass  # fallback to CPU BLAS path
+
+        q_64 = q_arr.astype(np.float64)
         v_64 = self.vectors.astype(np.float64)
 
         # q_norms[j] = ||q_j||^2, shape (Q,)

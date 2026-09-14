@@ -144,8 +144,11 @@ def test_independent_venue_calendar_c1():
     assert aapl_valid[missing_idx + 1] is False, "Session +1 after MISSING must also be invalid (window=3)"
     assert aapl_valid[missing_idx + 2] is False, "Session +2 after MISSING must also be invalid (window=3)"
     assert aapl_valid[missing_idx - 1] is True, "Session before MISSING bar must be valid"
-
-    assert all(msft_valid), "MSFT windows must all be valid when MSFT has no missing bars"
+    assert aapl_valid[0] is False, "Origin before sufficient history (< 3 bars) must be invalid"
+    assert aapl_valid[1] is False, "Origin before sufficient history (< 3 bars) must be invalid"
+    assert msft_valid[0] is False, "Origin before sufficient history (< 3 bars) must be invalid"
+    assert msft_valid[1] is False, "Origin before sufficient history (< 3 bars) must be invalid"
+    assert all(msft_valid[2:]), "MSFT windows must all be valid when MSFT has complete history and no missing bars"
 
 
 def test_bar_status_three_states_c1():
@@ -206,3 +209,35 @@ def test_reindex_to_schedule_preserves_ordinals_c1():
     present_rows = reindexed[reindexed["session"] == present_sess]
     assert len(present_rows) == 1
     assert present_rows.iloc[0]["bar_status"] == "VALID"
+
+
+def test_reindex_to_schedule_rejects_nonfinite_and_invalid_bars():
+    """Calendar helper: existing row with NaN or invalid price gets marked MISSING."""
+    import numpy as np
+    import pandas as pd
+    from memory_study_v2.venue_calendar import VenueCalendar
+
+    vc = VenueCalendar()
+    sessions = vc.sessions_in_range("2015-01-02", "2015-01-09")
+    # Session 0: valid
+    # Session 1: NaN close
+    # Session 2: negative close
+    # Session 3: high < low
+    # Session 4: valid
+    df = pd.DataFrame({
+        "session": [sessions[0], sessions[1], sessions[2], sessions[3], sessions[4]],
+        "open": [100.0, 100.0, 100.0, 100.0, 100.0],
+        "high": [105.0, 105.0, 105.0, 95.0, 105.0],   # sess 3: high < low!
+        "low": [98.0, 98.0, 98.0, 102.0, 98.0],
+        "close": [102.0, np.nan, -10.0, 100.0, 101.0], # sess 1: NaN, sess 2: negative!
+        "volume": [1000.0, 1000.0, 1000.0, 1000.0, 1000.0],
+    })
+
+    reindexed = vc.reindex_to_schedule(df, (sessions[0], sessions[4]))
+    status_map = dict(zip(reindexed["session"], reindexed["bar_status"]))
+
+    assert status_map[sessions[0]] == "VALID"
+    assert status_map[sessions[1]] == "MISSING", "Row with NaN close must be classified as MISSING"
+    assert status_map[sessions[2]] == "MISSING", "Row with negative close must be classified as MISSING"
+    assert status_map[sessions[3]] == "MISSING", "Row with high < low must be classified as MISSING"
+    assert status_map[sessions[4]] == "VALID"

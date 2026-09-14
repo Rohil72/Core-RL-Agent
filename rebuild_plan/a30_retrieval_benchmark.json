@@ -1,0 +1,45 @@
+{
+  "timestamp": "2026-09-14T04:07:21Z",
+  "hardware_telemetry": {
+    "platform": "Windows-11-10.0.26200-SP0",
+    "python_version": "3.13.7",
+    "cpu_count": 16,
+    "total_ram_gb": 15.71,
+    "cuda_available": true,
+    "cuda_device_name": "NVIDIA GeForce RTX 2050",
+    "peak_rss_mb": 577.27,
+    "peak_vram_allocated_mb": 0.0
+  },
+  "configuration": {
+    "bank_size": 20000,
+    "vector_dim": 966,
+    "num_queries": 100,
+    "k": 25,
+    "query_chunk_size": 256,
+    "start_buffer_size": 250,
+    "use_gpu": false
+  },
+  "metrics": {
+    "precompute_norm_time_ms": 46.45,
+    "elapsed_seconds": 0.2681,
+    "qps": 372.99,
+    "ms_per_query": 2.68
+  },
+  "verification": {
+    "reference_parity_passed": true,
+    "numerical_cancellation_fixture_passed": true,
+    "tie_breaking_passed": true,
+    "all_checks_passed": true
+  },
+  "bank_size": 20000,
+  "vector_dim": 966,
+  "num_queries": 100,
+  "k": 25,
+  "precompute_norm_time_ms": 46.45,
+  "elapsed_seconds": 0.2681,
+  "qps": 372.99,
+  "ms_per_query": 2.68,
+  "reference_parity_passed": true,
+  "tie_breaking_passed": true,
+  "all_passed": true
+}

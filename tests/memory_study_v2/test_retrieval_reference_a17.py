@@ -165,3 +165,110 @@ def test_bank_verify_batched_vs_reference_oracle():
 
     queries = np.random.randn(5, 966).astype(np.float32)
     assert bank.verify_batched_vs_reference(queries, tol=1e-5) is True
+
+
+def test_f5_near_identical_vectors_order_certified_against_reference_oracle():
+    """Finding 5 acceptance test:
+    Verify that 966-d float32 vectors near 1 with distances near 1e-14 do NOT suffer from
+    floating-point cancellation drift in candidate selection.
+    
+    Reproduces auditor fixture:
+    - ID 1: direct dist 5.68434189e-14, expanded formula: 0
+    - ID 2: direct dist 1.42108547e-14, expanded formula: 0
+    
+    Direct reference selects ID 2. Uncertified expanded formula creates a tie and selects ID 1.
+    Certified retrieval with reference refinement must select ID 2, matching reference oracle.
+    Also tests exact ties, per-security caps, session spacing, and buffer expansion.
+    """
+    from memory_study_v2.retrieval import retrieve_mem_sim, retrieve_mem_sim_batch
+
+    q = np.ones(966, dtype=np.float32)
+    v1 = q.copy()
+    v2 = q.copy()
+    # 2^-22 in one float32 element -> squared diff in float64 is 4 * 2^-46 = 5.68434189e-14
+    # 2^-23 in one float32 element -> squared diff in float64 is 2^-46 = 1.42108547e-14
+    v1[0] += np.float32(2**(-22))
+    v2[0] += np.float32(2**(-23))
+
+    # Record 1 has lower record_id (1), but Record 2 is strictly closer
+    records = [
+        BankRecord(record_id=1, security_id="SEC_A", session_origin="2015-01-01", session_126_maturity="2017-06-01", vector=v1, target_63=0.01, session_ordinal=10),
+        BankRecord(record_id=2, security_id="SEC_B", session_origin="2015-01-02", session_126_maturity="2017-06-01", vector=v2, target_63=0.02, session_ordinal=20),
+        # Add exact ties at larger distance
+        BankRecord(record_id=100, security_id="SEC_C", session_origin="2015-01-03", session_126_maturity="2017-06-01", vector=q * 2.0, target_63=0.03, session_ordinal=30),
+        BankRecord(record_id=50, security_id="SEC_D", session_origin="2015-01-04", session_126_maturity="2017-06-01", vector=q * 2.0, target_63=0.04, session_ordinal=40),
+        # Add record violating spacing (< 21 sessions from SEC_C)
+        BankRecord(record_id=10, security_id="SEC_C", session_origin="2015-01-05", session_126_maturity="2017-06-01", vector=q * 2.0, target_63=0.05, session_ordinal=35),
+    ]
+
+    bank = MemoryBank(records)
+    bank.precompute_bank_norms()
+
+    # 1. Single-query reference oracle
+    ref_res = retrieve_mem_sim(bank, q, "SEC_QUERY", k=2, max_per_security=3, min_spacing_sessions=21)
+    # 2. Batched retrieval with reference refinement
+    bat_res = retrieve_mem_sim_batch(bank, q.reshape(1, -1), ["SEC_QUERY"], k=2, max_per_security=3, min_spacing_sessions=21)[0]
+
+    # Verify ID 2 is chosen FIRST, not ID 1!
+    assert ref_res.neighbor_ids == [2, 1], f"Reference oracle expected [2, 1], got {ref_res.neighbor_ids}"
+    assert bat_res.neighbor_ids == [2, 1], f"Batched refined retrieval expected [2, 1], got {bat_res.neighbor_ids}"
+    assert bat_res.is_fallback is False
+    assert pytest.approx(ref_res.prediction, rel=1e-5) == bat_res.prediction
+
+    # 3. Test k=4: tests exact ties deterministically broken by record_id ascending (10 before 50 before 100)
+    # and spacing rule (record 100 rejected because ordinal 30 is within 21 of SEC_C record 10 at ordinal 35)
+    ref_k4 = retrieve_mem_sim(bank, q, "SEC_QUERY", k=4, max_per_security=3, min_spacing_sessions=21)
+    bat_k4 = retrieve_mem_sim_batch(bank, q.reshape(1, -1), ["SEC_QUERY"], k=4, max_per_security=3, min_spacing_sessions=21)[0]
+
+    assert ref_k4.neighbor_ids == [2, 1, 10, 50], f"Expected [2, 1, 10, 50], got {ref_k4.neighbor_ids}"
+    assert bat_k4.neighbor_ids == [2, 1, 10, 50], f"Expected [2, 1, 10, 50], got {bat_k4.neighbor_ids}"
+    assert bat_k4.neighbor_ids == ref_k4.neighbor_ids
+    assert bat_k4.is_fallback == ref_k4.is_fallback
+    assert pytest.approx(bat_k4.prediction, rel=1e-5) == ref_k4.prediction
+
+
+def test_batched_query_chunking_and_gpu():
+    """Finding 5 / C6: Verify that query chunking and optional GPU acceleration produce identical results."""
+    from memory_study_v2.retrieval import retrieve_mem_sim_batch
+
+    np.random.seed(99)
+    N = 100
+    records = [
+        BankRecord(
+            record_id=i + 1,
+            security_id=f"SEC_{i % 10}",
+            session_origin="2015-01-01",
+            session_126_maturity="2017-06-01",
+            vector=np.random.randn(966).astype(np.float32),
+            target_63=float(np.random.randn() * 0.05),
+            session_ordinal=i * 5,
+        )
+        for i in range(N)
+    ]
+    bank = MemoryBank(records)
+    bank.precompute_bank_norms()
+
+    queries = np.random.randn(7, 966).astype(np.float32)
+    sec_ids = [f"SEC_{i}" for i in range(7)]
+
+    # Run without chunking (chunk_size=256)
+    res_unchunked = retrieve_mem_sim_batch(bank, queries, sec_ids, k=5, query_chunk_size=256)
+    # Run with small chunk size = 2 (forces multiple chunk iterations)
+    res_chunked = retrieve_mem_sim_batch(bank, queries, sec_ids, k=5, query_chunk_size=2)
+
+    assert len(res_unchunked) == 7
+    assert len(res_chunked) == 7
+    for u, c in zip(res_unchunked, res_chunked):
+        assert u.neighbor_ids == c.neighbor_ids
+        assert pytest.approx(u.prediction, rel=1e-5) == c.prediction
+
+    # If GPU available, verify GPU path matches CPU path exactly
+    try:
+        import torch
+        if torch.cuda.is_available():
+            res_gpu = retrieve_mem_sim_batch(bank, queries, sec_ids, k=5, use_gpu=True)
+            for u, g in zip(res_unchunked, res_gpu):
+                assert u.neighbor_ids == g.neighbor_ids
+                assert pytest.approx(u.prediction, rel=1e-5) == g.prediction
+    except ImportError:
+        pass
