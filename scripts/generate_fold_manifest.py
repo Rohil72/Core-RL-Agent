@@ -38,7 +38,7 @@ from memory_study_v2.sample_index import (
     partition_sample_index,
     save_fold_sample_ids,
 )
-from memory_study_v2.venue_calendar import get_venue_calendar
+from memory_study_v2.venue_calendar import get_venue_calendar, get_market_venue_calendar
 
 
 def generate_manifest(
@@ -55,7 +55,6 @@ def generate_manifest(
     cfg_p = Path(config_path)
     config_sha256 = hashlib.sha256(cfg_p.read_bytes()).hexdigest() if cfg_p.exists() else "CONFIG_NOT_FOUND"
 
-    vc = get_venue_calendar()
     file_manifest: List[Dict[str, Any]] = []
     annual_totals: Dict[int, int] = {y: 0 for y in range(2013, 2026)}
     all_records: List[SampleIndexRecord] = []
@@ -65,6 +64,8 @@ def generate_manifest(
         data = p.read_bytes()
         sha = hashlib.sha256(data).hexdigest()
         sec_id = p.stem
+        mkt = sec_id.split("_")[0] if "_" in sec_id else (sec_id.split(":")[0] if ":" in sec_id else "US")
+        vc = get_market_venue_calendar(mkt, execution_mode="production")
 
         df = pd.read_parquet(p)
         recs = build_security_sample_index(sec_id, df, venue_calendar=vc)
