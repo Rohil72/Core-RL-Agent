@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -211,3 +211,86 @@ def select_mixture_mse(
         is_alias=is_alias,
         alias_of=alias_of,
     )
+
+
+def select_mixture_sr(
+    dev_base_by_seed: Dict[int, np.ndarray],
+    dev_mem_preds: np.ndarray,
+    dev_targets: np.ndarray,
+    dev_markets: np.ndarray,
+    lambda_grid: List[float] = [0.0, 0.10, 0.25, 0.50, 1.00],
+    tie_tolerance: float = 1e-12,
+    roundtrip_cost: float = 0.003,
+    dev_eval_fn: Optional[Callable[[float, int, str], float]] = None,
+) -> SelectedMixture:
+    """Select mixture lambda maximizing development net portfolio Sharpe ratio (A21 / R07).
+
+    Averages net Sharpe across seeds within each market, then across markets.
+    Tie-breaking: smallest lambda wins ties within tie_tolerance.
+    """
+    grid_scores: Dict[float, float] = {}
+    unique_markets = np.unique(dev_markets)
+    seeds = list(dev_base_by_seed.keys())
+
+    for lam in lambda_grid:
+        market_sharpes = []
+        for m in unique_markets:
+            m_mask = (dev_markets == m)
+            seed_sharpes = []
+            for s in seeds:
+                if dev_eval_fn is not None:
+                    sr_val = dev_eval_fn(lam, s, str(m))
+                else:
+                    b_pred = dev_base_by_seed[s][m_mask]
+                    m_pred = dev_mem_preds[m_mask]
+                    y_true = dev_targets[m_mask]
+
+                    mix_pred = (1.0 - lam) * b_pred + lam * m_pred
+                    # Active positive forecast rule: entry when mix_pred > 0
+                    active = (mix_pred > 0.0)
+                    if np.any(active):
+                        # Realized net return deducting roundtrip fee and slippage (2 * 0.0015 = 0.003)
+                        net_ret = np.where(active, y_true - roundtrip_cost, 0.0)
+                    else:
+                        net_ret = np.zeros_like(y_true)
+
+                    r_mean = float(np.mean(net_ret))
+                    r_std = float(np.std(net_ret, ddof=0))
+                    if r_std > 1e-8:
+                        sr_val = (r_mean / r_std) * math.sqrt(252.0)
+                    else:
+                        sr_val = 0.0
+
+                seed_sharpes.append(sr_val)
+            market_sharpes.append(float(np.mean(seed_sharpes)))
+        grid_scores[lam] = float(np.mean(market_sharpes))
+
+    # Maximize Sharpe with tie-breaking (smallest lambda wins ties within tie_tolerance)
+    best_lam = lambda_grid[0]
+    best_score = grid_scores[best_lam]
+
+    for lam in lambda_grid[1:]:
+        score = grid_scores[lam]
+        # Must strictly beat earlier smaller lambda by more than tie_tolerance
+        if score > best_score + tie_tolerance:
+            best_score = score
+            best_lam = lam
+
+    # Alias check (A22)
+    is_alias = False
+    alias_of = None
+    if best_lam == 0.0:
+        is_alias = True
+        alias_of = "BASE"
+    elif best_lam == 1.0:
+        is_alias = True
+        alias_of = "MEM_SIM"
+
+    return SelectedMixture(
+        objective="MIX_SR",
+        selected_lambda=best_lam,
+        grid_scores=grid_scores,
+        is_alias=is_alias,
+        alias_of=alias_of,
+    )
+

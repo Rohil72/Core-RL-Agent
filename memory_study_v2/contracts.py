@@ -19,6 +19,14 @@ class ContractValidationError(Exception):
     pass
 
 
+def _canonical_default(o: Any) -> Any:
+    if hasattr(o, "item") and callable(o.item):
+        return o.item()
+    if hasattr(o, "tolist") and callable(o.tolist):
+        return o.tolist()
+    raise TypeError(f"Object of type {o.__class__.__name__} is not JSON serializable")
+
+
 def to_canonical_json(obj: Any) -> str:
     """Serialize object to deterministic canonical JSON (sorted keys, compact, UTF-8, no NaN)."""
     return json.dumps(
@@ -27,6 +35,7 @@ def to_canonical_json(obj: Any) -> str:
         ensure_ascii=False,
         separators=(",", ":"),
         allow_nan=False,
+        default=_canonical_default,
     )
 
 

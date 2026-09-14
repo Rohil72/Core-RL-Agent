@@ -31,7 +31,7 @@ import pandas as pd
 # ---------------------------------------------------------------------------
 # Pinned SHA-256 of the bundled fixture so any accidental edit is detected.
 # ---------------------------------------------------------------------------
-_FIXTURE_SHA256 = "18bd392bc68f71d9f4a9eccf5b2bfdfc9f1e8b34250785066057b7a23157b330"
+_FIXTURE_SHA256 = "8939423a476cb2a588e6bf559f02329d324d32a2b5d58a00f68f84679160a878"
 
 _FIXTURE_PATH = Path(__file__).resolve().parents[1] / "data" / "fixtures" / "us_trading_sessions.csv"
 

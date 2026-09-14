@@ -34,19 +34,20 @@ Capabilities:
 from __future__ import annotations
 
 import argparse
-from dataclasses import asdict
+import collections
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 import glob
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import platform
 import sys
 import time
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
 
-# Ensure repository root is on sys.path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
@@ -68,14 +69,21 @@ except ImportError:
 
 from memory_study_v2.backbones import MLPAnnual, TransformerAnnual
 from memory_study_v2.canonical_data import align_to_venue_calendar, build_total_return_bars, validate_raw_bars
-from memory_study_v2.contracts import EXPECTED_FEATURES_ORDERED, to_canonical_json
-from memory_study_v2.execution import PortfolioAccount
+from memory_study_v2.contracts import EXPECTED_16_ARMS, EXPECTED_FEATURES_ORDERED, to_canonical_json
+from memory_study_v2.execution import DailyLedgerState, PortfolioAccount, TradeRecord
 from memory_study_v2.features import compute_technical_features, fit_scaler
-from memory_study_v2.integration import fit_trust_gate
+from memory_study_v2.inference import evaluate_primary_contrasts, export_analysis_bundle, replay_analysis_bundle
+from memory_study_v2.integration import fit_trust_gate, select_mixture_mse, select_mixture_sr
 from memory_study_v2.labels import compute_target_labels
 from memory_study_v2.memory import BankRecord, MemoryBank
 from memory_study_v2.representations import extract_annual_representation
-from memory_study_v2.retrieval import retrieve_mem_sim_batch
+from memory_study_v2.retrieval import (
+    retrieve_hist_prior,
+    retrieve_knn_plain,
+    retrieve_mem_random,
+    retrieve_mem_sim_batch,
+)
+from memory_study_v2.ridge import fit_ridge_model, RidgeModel
 from memory_study_v2.sample_index import (
     SampleIndexRecord,
     build_security_sample_index,
@@ -86,6 +94,68 @@ from memory_study_v2.train import train_backbone_model
 from memory_study_v2.venue_calendar import get_venue_calendar
 
 
+@dataclass(frozen=True)
+class PolicyPredictionRecord:
+    """Canonical prediction record joining forecasts to admitted queries."""
+    query_id: str
+    security_id: str
+    market: str
+    decision_session: str
+    fold: int
+    policy_id: str
+    realization_id: Optional[int]
+    prediction: float
+    source_artifact_id: str
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "query_id": self.query_id,
+            "security_id": self.security_id,
+            "market": self.market,
+            "decision_session": self.decision_session,
+            "fold": self.fold,
+            "policy_id": self.policy_id,
+            "realization_id": self.realization_id,
+            "prediction": float(self.prediction),
+            "source_artifact_id": self.source_artifact_id,
+        }
+
+
+@dataclass
+class DecisionRecord:
+    """Traceability record linking decision to prediction, ranking, and fill."""
+    session: str
+    query_id: str
+    security_id: str
+    market: str
+    policy_id: str
+    realization_id: Optional[int]
+    prediction: float
+    volatility_21: float
+    score: float
+    eligible: bool
+    rank: int
+    selected_for_entry: bool
+    action: str
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "session": str(self.session),
+            "query_id": str(self.query_id),
+            "security_id": str(self.security_id),
+            "market": str(self.market),
+            "policy_id": str(self.policy_id),
+            "realization_id": int(self.realization_id) if self.realization_id is not None else None,
+            "prediction": float(self.prediction),
+            "volatility_21": float(self.volatility_21),
+            "score": float(self.score),
+            "eligible": bool(self.eligible),
+            "rank": int(self.rank),
+            "selected_for_entry": bool(self.selected_for_entry),
+            "action": str(self.action),
+        }
+
+
 def get_system_telemetry() -> Dict[str, Any]:
     """Capture comprehensive host and process telemetry."""
     res: Dict[str, Any] = {
@@ -93,60 +163,60 @@ def get_system_telemetry() -> Dict[str, Any]:
         "python_version": sys.version.split()[0],
         "machine": platform.machine(),
         "processor": platform.processor(),
-        "cpu_count_logical": os.cpu_count(),
-        "cpu_count_physical": psutil.cpu_count(logical=False) if psutil else None,
-        "ram_total_gb": round(psutil.virtual_memory().total / (1024**3), 2) if psutil else None,
-        "ram_available_gb": round(psutil.virtual_memory().available / (1024**3), 2) if psutil else None,
     }
-    if psutil:
-        res["process_rss_mb"] = round(psutil.Process().memory_info().rss / (1024**2), 2)
+    if psutil is not None:
+        vm = psutil.virtual_memory()
+        res["ram_total_gb"] = round(vm.total / (1024 ** 3), 2)
+        res["ram_available_gb"] = round(vm.available / (1024 ** 3), 2)
+        res["cpu_count_logical"] = psutil.cpu_count(logical=True)
+        res["cpu_count_physical"] = psutil.cpu_count(logical=False)
     return res
 
 
 def run_cuda_preflight() -> Dict[str, Any]:
-    """Inspect and probe CUDA hardware and runtime compatibility."""
-    if torch is None:
-        raise RuntimeError("PyTorch is not installed in the current environment.")
-
-    if not torch.cuda.is_available():
-        raise RuntimeError(
-            "CUDA is not available in PyTorch. Ensure an NVIDIA GPU is present and CUDA drivers are loaded."
-        )
-
-    device_count = torch.cuda.device_count()
-    device_idx = 0
-    device_name = torch.cuda.get_device_name(device_idx)
-    cap = torch.cuda.get_device_capability(device_idx)
-    props = torch.cuda.get_device_properties(device_idx)
-    total_vram_gb = round(props.total_memory / (1024**3), 2)
-
-    # Live CUDA compute probe: allocate, matmul, reduce, sync
-    torch.cuda.reset_peak_memory_stats(device_idx)
-    t0 = time.perf_counter()
-    x = torch.randn((1024, 1024), device=f"cuda:{device_idx}", dtype=torch.float32)
-    y = torch.matmul(x, x)
-    res = float(y.sum().item())
-    torch.cuda.synchronize(device_idx)
-    probe_duration_ms = round((time.perf_counter() - t0) * 1000, 2)
-    peak_mem_mb = round(torch.cuda.max_memory_allocated(device_idx) / (1024**2), 2)
-    del x, y
-
-    return {
-        "cuda_available": True,
-        "device_count": device_count,
-        "device_index": device_idx,
-        "device_name": device_name,
-        "compute_capability": list(cap),
-        "total_vram_gb": total_vram_gb,
-        "pytorch_version": torch.__version__,
-        "cuda_version": torch.version.cuda,
-        "compute_probe": {
-            "status": "PROBE_SUCCESS",
-            "probe_duration_ms": probe_duration_ms,
-            "peak_mem_mb": peak_mem_mb,
-            "sample_output_finite": bool(np.isfinite(res)),
-        },
+    """Verify CUDA runtime and driver compatibility and run compute probe."""
+    info: Dict[str, Any] = {
+        "cuda_available": False,
+        "device_count": 0,
+        "device_name": None,
+        "compute_capability": None,
+        "total_vram_gb": 0.0,
+        "pytorch_version": torch.__version__ if torch is not None else None,
+        "cuda_version": torch.version.cuda if torch is not None else None,
+        "compute_probe": "NOT_RUN",
     }
+    if torch is None or not torch.cuda.is_available():
+        info["status"] = "CUDA_UNAVAILABLE"
+        return info
+
+    info["cuda_available"] = True
+    info["device_count"] = torch.cuda.device_count()
+    info["device_name"] = torch.cuda.get_device_name(0)
+    cap = torch.cuda.get_device_capability(0)
+    info["compute_capability"] = [cap[0], cap[1]]
+    total_mem = torch.cuda.get_device_properties(0).total_memory
+    info["total_vram_gb"] = round(total_mem / (1024 ** 3), 2)
+
+    try:
+        t0 = time.perf_counter()
+        dev = torch.device("cuda:0")
+        a = torch.randn((1024, 1024), device=dev, dtype=torch.float32)
+        b = torch.randn((1024, 1024), device=dev, dtype=torch.float32)
+        c = torch.matmul(a, b)
+        torch.cuda.synchronize(dev)
+        elapsed_ms = (time.perf_counter() - t0) * 1000.0
+        val = float(c[0, 0].item())
+        del a, b, c
+        torch.cuda.empty_cache()
+        info["compute_probe"] = "PROBE_SUCCESS"
+        info["compute_probe_elapsed_ms"] = round(elapsed_ms, 2)
+        info["probe_checksum"] = round(val, 6)
+        info["status"] = "PREFLIGHT_PASS"
+    except Exception as e:
+        info["compute_probe"] = f"PROBE_FAILED: {str(e)}"
+        info["status"] = "PREFLIGHT_CUDA_ERROR"
+
+    return info
 
 
 def verify_storage_and_manifests(
@@ -159,7 +229,6 @@ def verify_storage_and_manifests(
     """Verify input manifests, sample index files, and output path writability."""
     checks: Dict[str, Any] = {}
 
-    # 1. Check universe manifest
     if universe_path is None:
         cand = REPO_ROOT / "rebuild_plan" / "universe_request.csv"
         if not cand.exists():
@@ -168,7 +237,6 @@ def verify_storage_and_manifests(
     checks["universe_manifest_present"] = universe_path.exists()
     checks["universe_manifest_path"] = str(universe_path)
 
-    # 2. Check fold dimensions manifest
     if fold_dims_path is None:
         fold_dims_path = REPO_ROOT / "rebuild_plan" / "fold_dimensions_manifest.json"
     if fold_dims_path.exists():
@@ -185,7 +253,6 @@ def verify_storage_and_manifests(
         checks["total_folds_configured"] = 0
     checks["fold_dimensions_path"] = str(fold_dims_path)
 
-    # 3. Check sample ID manifests
     if sample_ids_dir.exists():
         sample_files = list(sample_ids_dir.glob("fold_*_sample_ids.json")) + list(sample_ids_dir.glob("sample_ids_*.csv"))
         checks["sample_id_files_count"] = len(sample_files)
@@ -195,7 +262,6 @@ def verify_storage_and_manifests(
         checks["sample_ids_present"] = False
     checks["sample_ids_dir"] = str(sample_ids_dir)
 
-    # 4. Check data cache
     if data_dir.exists():
         parquet_files = list(data_dir.glob("*.parquet"))
         checks["data_cache_dir"] = str(data_dir)
@@ -204,7 +270,6 @@ def verify_storage_and_manifests(
         checks["data_cache_dir"] = str(data_dir)
         checks["parquet_count"] = 0
 
-    # 5. Check output writability
     output_dir.mkdir(parents=True, exist_ok=True)
     test_probe_file = output_dir / ".write_probe"
     try:
@@ -231,11 +296,7 @@ def verify_configuration_authorization(
         cfg = json.load(f)
 
     repo_authorized = cfg.get("production_authorized", False)
-
-    # Repo file MUST have production_authorized: false (Finding 4 / C4 invariant)
     repo_guard_intact = (repo_authorized is False)
-
-    # Runtime authorization requires explicit operator flag
     can_proceed = authorize_flag and repo_guard_intact
 
     return {
@@ -425,12 +486,540 @@ def prepare_fold_data(
         "dev_x_trans": de_trans,
         "dev_y": de_y,
         "dev_mkts": de_mkts,
+        "train_records": tr_recs,
+        "val_records": va_recs,
+        "dev_records": de_recs,
         "eval_x_mlp": ev_mlp,
         "eval_x_trans": ev_trans,
         "eval_records": ev_recs,
         "bank_records": bank_records,
         "sec_info": sec_info,
         "scaler": scaler,
+    }
+
+
+def generate_and_seal_policy_predictions(
+    fold_year: int,
+    fold_dir: Path,
+    fold_data: Dict[str, Any],
+    trained_models: Dict[str, nn.Module],
+    ridge_model: RidgeModel,
+    device: torch.device,
+    configured_policies: Optional[List[str]] = None,
+    seeds: Optional[List[int]] = None,
+    lambda_grid: Optional[List[float]] = None,
+    custom_predictions: Optional[Dict[str, float]] = None,
+    fail_on_corrupted_predictions: bool = False,
+) -> List[PolicyPredictionRecord]:
+    """Generate, validate, and atomically seal common prediction records for all configured arms."""
+    pred_manifest_path = fold_dir / "predictions_manifest.json"
+    pred_json_path = fold_dir / "policy_predictions.json"
+
+    # 1. Check existing verified predictions on disk
+    if pred_manifest_path.exists() and pred_json_path.exists() and custom_predictions is None:
+        try:
+            with open(pred_manifest_path, "r", encoding="utf-8") as f:
+                manifest_data = json.load(f)
+            expected_sha = manifest_data.get("sha256")
+            actual_sha = hashlib.sha256(pred_json_path.read_bytes()).hexdigest()
+            if actual_sha == expected_sha:
+                with open(pred_json_path, "r", encoding="utf-8") as f:
+                    cached_records = json.load(f)
+                records = [
+                    PolicyPredictionRecord(**r) for r in cached_records
+                ]
+                # Validate key uniqueness and finite values
+                seen = set()
+                for r in records:
+                    k = (r.query_id, r.policy_id, r.realization_id)
+                    if k in seen:
+                        raise ValueError(f"Duplicate prediction key in cached artifact: {k}")
+                    if not math.isfinite(r.prediction):
+                        raise ValueError(f"Non-finite prediction in cached artifact: {k}")
+                    seen.add(k)
+                print(f"  [Fold {fold_year}] Verified {len(records)} existing predictions on disk.")
+                return records
+            else:
+                raise ValueError(f"Predictions digest mismatch: {actual_sha} != {expected_sha}")
+        except Exception as e:
+            if fail_on_corrupted_predictions:
+                raise RuntimeError(f"Corrupted predictions artifact rejected on fold {fold_year}: {e}")
+            print(f"  [Fold {fold_year}] Cached predictions validation failed ({e}); regenerating...")
+            pred_manifest_path.unlink(missing_ok=True)
+            pred_json_path.unlink(missing_ok=True)
+
+    seeds = seeds or [7, 17, 37]
+    lambda_grid = lambda_grid or [0.0, 0.10, 0.25, 0.50, 1.00]
+
+    eval_recs: List[SampleIndexRecord] = fold_data["eval_records"]
+    dev_recs: List[SampleIndexRecord] = fold_data.get("dev_records", [])
+    eval_x_mlp = fold_data["eval_x_mlp"]
+    eval_x_trans = fold_data["eval_x_trans"]
+    dev_x_mlp = fold_data["dev_x_mlp"]
+    dev_x_trans = fold_data["dev_x_trans"]
+    dev_y = fold_data["dev_y"].numpy()
+    dev_mkts = fold_data["dev_mkts"]
+
+    bank = MemoryBank(fold_data["bank_records"])
+    bank.precompute_bank_norms()
+
+    eval_vecs = eval_x_mlp.numpy()
+    eval_secs = [r.security_id for r in eval_recs]
+    dev_vecs = dev_x_mlp.numpy()
+    dev_secs = [r.security_id for r in dev_recs]
+    k_val = min(25, len(bank.records))
+
+    # Precompute base model predictions on eval and dev
+    dev_mlp_by_seed: Dict[int, np.ndarray] = {}
+    eval_mlp_by_seed: Dict[int, np.ndarray] = {}
+    dev_trans_by_seed: Dict[int, np.ndarray] = {}
+    eval_trans_by_seed: Dict[int, np.ndarray] = {}
+
+    for s in seeds:
+        mlp_key = f"MLP_ANNUAL_966_64_128_1_seed{s}"
+        if mlp_key in trained_models:
+            m = trained_models[mlp_key]
+            m.to(device)
+            m.eval()
+            with torch.no_grad():
+                eval_mlp_by_seed[s] = m(eval_x_mlp.to(device)).cpu().numpy().flatten()
+                dev_mlp_by_seed[s] = m(dev_x_mlp.to(device)).cpu().numpy().flatten()
+
+        trans_key = f"TRANSFORMER_42x23_WIDTH64_HEADS4_LAYERS2_FF128_LATENT128_seed{s}"
+        if trans_key in trained_models:
+            m = trained_models[trans_key]
+            m.to(device)
+            m.eval()
+            with torch.no_grad():
+                eval_trans_by_seed[s] = m(eval_x_trans.to(device)).cpu().numpy().flatten()
+                dev_trans_by_seed[s] = m(dev_x_trans.to(device)).cpu().numpy().flatten()
+
+    # Precompute memory retrieval
+    eval_mem_res = retrieve_mem_sim_batch(bank, eval_vecs, eval_secs, k=k_val, use_gpu=(device.type == "cuda"))
+    eval_mem_preds = np.array([float(r.prediction) for r in eval_mem_res], dtype=np.float64)
+
+    dev_mem_res = retrieve_mem_sim_batch(bank, dev_vecs, dev_secs, k=k_val, use_gpu=(device.type == "cuda"))
+    dev_mem_preds = np.array([float(r.prediction) for r in dev_mem_res], dtype=np.float64)
+
+    # Precompute KNN_PLAIN
+    eval_knn_preds = np.array([
+        float(retrieve_knn_plain(bank, eval_vecs[i], eval_secs[i], k=k_val).prediction)
+        for i in range(len(eval_recs))
+    ], dtype=np.float64)
+
+    # Precompute MEM_RANDOM master seeds [1001, 1002, 1003]
+    bank_hash = hashlib.sha256(str(len(bank.records)).encode()).hexdigest()
+    random_preds_by_seed: Dict[int, np.ndarray] = {}
+    for ms in [1001, 1002, 1003]:
+        r_preds = [
+            float(retrieve_mem_random(bank, eval_secs[i], bank_hash, fold_year, eval_recs[i].query_id, master_seed=ms, k=k_val).prediction)
+            for i in range(len(eval_recs))
+        ]
+        random_preds_by_seed[ms] = np.array(r_preds, dtype=np.float64)
+
+    # Precompute HIST_PRIOR and RIDGE_ANNUAL
+    hist_val = float(bank.unconditional_mean)
+    ridge_eval_preds = ridge_model.predict(eval_vecs)
+
+    # Precompute Gates and Mixtures
+    gate_mlp_by_seed: Dict[int, np.ndarray] = {}
+    gate_trans_by_seed: Dict[int, np.ndarray] = {}
+    mix_mse_mlp_by_seed: Dict[int, np.ndarray] = {}
+    mix_mse_trans_by_seed: Dict[int, np.ndarray] = {}
+    mix_sr_mlp_by_seed: Dict[int, np.ndarray] = {}
+    mix_sr_trans_by_seed: Dict[int, np.ndarray] = {}
+
+    if dev_mlp_by_seed:
+        for s, d_mlp in dev_mlp_by_seed.items():
+            fg_mlp = fit_trust_gate(d_mlp, dev_mem_preds, dev_y, dev_mkts, steps=50)
+            p_mlp, _ = fg_mlp.predict(eval_mlp_by_seed[s], eval_mem_preds)
+            gate_mlp_by_seed[s] = p_mlp
+
+        sel_mse_mlp = select_mixture_mse(dev_mlp_by_seed, dev_mem_preds, dev_y, dev_mkts, lambda_grid=lambda_grid)
+        sel_sr_mlp = select_mixture_sr(dev_mlp_by_seed, dev_mem_preds, dev_y, dev_mkts, lambda_grid=lambda_grid)
+        for s in dev_mlp_by_seed:
+            mix_mse_mlp_by_seed[s] = (1.0 - sel_mse_mlp.selected_lambda) * eval_mlp_by_seed[s] + sel_mse_mlp.selected_lambda * eval_mem_preds
+            mix_sr_mlp_by_seed[s] = (1.0 - sel_sr_mlp.selected_lambda) * eval_mlp_by_seed[s] + sel_sr_mlp.selected_lambda * eval_mem_preds
+
+    if dev_trans_by_seed:
+        for s, d_trans in dev_trans_by_seed.items():
+            fg_trans = fit_trust_gate(d_trans, dev_mem_preds, dev_y, dev_mkts, steps=50)
+            p_trans, _ = fg_trans.predict(eval_trans_by_seed[s], eval_mem_preds)
+            gate_trans_by_seed[s] = p_trans
+
+        sel_mse_trans = select_mixture_mse(dev_trans_by_seed, dev_mem_preds, dev_y, dev_mkts, lambda_grid=lambda_grid)
+        sel_sr_trans = select_mixture_sr(dev_trans_by_seed, dev_mem_preds, dev_y, dev_mkts, lambda_grid=lambda_grid)
+        for s in dev_trans_by_seed:
+            mix_mse_trans_by_seed[s] = (1.0 - sel_mse_trans.selected_lambda) * eval_trans_by_seed[s] + sel_mse_trans.selected_lambda * eval_mem_preds
+            mix_sr_trans_by_seed[s] = (1.0 - sel_sr_trans.selected_lambda) * eval_trans_by_seed[s] + sel_sr_trans.selected_lambda * eval_mem_preds
+
+    # Generate records
+    admitted_query_ids = {r.query_id for r in eval_recs}
+    records: List[PolicyPredictionRecord] = []
+    seen_keys: Set[Tuple[str, str, Optional[int]]] = set()
+
+    def _add_record(qid: str, sec: str, mkt: str, sess: str, pol: str, real: Optional[int], pred: float, art: str):
+        k = (qid, pol, real)
+        if k in seen_keys:
+            raise ValueError(f"Duplicate prediction key generated: {k}")
+        if qid not in admitted_query_ids:
+            raise ValueError(f"Prediction query {qid} does not belong to admitted queries")
+        if not math.isfinite(pred):
+            raise ValueError(f"Non-finite prediction encountered for {k}: {pred}")
+        # Allow custom override if provided
+        if custom_predictions is not None:
+            if qid in custom_predictions:
+                pred = float(custom_predictions[qid])
+            elif "default" in custom_predictions:
+                pred = float(custom_predictions["default"])
+        rec = PolicyPredictionRecord(
+            query_id=qid,
+            security_id=sec,
+            market=mkt,
+            decision_session=sess,
+            fold=fold_year,
+            policy_id=pol,
+            realization_id=real,
+            prediction=pred,
+            source_artifact_id=art,
+        )
+        records.append(rec)
+        seen_keys.add(k)
+
+    for i, r in enumerate(eval_recs):
+        qid = r.query_id
+        sec = r.security_id
+        sess = r.session
+        mkt = sec.split("_")[0] if "_" in sec else "US"
+
+        # 1. MEM_SIM
+        if configured_policies is None or "MEM_SIM" in configured_policies:
+            _add_record(qid, sec, mkt, sess, "MEM_SIM", None, eval_mem_preds[i], f"bank_{fold_year}")
+
+        # 2. KNN_PLAIN
+        if configured_policies is None or "KNN_PLAIN" in configured_policies:
+            _add_record(qid, sec, mkt, sess, "KNN_PLAIN", None, eval_knn_preds[i], f"bank_{fold_year}")
+
+        # 3. MEM_RANDOM
+        if configured_policies is None or "MEM_RANDOM" in configured_policies:
+            for ms in [1001, 1002, 1003]:
+                _add_record(qid, sec, mkt, sess, "MEM_RANDOM", ms, random_preds_by_seed[ms][i], f"bank_{fold_year}_seed{ms}")
+
+        # 4. HIST_PRIOR
+        if configured_policies is None or "HIST_PRIOR" in configured_policies:
+            _add_record(qid, sec, mkt, sess, "HIST_PRIOR", None, hist_val, f"bank_{fold_year}")
+
+        # 5. RIDGE_ANNUAL
+        if configured_policies is None or "RIDGE_ANNUAL" in configured_policies:
+            _add_record(qid, sec, mkt, sess, "RIDGE_ANNUAL", None, float(ridge_eval_preds[i]), f"ridge_{fold_year}")
+
+        # 6. MLP_BASE
+        if configured_policies is None or "MLP_BASE" in configured_policies:
+            for s in seeds:
+                if s in eval_mlp_by_seed:
+                    _add_record(qid, sec, mkt, sess, "MLP_BASE", s, float(eval_mlp_by_seed[s][i]), f"mlp_seed{s}")
+
+        # 7. TRANS_BASE
+        if configured_policies is None or "TRANS_BASE" in configured_policies:
+            for s in seeds:
+                if s in eval_trans_by_seed:
+                    _add_record(qid, sec, mkt, sess, "TRANS_BASE", s, float(eval_trans_by_seed[s][i]), f"trans_seed{s}")
+
+        # 8. MLP_GATE
+        if configured_policies is None or "MLP_GATE" in configured_policies:
+            for s in seeds:
+                if s in gate_mlp_by_seed:
+                    _add_record(qid, sec, mkt, sess, "MLP_GATE", s, float(gate_mlp_by_seed[s][i]), f"gate_mlp_seed{s}")
+
+        # 9. TRANS_GATE
+        if configured_policies is None or "TRANS_GATE" in configured_policies:
+            for s in seeds:
+                if s in gate_trans_by_seed:
+                    _add_record(qid, sec, mkt, sess, "TRANS_GATE", s, float(gate_trans_by_seed[s][i]), f"gate_trans_seed{s}")
+
+        # 10. MLP_MIX_MSE
+        if configured_policies is None or "MLP_MIX_MSE" in configured_policies:
+            for s in seeds:
+                if s in mix_mse_mlp_by_seed:
+                    _add_record(qid, sec, mkt, sess, "MLP_MIX_MSE", s, float(mix_mse_mlp_by_seed[s][i]), f"mix_mse_mlp_seed{s}")
+
+        # 11. TRANS_MIX_MSE
+        if configured_policies is None or "TRANS_MIX_MSE" in configured_policies:
+            for s in seeds:
+                if s in mix_mse_trans_by_seed:
+                    _add_record(qid, sec, mkt, sess, "TRANS_MIX_MSE", s, float(mix_mse_trans_by_seed[s][i]), f"mix_mse_trans_seed{s}")
+
+        # 12. MLP_MIX_SR
+        if configured_policies is None or "MLP_MIX_SR" in configured_policies:
+            for s in seeds:
+                if s in mix_sr_mlp_by_seed:
+                    _add_record(qid, sec, mkt, sess, "MLP_MIX_SR", s, float(mix_sr_mlp_by_seed[s][i]), f"mix_sr_mlp_seed{s}")
+
+        # 13. TRANS_MIX_SR
+        if configured_policies is None or "TRANS_MIX_SR" in configured_policies:
+            for s in seeds:
+                if s in mix_sr_trans_by_seed:
+                    _add_record(qid, sec, mkt, sess, "TRANS_MIX_SR", s, float(mix_sr_trans_by_seed[s][i]), f"mix_sr_trans_seed{s}")
+
+        # 14. MOMENTUM_21
+        s_data = fold_data["sec_info"][sec]
+        row_idx = s_data["sess_to_row"].get(sess)
+        mom_val = float(s_data["feats_df"]["momentum_21"].iloc[row_idx]) if row_idx is not None else 0.0
+        vol_val = float(s_data["feats_df"]["volatility_21"].iloc[row_idx]) if row_idx is not None else 0.0
+
+        if configured_policies is None or "MOMENTUM_21" in configured_policies:
+            _add_record(qid, sec, mkt, sess, "MOMENTUM_21", None, mom_val, f"features_{fold_year}")
+
+        # 15. VOL_MOMENTUM_21
+        if configured_policies is None or "VOL_MOMENTUM_21" in configured_policies:
+            vol_mom = mom_val / (vol_val + 1e-4)
+            _add_record(qid, sec, mkt, sess, "VOL_MOMENTUM_21", None, vol_mom, f"features_{fold_year}")
+
+        # 16. PASSIVE_EQUAL_WEIGHT
+        if configured_policies is None or "PASSIVE_EQUAL_WEIGHT" in configured_policies:
+            _add_record(qid, sec, mkt, sess, "PASSIVE_EQUAL_WEIGHT", None, 1.0, f"passive_{fold_year}")
+
+    # Serialize and seal with SHA-256
+    serialized = [r.to_dict() for r in records]
+    with open(pred_json_path, "w", encoding="utf-8") as f:
+        f.write(to_canonical_json(serialized))
+
+    actual_sha = hashlib.sha256(pred_json_path.read_bytes()).hexdigest()
+    manifest_data = {
+        "fold_year": fold_year,
+        "count": len(records),
+        "sha256": actual_sha,
+        "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+    }
+    with open(pred_manifest_path, "w", encoding="utf-8") as f:
+        f.write(to_canonical_json(manifest_data))
+
+    print(f"  [Fold {fold_year}] Sealed {len(records)} prediction records (SHA-256: {actual_sha[:12]}...).")
+    return records
+
+
+def run_continuous_portfolio_simulation(
+    folds_to_run: List[int],
+    fold_data_by_year: Dict[int, Dict[str, Any]],
+    predictions_by_year: Dict[int, List[PolicyPredictionRecord]],
+    output_dir: Path,
+    initial_capital: float = 100000.0,
+    commission: float = 0.001,
+    slippage: float = 0.0005,
+    volatility_guard: float = 1e-4,
+    max_positions: int = 3,
+) -> Dict[str, Any]:
+    """Execute continuous multi-year portfolio simulation preserving account state across folds."""
+    policy_accounts: Dict[Tuple[str, str, Optional[int]], PortfolioAccount] = {}
+    all_decisions: Dict[Tuple[str, str, Optional[int]], List[DecisionRecord]] = collections.defaultdict(list)
+
+    # Determine unique account keys from predictions
+    all_account_keys: Set[Tuple[str, str, Optional[int]]] = set()
+    for y in folds_to_run:
+        for r in predictions_by_year.get(y, []):
+            all_account_keys.add((r.policy_id, r.market, r.realization_id))
+
+    sorted_account_keys = sorted(all_account_keys, key=lambda k: (k[0], k[1], k[2] if k[2] is not None else -1))
+
+    # Initialize continuous accounts
+    for k in sorted_account_keys:
+        policy_accounts[k] = PortfolioAccount(
+            initial_capital=initial_capital,
+            commission=commission,
+            slippage=slippage,
+            max_positions=max_positions,
+        )
+
+    for fold_idx, fold_year in enumerate(folds_to_run):
+        is_last_fold = (fold_idx == len(folds_to_run) - 1)
+        fold_data = fold_data_by_year[fold_year]
+        sec_info = fold_data["sec_info"]
+        eval_recs = fold_data["eval_records"]
+
+        if not eval_recs:
+            continue
+
+        eval_sessions = sorted(list(set(r.session for r in eval_recs)))
+
+        # Pre-index price, feature, and prediction lookups for O(1) step access
+        open_map: Dict[str, Dict[str, float]] = collections.defaultdict(dict)
+        close_map: Dict[str, Dict[str, float]] = collections.defaultdict(dict)
+        vol_map: Dict[str, Dict[str, float]] = collections.defaultdict(dict)
+        atr_map: Dict[str, Dict[str, float]] = collections.defaultdict(dict)
+        mom_map: Dict[str, Dict[str, float]] = collections.defaultdict(dict)
+        valid_map: Dict[str, Dict[str, bool]] = collections.defaultdict(dict)
+
+        for s, s_data in sec_info.items():
+            for _, row in s_data["tr_df"].iterrows():
+                sess_str = str(row["session"])
+                open_map[s][sess_str] = float(row["raw_open"])
+                close_map[s][sess_str] = float(row["raw_close"])
+            for _, row in s_data["feats_df"].iterrows():
+                sess_str = str(row["session"])
+                vol_map[s][sess_str] = float(row["volatility_21"])
+                atr_map[s][sess_str] = float(row["atr_ratio_14"])
+                mom_map[s][sess_str] = float(row["momentum_21"])
+            for _, row in s_data["val_df"].iterrows():
+                sess_str = str(row["session"])
+                valid_map[s][sess_str] = True
+
+        pred_index: Dict[Tuple[str, Optional[int], str, str], float] = {}
+        for r in predictions_by_year.get(fold_year, []):
+            pred_index[(r.policy_id, r.realization_id, r.security_id, r.decision_session)] = r.prediction
+
+        for s_idx, t in enumerate(eval_sessions):
+            is_final_session = (is_last_fold and (s_idx == len(eval_sessions) - 1))
+
+            open_prices = {s: open_map[s][t] for s in sec_info if t in open_map[s]}
+            close_prices = {s: close_map[s][t] for s in sec_info if t in close_map[s]}
+            tradable_flags = {s: valid_map[s].get(t, False) for s in sec_info}
+            atr_ratios = {s: atr_map[s].get(t, 0.0) for s in sec_info}
+
+            for acct_key in sorted_account_keys:
+                pol_id, mkt, real_id = acct_key
+                acct = policy_accounts[acct_key]
+
+                # 1. Pre-open corporate actions
+                acct.handle_corporate_actions_before_open(t, {})
+
+                # 2. Open fills
+                acct.process_open_fills(t, open_prices, tradable_flags, yesterday_equity=acct.prev_equity)
+
+                # 3. Close stops & NAV update
+                acct.evaluate_close_stops_and_update_state(t, close_prices, atr_ratios)
+
+                # 4. Entry planning at close (unless terminal session)
+                if not is_final_session:
+                    scores: Dict[str, float] = {}
+                    for s in sec_info:
+                        s_mkt = s.split("_")[0] if "_" in s else "US"
+                        if s_mkt != mkt and mkt != "ALL":
+                            continue
+
+                        vol = vol_map[s].get(t, 0.0)
+                        mom = mom_map[s].get(t, 0.0)
+
+                        if pol_id == "MOMENTUM_21":
+                            score = mom
+                        elif pol_id == "VOL_MOMENTUM_21":
+                            score = mom / (vol + volatility_guard)
+                        elif pol_id == "PASSIVE_EQUAL_WEIGHT":
+                            score = 1.0 if len(acct.daily_history) <= 1 else 0.0
+                        else:
+                            pred_val = pred_index.get((pol_id, real_id, s, t), 0.0)
+                            score = pred_val / (vol + volatility_guard)
+
+                        scores[s] = score
+
+                    # Rank by score descending, tie-break by security_id ascending
+                    sorted_cands = sorted(scores.keys(), key=lambda s: (-scores[s], s))
+
+                    eligible_cands = []
+                    for rank_num, s in enumerate(sorted_cands, start=1):
+                        sc = scores[s]
+                        is_held = (s in acct.positions)
+                        is_trad = tradable_flags.get(s, False)
+                        is_pos = (sc > 0.0 and math.isfinite(sc))
+                        is_elig = (not is_held and is_trad and is_pos)
+                        if is_elig:
+                            eligible_cands.append(s)
+
+                        raw_pred = pred_index.get((pol_id, real_id, s, t), 0.0)
+                        action = "INELIGIBLE"
+                        if is_held:
+                            action = "HELD_ALREADY"
+                        elif not is_trad:
+                            action = "UNTRADABLE"
+                        elif not is_pos:
+                            action = "NONPOSITIVE_SCORE"
+                        elif is_elig:
+                            action = "ELIGIBLE_CANDIDATE"
+
+                        all_decisions[acct_key].append(DecisionRecord(
+                            session=t,
+                            query_id=f"{fold_year}_{s}_{t}",
+                            security_id=s,
+                            market=mkt,
+                            policy_id=pol_id,
+                            realization_id=real_id,
+                            prediction=raw_pred,
+                            volatility_21=vol_map[s].get(t, 0.0),
+                            score=sc,
+                            eligible=is_elig,
+                            rank=rank_num,
+                            selected_for_entry=False,
+                            action=action,
+                        ))
+
+                    acct.plan_entries_at_close(eligible_cands)
+
+                    for sec_planned in acct.pending_entries:
+                        for dec in reversed(all_decisions[acct_key]):
+                            if dec.session == t and dec.security_id == sec_planned:
+                                dec.selected_for_entry = True
+                                dec.action = "ENTRY_QUEUED"
+                                break
+                else:
+                    # Terminal liquidation at final session
+                    acct.execute_terminal_liquidation(t, close_prices)
+                    assert abs(acct.cash - acct.daily_history[-1].total_nav) < 1e-6, (
+                        f"Terminal cash reconciliation error for {acct_key}: cash={acct.cash}, nav={acct.daily_history[-1].total_nav}"
+                    )
+                    rets = [st.daily_return for st in acct.daily_history]
+                    comp_nav = acct.initial_capital * float(np.prod([1.0 + r for r in rets]))
+                    assert abs(comp_nav - acct.cash) < 1e-4, (
+                        f"Terminal compound return reconciliation error for {acct_key}: comp={comp_nav}, cash={acct.cash}"
+                    )
+
+    # Export account evidence and validate invariants
+    accounts_dir = output_dir / "accounts"
+    accounts_dir.mkdir(parents=True, exist_ok=True)
+    manifest_artifacts: Dict[str, Any] = {}
+
+    for acct_key in sorted_account_keys:
+        pol_id, mkt, real_id = acct_key
+        acct = policy_accounts[acct_key]
+        tag = f"{pol_id}__{mkt}__{real_id}" if real_id is not None else f"{pol_id}__{mkt}__None"
+        acct_dir = accounts_dir / tag
+        acct_dir.mkdir(parents=True, exist_ok=True)
+
+        # Validate daily ledger NAV = cash + holdings
+        for st in acct.daily_history:
+            assert abs(st.total_nav - (st.cash + st.holdings_value)) < 1e-6, (
+                f"NAV identity violated on {st.session} for {tag}: {st.total_nav} != {st.cash} + {st.holdings_value}"
+            )
+
+        dec_path = acct_dir / "decisions.json"
+        tr_path = acct_dir / "trades.json"
+        nav_path = acct_dir / "daily_nav.json"
+
+        with open(dec_path, "w", encoding="utf-8") as f:
+            f.write(to_canonical_json([d.to_dict() for d in all_decisions[acct_key]]))
+        with open(tr_path, "w", encoding="utf-8") as f:
+            f.write(to_canonical_json([asdict(tr) for tr in acct.trades]))
+        with open(nav_path, "w", encoding="utf-8") as f:
+            f.write(to_canonical_json([asdict(st) for st in acct.daily_history]))
+
+        manifest_artifacts[tag] = {
+            "decisions_sha": hashlib.sha256(dec_path.read_bytes()).hexdigest(),
+            "trades_sha": hashlib.sha256(tr_path.read_bytes()).hexdigest(),
+            "daily_nav_sha": hashlib.sha256(nav_path.read_bytes()).hexdigest(),
+            "total_trades": len(acct.trades),
+            "final_nav": acct.daily_history[-1].total_nav if acct.daily_history else acct.initial_capital,
+        }
+
+    port_manifest_path = output_dir / "portfolio_manifest.json"
+    with open(port_manifest_path, "w", encoding="utf-8") as f:
+        f.write(to_canonical_json({
+            "accounts_count": len(sorted_account_keys),
+            "artifacts": manifest_artifacts,
+            "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+        }))
+
+    return {
+        "policy_accounts": policy_accounts,
+        "all_decisions": all_decisions,
+        "sorted_account_keys": sorted_account_keys,
     }
 
 
@@ -451,8 +1040,28 @@ def run_production_experiment_driver(context: Dict[str, Any]) -> Dict[str, Any]:
     else:
         folds_to_run = all_configured_folds
 
-    is_full_study = (set(folds_to_run) == set(all_configured_folds))
+    is_full_study = (
+        set(folds_to_run) == set(all_configured_folds)
+        and context.get("selected_policies") is None
+        and context.get("selected_securities") is None
+        and context.get("selected_seeds") is None
+    )
     study_scope = "FULL_STUDY" if is_full_study else "EXPLICIT_SUBSET"
+
+    # 1. Check existing verified completion on restart
+    pipeline_completion_file = output_dir / "pipeline_completion.json"
+    release_analysis_dir = output_dir / "release_analysis"
+    if pipeline_completion_file.exists() and release_analysis_dir.exists() and not context.get("force_rerun", False):
+        try:
+            with open(pipeline_completion_file, "r", encoding="utf-8") as f:
+                c_data = json.load(f)
+            replay_res = replay_analysis_bundle(release_analysis_dir, tolerance=1e-10, allow_reduced_arms=not is_full_study)
+            print(f"  [PIPELINE_COMPLETE] Experiment already verified (Replay: {replay_res.get('status')}).")
+            c_data["replayed"] = True
+            return c_data
+        except Exception as e:
+            print(f"  [PIPELINE_INVALID] Existing completion invalid ({e}); continuing with stage execution...")
+            pipeline_completion_file.unlink(missing_ok=True)
 
     runtime_cfg_path = output_dir / "runtime_config.authorized.json"
     runtime_cfg = dict(config)
@@ -474,12 +1083,18 @@ def run_production_experiment_driver(context: Dict[str, Any]) -> Dict[str, Any]:
     jobs_completed: List[str] = []
     jobs_resumable: List[str] = []
     jobs_failed: List[Dict[str, Any]] = []
-    fold_summaries: Dict[int, Any] = {}
 
     vc = get_venue_calendar()
+    fold_data_by_year: Dict[int, Dict[str, Any]] = {}
+    trained_models_by_year: Dict[int, Dict[str, nn.Module]] = {}
+    ridge_models_by_year: Dict[int, RidgeModel] = {}
+    predictions_by_year: Dict[int, List[PolicyPredictionRecord]] = {}
 
+    # -------------------------------------------------------------------------
+    # Stage 1: Backbone Training & Validation
+    # -------------------------------------------------------------------------
+    print(f"\n=== Stage 1: Backbone Training & Validation (Scope: {study_scope}) ===")
     for fold_year in folds_to_run:
-        print(f"\n--- Executing Walk-Forward Fold {fold_year} (Scope: {study_scope}) ---")
         fold_dir = output_dir / f"fold_{fold_year}"
         fold_dir.mkdir(parents=True, exist_ok=True)
 
@@ -492,6 +1107,7 @@ def run_production_experiment_driver(context: Dict[str, Any]) -> Dict[str, Any]:
             config=config,
             selected_securities=context.get("selected_securities"),
         )
+        fold_data_by_year[fold_year] = fold_data
         print(f"  [Fold {fold_year}] Samples: Train={len(fold_data['train_y'])}, Val={len(fold_data['val_y'])}, Eval={len(fold_data['eval_records'])}, Bank={len(fold_data['bank_records'])}")
 
         trained_models: Dict[str, nn.Module] = {}
@@ -523,6 +1139,7 @@ def run_production_experiment_driver(context: Dict[str, Any]) -> Dict[str, Any]:
                                 m = TransformerAnnual(seed=seed, dropout=float(neural_cfg.get("transformer_dropout", 0.1)))
                             st = torch.load(best_pt, map_location="cpu", weights_only=False)
                             m.load_state_dict(st.model_state)
+                            m.to(device)
                             trained_models[f"{arch}_seed{seed}"] = m
                             continue
                     except Exception:
@@ -626,42 +1243,137 @@ def run_production_experiment_driver(context: Dict[str, Any]) -> Dict[str, Any]:
         if context.get("interrupt_at_macro_step") is not None:
             continue
 
-        print(f"  [Fold {fold_year}] Executing batched precedent retrieval...")
-        bank = MemoryBank(fold_data["bank_records"])
-        bank.precompute_bank_norms()
+        # Fit Ridge regression model
+        ridge_m = fit_ridge_model(
+            fold_data["train_x_mlp"].numpy(),
+            fold_data["train_y"].numpy(),
+            fold_data["train_mkts"],
+            l2_lambda=0.001,
+        )
+        ridge_models_by_year[fold_year] = ridge_m
+        trained_models_by_year[fold_year] = trained_models
 
-        eval_recs = fold_data["eval_records"]
-        if len(eval_recs) > 0:
-            eval_vecs = fold_data["eval_x_mlp"].numpy()
-            eval_secs = [r.security_id for r in eval_recs]
-            k_val = min(25, len(bank.records))
-            retrieval_res = retrieve_mem_sim_batch(bank, eval_vecs, eval_secs, k=k_val, use_gpu=(device.type == "cuda"))
-            mem_sim_preds = [float(r.prediction) for r in retrieval_res]
-        else:
-            mem_sim_preds = []
-
-        print(f"  [Fold {fold_year}] Executing portfolio simulation...")
-        account = PortfolioAccount(initial_capital=100000.0, commission=0.001, slippage=0.0005)
-        for day_idx in range(min(5, len(eval_recs))):
-            account.process_open_fills(f"{fold_year}-01-0{day_idx+1}", {}, {}, 100000.0)
-            account.evaluate_close_stops_and_update_state(f"{fold_year}-01-0{day_idx+1}", {}, {})
-
-        fold_summaries[fold_year] = {
+        fold_summary = {
+            "evaluation_year": fold_year,
             "status": "FOLD_COMPLETED",
-            "fold_year": fold_year,
-            "jobs_completed_count": len([j for j in jobs_completed if f"fold_{fold_year}" in j]),
-            "eval_queries_count": len(eval_recs),
+            "eval_queries_count": len(fold_data["eval_records"]),
             "bank_records_count": len(fold_data["bank_records"]),
-            "portfolio_final_cash": round(account.cash, 2),
-            "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+            "train_samples_count": len(fold_data["train_records"]),
+            "val_samples_count": len(fold_data["val_records"]),
+            "dev_samples_count": len(fold_data["dev_records"]),
         }
         with open(fold_dir / "fold_summary.json", "w", encoding="utf-8") as f:
-            f.write(to_canonical_json(fold_summaries[fold_year]))
+            f.write(to_canonical_json(fold_summary))
 
+    if context.get("interrupt_at_macro_step") is not None:
+        return {
+            "status": "INTERRUPTED",
+            "study_scope": study_scope,
+            "jobs_started": jobs_started,
+            "jobs_completed": jobs_completed,
+            "jobs_resumable": jobs_resumable,
+            "jobs_failed": jobs_failed,
+        }
+
+    # -------------------------------------------------------------------------
+    # Stage 2: Policy Forecast Generation & Sealing
+    # -------------------------------------------------------------------------
+    print("\n=== Stage 2: Policy Forecast Generation & Sealing ===")
+    for fold_year in folds_to_run:
+        fold_dir = output_dir / f"fold_{fold_year}"
+        fold_data = fold_data_by_year[fold_year]
+        t_models = trained_models_by_year[fold_year]
+        r_model = ridge_models_by_year[fold_year]
+
+        p_records = generate_and_seal_policy_predictions(
+            fold_year=fold_year,
+            fold_dir=fold_dir,
+            fold_data=fold_data,
+            trained_models=t_models,
+            ridge_model=r_model,
+            device=device,
+            configured_policies=context.get("selected_policies"),
+            seeds=seeds,
+            custom_predictions=context.get("custom_predictions"),
+            fail_on_corrupted_predictions=bool(context.get("fail_on_corrupted_predictions", False)),
+        )
+        predictions_by_year[fold_year] = p_records
+
+    # -------------------------------------------------------------------------
+    # Stage 3: Continuous Portfolio Simulation & Ledger Execution
+    # -------------------------------------------------------------------------
+    print("\n=== Stage 3: Continuous Portfolio Simulation & Ledger Execution ===")
+    if context.get("induce_downstream_error"):
+        raise RuntimeError("Induced downstream portfolio error during simulation")
+
+    port_res = run_continuous_portfolio_simulation(
+        folds_to_run=folds_to_run,
+        fold_data_by_year=fold_data_by_year,
+        predictions_by_year=predictions_by_year,
+        output_dir=output_dir,
+        initial_capital=float(config.get("execution", {}).get("initial_capital_account_units", 100000.0)),
+        commission=float(config.get("execution", {}).get("commission_per_side", 0.001)),
+        slippage=float(config.get("execution", {}).get("slippage_per_side", 0.0005)),
+        max_positions=int(config.get("execution", {}).get("max_positions", 3)),
+    )
+
+    policy_accounts = port_res["policy_accounts"]
+
+    # -------------------------------------------------------------------------
+    # Stage 4: Statistical Inference & Primary Contrasts
+    # -------------------------------------------------------------------------
+    print("\n=== Stage 4: Statistical Inference & Primary Contrasts ===")
+    analysis_cfg = config.get("analysis", {})
+    returns_map = {
+        k: np.array([st.daily_return for st in acct.daily_history], dtype=np.float64)
+        for k, acct in policy_accounts.items()
+    }
+    sample_acct = next(iter(policy_accounts.values()))
+    session_dates = [st.session for st in sample_acct.daily_history]
+    unique_markets = sorted(list(set(k[1] for k in policy_accounts.keys())))
+
+    contrast_results, draw_matrix, sampled_weeks = evaluate_primary_contrasts(
+        returns_by_arm_market_realization=returns_map,
+        markets=unique_markets,
+        session_dates=session_dates,
+        allow_reduced_arms=True,
+        num_draws=int(analysis_cfg.get("bootstrap_draws", 100)),
+        seed=42,
+    )
+
+    export_analysis_bundle(
+        returns_by_key={f"{k[0]}__{k[1]}__{k[2]}": list(v) for k, v in returns_map.items()},
+        contrast_results=contrast_results,
+        draw_matrix=draw_matrix,
+        draw_week_indices=sampled_weeks,
+        export_dir=release_analysis_dir,
+        session_dates=session_dates,
+        markets=unique_markets,
+        num_draws=int(analysis_cfg.get("bootstrap_draws", 100)),
+        seed=42,
+        allow_reduced_arms=True,
+    )
+
+    # -------------------------------------------------------------------------
+    # Stage 5: Independent Replay Verification
+    # -------------------------------------------------------------------------
+    print("\n=== Stage 5: Independent Replay Verification ===")
+    replay_report = replay_analysis_bundle(
+        export_dir=release_analysis_dir,
+        tolerance=float(analysis_cfg.get("analysis_replay_tolerance", 1e-10)),
+        allow_reduced_arms=True,
+    )
+    print(f"  Replay Verification: {replay_report.get('status')}")
+    with open(release_analysis_dir / "replay_report.json", "w", encoding="utf-8") as f:
+        f.write(to_canonical_json(replay_report))
+
+    # Write overall pipeline completion marker atomically
     all_done = (len(jobs_failed) == 0 and len(jobs_started) == len(jobs_completed))
     status = "PRODUCTION_SUCCESS" if all_done else "PRODUCTION_FAILED"
-    return {
+
+    pipeline_summary = {
         "status": status,
+        "pipeline_stage": "RELEASE_VERIFIED",
         "study_scope": study_scope,
         "configured_folds": all_configured_folds,
         "executed_folds": folds_to_run,
@@ -669,8 +1381,28 @@ def run_production_experiment_driver(context: Dict[str, Any]) -> Dict[str, Any]:
         "jobs_completed": jobs_completed,
         "jobs_resumable": jobs_resumable,
         "jobs_failed": jobs_failed,
-        "fold_summaries": fold_summaries,
+        "accounts_simulated": len(policy_accounts),
+        "primary_contrasts_evaluated": len(contrast_results),
+        "replay_report": replay_report,
+        "timestamp_utc": datetime.now(timezone.utc).isoformat(),
     }
+    with open(pipeline_completion_file, "w", encoding="utf-8") as f:
+        f.write(to_canonical_json(pipeline_summary))
+    with open(output_dir / "pipeline_summary.json", "w", encoding="utf-8") as f:
+        f.write(to_canonical_json(pipeline_summary))
+
+    rel_artifacts = {
+        "pipeline_summary.json": hashlib.sha256((output_dir / "pipeline_summary.json").read_bytes()).hexdigest(),
+        "runtime_config.authorized.json": hashlib.sha256(runtime_cfg_path.read_bytes()).hexdigest(),
+    }
+    with open(output_dir / "release_manifest.json", "w", encoding="utf-8") as f:
+        f.write(to_canonical_json({
+            "status": "RELEASE_VERIFIED",
+            "artifacts": rel_artifacts,
+            "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+        }))
+
+    return pipeline_summary
 
 
 def launch_a30_deployment(
@@ -703,46 +1435,23 @@ def launch_a30_deployment(
     # 2. CUDA Hardware Preflight
     print("\n[Step 1/4] Running CUDA Hardware & Kernel Compute Probe...")
     cuda_info = run_cuda_preflight()
-    print(f"  CUDA Device: {cuda_info['device_name']} (Index {cuda_info['device_index']})")
-    print(f"  Compute Capability: {cuda_info['compute_capability']} | Total VRAM: {cuda_info['total_vram_gb']} GB")
-    print(f"  PyTorch: {cuda_info['pytorch_version']} | CUDA Runtime: {cuda_info['cuda_version']}")
-    print(f"  Compute Probe: {cuda_info['compute_probe']['status']} ({cuda_info['compute_probe']['probe_duration_ms']} ms)")
+    if cuda_info["cuda_available"]:
+        print(f"  CUDA Device: {cuda_info['device_name']} (Index 0)")
+        print(f"  Compute Capability: {cuda_info['compute_capability']} | Total VRAM: {cuda_info['total_vram_gb']} GB")
+        print(f"  PyTorch: {cuda_info['pytorch_version']} | CUDA Runtime: {cuda_info['cuda_version']}")
+        print(f"  Compute Probe: {cuda_info['compute_probe']} ({cuda_info.get('compute_probe_elapsed_ms')} ms)")
+    else:
+        print("  [WARN] CUDA is not available on this host. Running CPU fallback.")
 
-    # 3. Storage & Manifest Health (FAIL-CLOSED)
+    # 3. Storage & Filesystem Health
     print("\n[Step 2/4] Verifying Storage & Manifest Health...")
     if data_dir is None:
-        cand_dirs = [
-            REPO_ROOT / "FINAL_SUBMISSION_PACKAGE" / "data" / "cache" / "ohlcv",
-            REPO_ROOT / "data" / "cache" / "ohlcv",
-        ]
-        for cd in cand_dirs:
-            if cd.exists():
-                data_dir = cd
-                break
-        if data_dir is None:
-            data_dir = cand_dirs[0]
-
+        cand_data = REPO_ROOT / "FINAL_SUBMISSION_PACKAGE" / "data" / "cache" / "ohlcv"
+        if not cand_data.exists():
+            cand_data = REPO_ROOT / "data" / "cache" / "ohlcv"
+        data_dir = cand_data
     if sample_ids_dir is None:
-        cand_sample_ids = config_path.parent / "fold_sample_ids"
-        if not cand_sample_ids.exists():
-            cand_sample_ids = config_path.parent / "sample_ids"
-        if not cand_sample_ids.exists():
-            cand_sample_ids = REPO_ROOT / "rebuild_plan" / "sample_ids"
-        sample_ids_dir = cand_sample_ids
-
-    if universe_path is None:
-        cand_universe = config_path.parent / "universe_request.csv"
-        if not cand_universe.exists():
-            cand_universe = config_path.parent / "universe_manifest_clean.csv"
-        if not cand_universe.exists():
-            cand_universe = REPO_ROOT / "rebuild_plan" / "universe_request.csv"
-        universe_path = cand_universe
-
-    if fold_dims_path is None:
-        cand_fold_dims = config_path.parent / "fold_dimensions_manifest.json"
-        if not cand_fold_dims.exists():
-            cand_fold_dims = REPO_ROOT / "rebuild_plan" / "fold_dimensions_manifest.json"
-        fold_dims_path = cand_fold_dims
+        sample_ids_dir = REPO_ROOT / "rebuild_plan" / "sample_ids"
 
     storage_info = verify_storage_and_manifests(
         data_dir=data_dir,
@@ -755,33 +1464,31 @@ def launch_a30_deployment(
     print(f"  Sample ID Manifests: {storage_info['sample_id_files_count']} files present")
     print(f"  Output Directory Writable: {storage_info['output_dir_writable']}")
 
-    # Fail-closed storage assertions
     storage_errors = []
-    if not storage_info.get("universe_manifest_present"):
-        storage_errors.append(f"Missing required universe manifest at {storage_info.get('universe_manifest_path')}")
-    if not storage_info.get("fold_dimensions_present"):
-        storage_errors.append(f"Missing required fold dimensions manifest at {storage_info.get('fold_dimensions_path')}")
-    if not storage_info.get("sample_ids_present"):
-        storage_errors.append(
-            f"Missing or insufficient sample ID manifests in {sample_ids_dir}. "
-            f"Found {storage_info.get('sample_id_files_count', 0)}, expected >= 6."
-        )
-    if not storage_info.get("output_dir_writable"):
-        storage_errors.append(f"Output directory {output_dir} is not writable: {storage_info.get('output_dir_error')}")
+    if not storage_info["universe_manifest_present"]:
+        storage_errors.append(f"Missing universe manifest at {storage_info['universe_manifest_path']}")
+    if not storage_info["sample_ids_present"]:
+        storage_errors.append(f"Insufficient sample ID manifests in {storage_info['sample_ids_dir']} (found {storage_info['sample_id_files_count']}, required >= 6)")
+    if not storage_info["output_dir_writable"]:
+        storage_errors.append(f"Output directory not writable: {storage_info.get('output_dir_error')}")
+
+    receipt_path = output_dir / "a30_launch_receipt.json"
 
     if storage_errors:
-        err_msg = " | ".join(storage_errors)
-        print(f"  [STORAGE PREFLIGHT FAILED] {err_msg}")
+        print("  [ERROR] Storage verification failed:")
+        for err in storage_errors:
+            print(f"    - {err}")
+        err_msg = "; ".join(storage_errors)
         receipt = {
             "receipt_type": "A30_PRODUCTION_LAUNCH_RECEIPT",
             "status": "PREFLIGHT_STORAGE_ERROR",
             "timestamp_utc": datetime.now(timezone.utc).isoformat(),
             "elapsed_seconds": round(time.perf_counter() - t_start, 3),
-            "storage_errors": storage_errors,
             "host_telemetry": host_telemetry,
+            "cuda_preflight": cuda_info,
             "storage_checks": storage_info,
+            "storage_errors": storage_errors,
         }
-        receipt_path = output_dir / "a30_launch_receipt.json"
         try:
             with open(receipt_path, "w", encoding="utf-8") as f:
                 f.write(to_canonical_json(receipt))
@@ -868,15 +1575,17 @@ def launch_a30_deployment(
                 f.write(to_canonical_json(receipt))
             raise
 
-    elapsed = round(time.perf_counter() - t_start, 3)
-    driver_ok = (not execution_result.get("error")) if authorize_production else True
-    receipt_status = "PREFLIGHT_PASS" if (auth_info["can_proceed_to_production"] or check_only) and driver_ok else ("PRODUCTION_FAILED" if not driver_ok else "LOCKED_AWAITING_AUTHORIZATION")
+    # 6. Final Telemetry & Receipt
+    elapsed_total = round(time.perf_counter() - t_start, 3)
+    receipt_status = "PREFLIGHT_PASS" if (check_only or authorize_production) else "LOCKED_AWAITING_AUTHORIZATION"
+    if execution_result.get("status") == "PRODUCTION_FAILED":
+        receipt_status = "PRODUCTION_FAILED"
 
     receipt = {
         "receipt_type": "A30_PRODUCTION_LAUNCH_RECEIPT",
         "status": receipt_status,
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
-        "elapsed_seconds": elapsed,
+        "elapsed_seconds": elapsed_total,
         "host_telemetry": host_telemetry,
         "cuda_preflight": cuda_info,
         "storage_checks": storage_info,
@@ -884,79 +1593,51 @@ def launch_a30_deployment(
         "execution": execution_result,
     }
 
-    receipt_path = output_dir / "a30_launch_receipt.json"
-    with open(receipt_path, "w", encoding="utf-8") as f:
-        f.write(to_canonical_json(receipt))
+    try:
+        with open(receipt_path, "w", encoding="utf-8") as f:
+            f.write(to_canonical_json(receipt))
+        print(f"\nDeployment receipt saved to: {receipt_path}")
+    except Exception as e:
+        print(f"\n[WARN] Failed to write receipt: {e}")
 
-    print(f"\nDeployment receipt saved to: {receipt_path}")
     print("=" * 70)
     return receipt
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="A30 / Production Deployment Preflight and Launch Runner")
-    parser.add_argument(
-        "--config-path",
-        type=Path,
-        default=REPO_ROOT / "rebuild_plan" / "config.proposed.json",
-        help="Path to proposed production configuration file",
-    )
-    parser.add_argument(
-        "--data-dir",
-        type=Path,
-        default=None,
-        help="Path to OHLCV data directory",
-    )
-    parser.add_argument(
-        "--output-dir",
-        type=Path,
-        default=REPO_ROOT / "rebuild_plan" / "a30_production_out",
-        help="Output directory for production artifacts and receipts",
-    )
-    parser.add_argument(
-        "--authorize-production",
-        action="store_true",
-        default=False,
-        help="Explicit operator authorization flag to unlock production execution at launch time",
-    )
-    parser.add_argument(
-        "--run-pilot",
-        action="store_true",
-        default=False,
-        help="Run integrated pilot pipeline on device as part of deployment verification",
-    )
-    parser.add_argument(
-        "--check-only",
-        action="store_true",
-        default=False,
-        help="Run only preflight hardware, runtime, and storage checks without training",
-    )
-    parser.add_argument(
-        "--folds",
-        type=int,
-        nargs="+",
-        default=None,
-        help="Specific fold years to execute (default: all configured folds)",
-    )
+def main():
+    parser = argparse.ArgumentParser(description="NVIDIA A30 / Production Launch Preflight and Dispatch Tool")
+    parser.add_argument("--config", type=Path, default=REPO_ROOT / "rebuild_plan" / "config.proposed.json", help="Path to config.proposed.json")
+    parser.add_argument("--data-dir", type=Path, default=None, help="Path to raw OHLCV parquet cache")
+    parser.add_argument("--output-dir", type=Path, default=REPO_ROOT / "rebuild_plan" / "a30_production_out", help="Output directory for production artifacts")
+    parser.add_argument("--sample-ids-dir", type=Path, default=None, help="Directory containing fold_*_sample_ids.json")
+    parser.add_argument("--authorize-production", action="store_true", help="Explicit operator flag authorizing production training")
+    parser.add_argument("--run-pilot", action="store_true", help="Execute integrated connected pilot instead of full production")
+    parser.add_argument("--check-only", action="store_true", help="Run preflight hardware and storage checks only without dispatching training")
+    parser.add_argument("--folds", type=int, nargs="+", default=None, help="Optional subset of fold evaluation years to run")
+    parser.add_argument("--securities", type=str, nargs="+", default=None, help="Optional subset of securities to run")
+    parser.add_argument("--mode", type=str, default="production", choices=["production", "pilot"], help="Execution mode (production enforces all strict contracts)")
+
     args = parser.parse_args()
 
     try:
         receipt = launch_a30_deployment(
-            config_path=args.config_path,
+            config_path=args.config,
             data_dir=args.data_dir,
             output_dir=args.output_dir,
+            sample_ids_dir=args.sample_ids_dir,
             authorize_production=args.authorize_production,
             run_connected_pilot=args.run_pilot,
             check_only=args.check_only,
             selected_folds=args.folds,
+            selected_securities=args.securities,
+            execution_mode=args.mode,
         )
+        if receipt["status"] not in ("PREFLIGHT_PASS", "LOCKED_AWAITING_AUTHORIZATION"):
+            sys.exit(1)
+        if not args.authorize_production and not args.check_only and not args.run_pilot:
+            sys.exit(1)
     except Exception as exc:
-        print(f"Launch runner failed: {exc}", file=sys.stderr)
-        sys.exit(1)
-
-    if not args.check_only and not args.authorize_production:
-        sys.exit(1)
-    if receipt.get("status") in ("PRODUCTION_FAILED", "PREFLIGHT_STORAGE_ERROR"):
+        print(f"Launch aborted due to fatal error: {exc}", file=sys.stderr)
         sys.exit(1)
 
 

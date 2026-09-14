@@ -15,6 +15,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+import shutil
 from typing import Any, Dict
 import pytest
 import torch
@@ -350,6 +351,38 @@ def test_default_driver_real_execution_and_downstream_artifacts(real_driver_env)
     assert f_summary_data["eval_queries_count"] > 0
     assert f_summary_data["bank_records_count"] > 0
 
+    # Verify downstream release pipeline artifacts
+    pipeline_summary_path = real_driver_env["output_dir"] / "pipeline_summary.json"
+    assert pipeline_summary_path.exists()
+    with open(pipeline_summary_path, "r", encoding="utf-8") as f:
+        pipe_data = json.load(f)
+    assert pipe_data["status"] == "PRODUCTION_SUCCESS"
+    assert pipe_data["pipeline_stage"] == "RELEASE_VERIFIED"
+
+    release_manifest_path = real_driver_env["output_dir"] / "release_manifest.json"
+    assert release_manifest_path.exists()
+    with open(release_manifest_path, "r", encoding="utf-8") as f:
+        rel_data = json.load(f)
+    assert "artifacts" in rel_data
+    assert "pipeline_summary.json" in rel_data["artifacts"]
+
+    # Verify accounts and ledger evidence
+    accounts_dir = real_driver_env["output_dir"] / "accounts"
+    assert accounts_dir.exists()
+    sample_acct_dir = next(accounts_dir.iterdir())
+    assert (sample_acct_dir / "decisions.json").exists()
+    assert (sample_acct_dir / "trades.json").exists()
+    assert (sample_acct_dir / "daily_nav.json").exists()
+
+    # Verify analysis bundle and replay verification
+    analysis_dir = real_driver_env["output_dir"] / "release_analysis"
+    assert analysis_dir.exists()
+    replay_report_path = analysis_dir / "replay_report.json"
+    assert replay_report_path.exists()
+    with open(replay_report_path, "r", encoding="utf-8") as f:
+        rep_data = json.load(f)
+    assert rep_data["status"] == "REPLAY_VERIFIED"
+
 
 def test_default_driver_interrupted_job_resumes_rather_than_skips(real_driver_env):
     """An interrupted job without job_completion.json resumes from last_checkpoint.pt."""
@@ -442,4 +475,350 @@ def test_default_driver_training_error_propagates_and_prevents_completion(real_d
     # Job completion marker must never have been created
     comp_file = chk_dir / "job_completion.json"
     assert not comp_file.exists(), "Failed job must NOT produce job_completion.json"
+
+
+def test_prediction_to_trade_causality(real_driver_env):
+    """Deterministic positive eligible prediction causes BUY fill; nonpositive/ineligible prevents fill."""
+    # Step 1: Run with positive predictions -> produces BUY fills
+    receipt_pos = launch_a30_deployment(
+        config_path=real_driver_env["config_path"],
+        data_dir=real_driver_env["data_dir"],
+        output_dir=real_driver_env["output_dir"],
+        sample_ids_dir=real_driver_env["sample_ids_dir"],
+        authorize_production=True,
+        check_only=False,
+        selected_folds=[2020],
+        selected_securities=["US_AAPL", "US_MSFT"],
+        execution_mode="pilot",
+        driver_fn=None,
+        driver_kwargs={
+            "min_epochs": 1,
+            "max_epochs": 1,
+            "micro_batch_size": 16,
+            "effective_batch_size": 32,
+            "custom_predictions": {"default": 0.05},
+        },
+    )
+    assert receipt_pos["status"] == "PREFLIGHT_PASS"
+    accts_dir = real_driver_env["output_dir"] / "accounts"
+    sample_acct_dir = next(accts_dir.iterdir())
+    with open(sample_acct_dir / "trades.json", "r", encoding="utf-8") as f:
+        trades_pos = json.load(f)
+    assert len(trades_pos) > 0, "Positive predictions must produce trade fills"
+    assert any(tr["side"] == "BUY" for tr in trades_pos)
+
+    # Step 2: In a separate output dir, run with negative predictions -> NO fills
+    output_dir_neg = real_driver_env["output_dir"].parent / "output_neg"
+    output_dir_neg.mkdir(parents=True, exist_ok=True)
+    # Copy fold_2020 checkpoints so training doesn't have to rerun
+    shutil.copytree(
+        real_driver_env["output_dir"] / "fold_2020",
+        output_dir_neg / "fold_2020",
+    )
+    # Remove old predictions from copied fold
+    (output_dir_neg / "fold_2020" / "policy_predictions.json").unlink(missing_ok=True)
+    (output_dir_neg / "fold_2020" / "predictions_manifest.json").unlink(missing_ok=True)
+
+    receipt_neg = launch_a30_deployment(
+        config_path=real_driver_env["config_path"],
+        data_dir=real_driver_env["data_dir"],
+        output_dir=output_dir_neg,
+        sample_ids_dir=real_driver_env["sample_ids_dir"],
+        authorize_production=True,
+        check_only=False,
+        selected_folds=[2020],
+        selected_securities=["US_AAPL", "US_MSFT"],
+        execution_mode="pilot",
+        driver_fn=None,
+        driver_kwargs={
+            "custom_predictions": {"default": -0.05},
+        },
+    )
+    assert receipt_neg["status"] == "PREFLIGHT_PASS"
+    accts_dir_neg = output_dir_neg / "accounts"
+    sample_acct_dir_neg = next(accts_dir_neg.iterdir())
+    with open(sample_acct_dir_neg / "trades.json", "r", encoding="utf-8") as f:
+        trades_neg = json.load(f)
+    assert len(trades_neg) == 0, "Negative predictions must produce NO trade fills"
+
+
+def test_legitimate_no_trade_path(real_driver_env):
+    """When no eligible trades occur, account stays 100% cash, daily returns are 0, and NAV identity holds."""
+    # Ensure trained checkpoints exist
+    chk_dir = real_driver_env["output_dir"] / "fold_2020" / "checkpoints_MLP_ANNUAL_966_64_128_1_seed7"
+    if not (chk_dir / "best_checkpoint.pt").exists():
+        launch_a30_deployment(
+            config_path=real_driver_env["config_path"],
+            data_dir=real_driver_env["data_dir"],
+            output_dir=real_driver_env["output_dir"],
+            sample_ids_dir=real_driver_env["sample_ids_dir"],
+            authorize_production=True,
+            check_only=False,
+            selected_folds=[2020],
+            selected_securities=["US_AAPL", "US_MSFT"],
+            execution_mode="pilot",
+            driver_fn=None,
+            driver_kwargs={"min_epochs": 1, "max_epochs": 1, "micro_batch_size": 16, "effective_batch_size": 32},
+        )
+
+    out_no_trade = real_driver_env["output_dir"].parent / "output_no_trade"
+    out_no_trade.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(
+        real_driver_env["output_dir"] / "fold_2020",
+        out_no_trade / "fold_2020",
+    )
+    (out_no_trade / "fold_2020" / "policy_predictions.json").unlink(missing_ok=True)
+    (out_no_trade / "fold_2020" / "predictions_manifest.json").unlink(missing_ok=True)
+
+    receipt = launch_a30_deployment(
+        config_path=real_driver_env["config_path"],
+        data_dir=real_driver_env["data_dir"],
+        output_dir=out_no_trade,
+        sample_ids_dir=real_driver_env["sample_ids_dir"],
+        authorize_production=True,
+        check_only=False,
+        selected_folds=[2020],
+        selected_securities=["US_AAPL", "US_MSFT"],
+        execution_mode="pilot",
+        driver_fn=None,
+        driver_kwargs={
+            "custom_predictions": {"default": -0.05},
+        },
+    )
+    assert receipt["status"] == "PREFLIGHT_PASS"
+    drv_res = receipt["execution"]["driver_result"]
+    assert drv_res["status"] == "PRODUCTION_SUCCESS"
+
+    accts_dir = out_no_trade / "accounts"
+    sample_acct_dir = next(accts_dir.iterdir())
+    with open(sample_acct_dir / "trades.json", "r", encoding="utf-8") as f:
+        trades = json.load(f)
+    assert len(trades) == 0, "Cash-only ledger must have 0 trades"
+
+    with open(sample_acct_dir / "daily_nav.json", "r", encoding="utf-8") as f:
+        nav_history = json.load(f)
+    assert len(nav_history) > 0
+
+    init_capital = 100000.0
+    compound_nav = init_capital
+    for st in nav_history:
+        # NAV identity: NAV == cash + holdings == cash == 100000.0
+        assert abs(st["total_nav"] - (st["cash"] + st["holdings_value"])) < 1e-6
+        assert abs(st["cash"] - init_capital) < 1e-6
+        assert abs(st["holdings_value"] - 0.0) < 1e-6
+        assert abs(st["daily_return"] - 0.0) < 1e-9
+        compound_nav *= (1.0 + st["daily_return"])
+
+    # Compound return reconciliation (within 1e-4)
+    assert abs(compound_nav - init_capital) < 1e-4
+    # Final cash reconciliation (within 1e-6)
+    assert abs(nav_history[-1]["cash"] - init_capital) < 1e-6
+
+
+def test_annual_continuity_multi_fold(real_driver_env):
+    """2-fold continuous execution preserves portfolio state across fold boundary and liquidates only at end."""
+    out_multi = real_driver_env["output_dir"].parent / "output_multi"
+    out_multi.mkdir(parents=True, exist_ok=True)
+
+    receipt = launch_a30_deployment(
+        config_path=real_driver_env["config_path"],
+        data_dir=real_driver_env["data_dir"],
+        output_dir=out_multi,
+        sample_ids_dir=real_driver_env["sample_ids_dir"],
+        authorize_production=True,
+        check_only=False,
+        selected_folds=[2020, 2021],
+        selected_securities=["US_AAPL", "US_MSFT"],
+        execution_mode="pilot",
+        driver_fn=None,
+        driver_kwargs={
+            "min_epochs": 1,
+            "max_epochs": 1,
+            "micro_batch_size": 16,
+            "effective_batch_size": 32,
+        },
+    )
+
+    assert receipt["status"] == "PREFLIGHT_PASS"
+    drv_res = receipt["execution"]["driver_result"]
+    assert drv_res["status"] == "PRODUCTION_SUCCESS"
+    assert drv_res["executed_folds"] == [2020, 2021]
+
+    # Verify both folds have distinct checkpoints and models
+    chk_2020 = out_multi / "fold_2020" / "checkpoints_MLP_ANNUAL_966_64_128_1_seed7" / "best_checkpoint.pt"
+    chk_2021 = out_multi / "fold_2021" / "checkpoints_MLP_ANNUAL_966_64_128_1_seed7" / "best_checkpoint.pt"
+    assert chk_2020.exists()
+    assert chk_2021.exists()
+
+    # Verify accounts continuity across years
+    accts_dir = out_multi / "accounts"
+    sample_acct_dir = next(accts_dir.iterdir())
+    with open(sample_acct_dir / "daily_nav.json", "r", encoding="utf-8") as f:
+        nav_history = json.load(f)
+
+    sessions = [st["session"] for st in nav_history]
+    has_2020 = any(s.startswith("2020") for s in sessions)
+    has_2021 = any(s.startswith("2021") for s in sessions)
+    assert has_2020 and has_2021, "Daily history must span both 2020 and 2021 continuous sessions"
+
+    # Verify continuous transition: session dates are monotonically sorted
+    assert sessions == sorted(sessions)
+
+    # Verify terminal liquidation occurred only at the end of 2021 (last state holdings == 0.0)
+    final_st = nav_history[-1]
+    assert final_st["session"].startswith("2021")
+    assert abs(final_st["holdings_value"]) < 1e-6
+    assert abs(final_st["total_nav"] - final_st["cash"]) < 1e-6
+
+
+def test_downstream_failure_propagates_and_records_failed(real_driver_env):
+    """Induced downstream error propagates failure and writes PRODUCTION_FAILED receipt."""
+    out_fail = real_driver_env["output_dir"].parent / "output_fail"
+    out_fail.mkdir(parents=True, exist_ok=True)
+
+    with pytest.raises(RuntimeError, match="Induced downstream portfolio error"):
+        launch_a30_deployment(
+            config_path=real_driver_env["config_path"],
+            data_dir=real_driver_env["data_dir"],
+            output_dir=out_fail,
+            sample_ids_dir=real_driver_env["sample_ids_dir"],
+            authorize_production=True,
+            check_only=False,
+            selected_folds=[2020],
+            selected_securities=["US_AAPL", "US_MSFT"],
+            execution_mode="pilot",
+            driver_fn=None,
+            driver_kwargs={
+                "min_epochs": 1,
+                "max_epochs": 1,
+                "micro_batch_size": 16,
+                "effective_batch_size": 32,
+                "induce_downstream_error": True,
+            },
+        )
+
+    receipt_path = out_fail / "a30_launch_receipt.json"
+    assert receipt_path.exists()
+    with open(receipt_path, "r", encoding="utf-8") as f:
+        receipt_data = json.load(f)
+    assert receipt_data["status"] == "PRODUCTION_FAILED"
+    assert receipt_data["execution"]["status"] == "PRODUCTION_FAILED"
+    assert "Induced downstream portfolio error" in receipt_data["execution"]["error"]
+
+    # Pipeline summary must NOT be created as RELEASE_VERIFIED
+    assert not (out_fail / "pipeline_summary.json").exists()
+
+
+def test_restart_after_downstream_failure_reuses_training(real_driver_env):
+    """After downstream failure, restart detects existing job completion and reuses training without retraining."""
+    out_restart = real_driver_env["output_dir"].parent / "output_restart"
+    out_restart.mkdir(parents=True, exist_ok=True)
+
+    # Step 1: Run with induced downstream error -> fails during portfolio simulation
+    with pytest.raises(RuntimeError):
+        launch_a30_deployment(
+            config_path=real_driver_env["config_path"],
+            data_dir=real_driver_env["data_dir"],
+            output_dir=out_restart,
+            sample_ids_dir=real_driver_env["sample_ids_dir"],
+            authorize_production=True,
+            check_only=False,
+            selected_folds=[2020],
+            selected_securities=["US_AAPL", "US_MSFT"],
+            execution_mode="pilot",
+            driver_fn=None,
+            driver_kwargs={
+                "min_epochs": 1,
+                "max_epochs": 1,
+                "micro_batch_size": 16,
+                "effective_batch_size": 32,
+                "induce_downstream_error": True,
+            },
+        )
+
+    chk_dir = out_restart / "fold_2020" / "checkpoints_MLP_ANNUAL_966_64_128_1_seed7"
+    comp_file = chk_dir / "job_completion.json"
+    assert comp_file.exists(), "Training stage must have completed before downstream error"
+    comp_mtime_1 = comp_file.stat().st_mtime
+
+    # Step 2: Restart without error -> driver reuses training and completes downstream
+    receipt = launch_a30_deployment(
+        config_path=real_driver_env["config_path"],
+        data_dir=real_driver_env["data_dir"],
+        output_dir=out_restart,
+        sample_ids_dir=real_driver_env["sample_ids_dir"],
+        authorize_production=True,
+        check_only=False,
+        selected_folds=[2020],
+        selected_securities=["US_AAPL", "US_MSFT"],
+        execution_mode="pilot",
+        driver_fn=None,
+        driver_kwargs={
+            "min_epochs": 1,
+            "max_epochs": 1,
+            "micro_batch_size": 16,
+            "effective_batch_size": 32,
+        },
+    )
+
+    assert receipt["status"] == "PREFLIGHT_PASS"
+    drv_res = receipt["execution"]["driver_result"]
+    assert drv_res["status"] == "PRODUCTION_SUCCESS"
+    # Verify training was reused (job_completion.json mtime unchanged)
+    assert comp_file.stat().st_mtime == comp_mtime_1
+
+    # Verify downstream completed cleanly
+    pipe_path = out_restart / "pipeline_summary.json"
+    assert pipe_path.exists()
+    with open(pipe_path, "r", encoding="utf-8") as f:
+        pipe_data = json.load(f)
+    assert pipe_data["status"] == "PRODUCTION_SUCCESS"
+    assert pipe_data["pipeline_stage"] == "RELEASE_VERIFIED"
+
+
+def test_corrupted_prediction_artifact_rejects_completion(real_driver_env):
+    """Corrupted cached prediction record or sha256 mismatch rejects completion when strict check enabled."""
+    out_corrupt = real_driver_env["output_dir"].parent / "output_corrupt"
+    out_corrupt.mkdir(parents=True, exist_ok=True)
+
+    # First, run a successful run to generate authentic prediction artifacts
+    launch_a30_deployment(
+        config_path=real_driver_env["config_path"],
+        data_dir=real_driver_env["data_dir"],
+        output_dir=out_corrupt,
+        sample_ids_dir=real_driver_env["sample_ids_dir"],
+        authorize_production=True,
+        check_only=False,
+        selected_folds=[2020],
+        selected_securities=["US_AAPL", "US_MSFT"],
+        execution_mode="pilot",
+        driver_fn=None,
+        driver_kwargs={"min_epochs": 1, "max_epochs": 1, "micro_batch_size": 16, "effective_batch_size": 32},
+    )
+
+    # Tamper with policy_predictions.json to create a sha256 mismatch
+    pred_path = out_corrupt / "fold_2020" / "policy_predictions.json"
+    assert pred_path.exists()
+    pred_path.write_text("[{\"corrupted\": true}]", encoding="utf-8")
+    (out_corrupt / "pipeline_completion.json").unlink(missing_ok=True)
+    (out_corrupt / "pipeline_summary.json").unlink(missing_ok=True)
+
+    # Run with fail_on_corrupted_predictions=True -> must fail closed with RuntimeError
+    with pytest.raises(RuntimeError, match="Corrupted predictions artifact rejected"):
+        launch_a30_deployment(
+            config_path=real_driver_env["config_path"],
+            data_dir=real_driver_env["data_dir"],
+            output_dir=out_corrupt,
+            sample_ids_dir=real_driver_env["sample_ids_dir"],
+            authorize_production=True,
+            check_only=False,
+            selected_folds=[2020],
+            selected_securities=["US_AAPL", "US_MSFT"],
+            execution_mode="pilot",
+            driver_fn=None,
+            driver_kwargs={
+                "fail_on_corrupted_predictions": True,
+            },
+        )
+
 
