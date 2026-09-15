@@ -35,7 +35,12 @@ class CorporateAction:
     metadata_verified: bool = True
 
 
-def validate_raw_bars(df: pd.DataFrame, security_id: str, quote_unit: Optional[float] = None) -> pd.DataFrame:
+def validate_raw_bars(
+    df: pd.DataFrame,
+    security_id: str,
+    quote_unit: Optional[float] = None,
+    reject_material: bool = False,
+) -> pd.DataFrame:
     """Validate raw provider bars against data contract (Test A05).
 
     Rejects:
@@ -44,6 +49,10 @@ def validate_raw_bars(df: pd.DataFrame, security_id: str, quote_unit: Optional[f
     - Inconsistent high/low bounds (high < max(open, close, low) or low > min(open, close, high)).
     - Missing or unknown quote units (must not default to 1.0).
     - Conflicting duplicate session records.
+
+    If reject_material is True, material OHLC discrepancies (> 4 ULPs) are rejected
+    from the returned valid bar DataFrame (dropped rather than raising DataIntegrityError),
+    so downstream calendar scheduling marks the session as MISSING.
     """
     if quote_unit is None or math.isnan(quote_unit) or quote_unit <= 0:
         raise DataIntegrityError(
@@ -84,18 +93,65 @@ def validate_raw_bars(df: pd.DataFrame, security_id: str, quote_unit: Optional[f
         if not np.all(vals > 0):
             raise DataIntegrityError(f"Non-positive price found in '{p_col}' for '{security_id}'")
 
-    # Check bounds
-    h = df["high"].to_numpy()
-    l = df["low"].to_numpy()
-    o = df["open"].to_numpy()
-    c = df["close"].to_numpy()
+    # Check bounds using shared bounded roundoff policy (max 4 ULPs via np.nextafter)
+    from memory_study_v2.ohlc_validation import (
+        classify_and_normalize_ohlc_row,
+        normalize_ohlc_dataframe,
+        OHLCClassification,
+        MAX_ROUNDOFF_ULPS,
+    )
 
-    if np.any(h < l):
-        raise DataIntegrityError(f"High price < Low price for '{security_id}'")
-    if np.any(h < o) or np.any(h < c):
-        raise DataIntegrityError(f"High price < max(Open, Close) for '{security_id}'")
-    if np.any(l > o) or np.any(l > c):
-        raise DataIntegrityError(f"Low price > min(Open, Close) for '{security_id}'")
+    df_norm, audit_recs, stats = normalize_ohlc_dataframe(
+        df,
+        security_id=security_id,
+        max_ulps=MAX_ROUNDOFF_ULPS,
+    )
+
+    # If any material discrepancies exist, either reject them from valid bars or raise explicit DataIntegrityError
+    if stats["material"] > 0:
+        if reject_material:
+            material_sessions = {
+                rec["session"] for rec in audit_recs if rec["classification"] == "MATERIAL_DISCREPANCY"
+            }
+            date_col = "session" if "session" in df_norm.columns else ("Date" if "Date" in df_norm.columns else None)
+            if date_col:
+                df_norm = df_norm[~df_norm[date_col].astype(str).isin(material_sessions)].reset_index(drop=True)
+        else:
+            # Find first material violation to report exact error message
+            for rec in audit_recs:
+                if rec["classification"] == "MATERIAL_DISCREPANCY":
+                    v_type = rec["violations"]
+                    if "high < low" in v_type:
+                        raise DataIntegrityError(f"High price < Low price for '{security_id}'")
+                    elif "high < open" in v_type or "high < close" in v_type:
+                        raise DataIntegrityError(f"High price < max(Open, Close) for '{security_id}'")
+                    elif "low > open" in v_type or "low > close" in v_type:
+                        raise DataIntegrityError(f"Low price > min(Open, Close) for '{security_id}'")
+                    else:
+                        raise DataIntegrityError(f"Material OHLC discrepancy for '{security_id}': {v_type}")
+
+    # Append any roundoff audit records to persistent operational log
+    if audit_recs:
+        try:
+            import json
+            from pathlib import Path
+            ops_dir = Path("outputs/ops")
+            if ops_dir.exists():
+                audit_path = ops_dir / "ohlc_normalization_audit.json"
+                existing = []
+                if audit_path.exists():
+                    try:
+                        with open(audit_path, "r", encoding="utf-8") as f:
+                            existing = json.load(f)
+                    except Exception:
+                        existing = []
+                existing.extend(audit_recs)
+                with open(audit_path, "w", encoding="utf-8") as f:
+                    json.dump(existing, f, indent=2)
+        except Exception:
+            pass
+
+    df = df_norm
 
     # Check volume
     vol = df["volume"].to_numpy()

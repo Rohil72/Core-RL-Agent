@@ -118,10 +118,8 @@ def _compute_single_segment_features(
         if t >= 1:
             v_prev = V[t - 1]
             v_curr = V[t]
-            if v_prev == 0.0 and v_curr == 0.0:
+            if v_prev == 0.0:
                 feats["volume_change_1"][t] = 0.0
-            elif v_prev == 0.0 and v_curr > 0.0:
-                feats["volume_change_1"][t] = np.nan  # invalid
             else:
                 feats["volume_change_1"][t] = v_curr / v_prev - 1.0
 

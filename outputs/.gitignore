@@ -1,0 +1,8 @@
+# Ignore large raw simulation ledgers, >100MB raw predictions, and numpy arrays
+**/policy_predictions.json
+policy_predictions.json
+accounts/
+**/accounts/
+*.npy
+*.pt
+*.log

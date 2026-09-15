@@ -30,8 +30,10 @@ import pandas as pd
 
 # ---------------------------------------------------------------------------
 # Pinned SHA-256 of the bundled fixture so any accidental edit is detected.
+# Supports both CRLF (Windows) and LF (Linux/POSIX) line endings.
 # ---------------------------------------------------------------------------
 _FIXTURE_SHA256 = "8939423a476cb2a588e6bf559f02329d324d32a2b5d58a00f68f84679160a878"
+_FIXTURE_SHA256_LF = "49da758093dc2a603c04495343aebf1a706392b1a165dcb1bf328da333385294"
 
 _FIXTURE_PATH = Path(__file__).resolve().parents[1] / "data" / "fixtures" / "us_trading_sessions.csv"
 
@@ -49,10 +51,10 @@ def _load_sessions_from_fixture(path: Path = _FIXTURE_PATH) -> List[str]:
         )
     raw = path.read_bytes()
     actual_sha = hashlib.sha256(raw).hexdigest()
-    if actual_sha != _FIXTURE_SHA256:
+    if actual_sha not in (_FIXTURE_SHA256, _FIXTURE_SHA256_LF):
         raise ValueError(
             f"Venue calendar fixture SHA-256 mismatch!\n"
-            f"  Expected : {_FIXTURE_SHA256}\n"
+            f"  Expected : {_FIXTURE_SHA256} (or {_FIXTURE_SHA256_LF})\n"
             f"  Got      : {actual_sha}\n"
             f"  Path     : {path}\n"
             "The fixture has been modified. Regenerate it from the deterministic "
@@ -101,7 +103,9 @@ def _is_valid_bar_row(row: Any) -> bool:
             return False
         if o <= 0.0 or h <= 0.0 or l <= 0.0:
             return False
-        if h < l or h < o or h < close_val or l > o or l > close_val:
+        from memory_study_v2.ohlc_validation import classify_and_normalize_ohlc_row
+        res = classify_and_normalize_ohlc_row(o, h, l, close_val)
+        if not res.is_valid_or_roundoff:
             return False
 
     if "volume" in row and pd.notna(row["volume"]):
@@ -242,8 +246,43 @@ class VenueCalendar:
             l_vals = pd.to_numeric(result["low"], errors="coerce").to_numpy(dtype=float)
             finite_ohl = np.isfinite(o_vals) & np.isfinite(h_vals) & np.isfinite(l_vals)
             pos_ohl = (o_vals > 0.0) & (h_vals > 0.0) & (l_vals > 0.0)
-            bounds_ok = (h_vals >= l_vals) & (h_vals >= o_vals) & (h_vals >= c_vals) & (l_vals <= o_vals) & (l_vals <= c_vals)
+
+            from memory_study_v2.ohlc_validation import (
+                step_down_float64_vec,
+                step_up_float64_vec,
+                MAX_ROUNDOFF_ULPS,
+            )
+            v_h_l = (h_vals < l_vals)
+            v_h_o = (h_vals < o_vals)
+            v_h_c = (h_vals < c_vals)
+            v_l_o = (l_vals > o_vals)
+            v_l_c = (l_vals > c_vals)
+            has_violation = v_h_l | v_h_o | v_h_c | v_l_o | v_l_c
+
+            bound_h_l = step_down_float64_vec(l_vals, MAX_ROUNDOFF_ULPS)
+            bound_h_o = step_down_float64_vec(o_vals, MAX_ROUNDOFF_ULPS)
+            bound_h_c = step_down_float64_vec(c_vals, MAX_ROUNDOFF_ULPS)
+            bound_l_o = step_up_float64_vec(o_vals, MAX_ROUNDOFF_ULPS)
+            bound_l_c = step_up_float64_vec(c_vals, MAX_ROUNDOFF_ULPS)
+
+            mat_h_l = v_h_l & (h_vals < bound_h_l)
+            mat_h_o = v_h_o & (h_vals < bound_h_o)
+            mat_h_c = v_h_c & (h_vals < bound_h_c)
+            mat_l_o = v_l_o & (l_vals > bound_l_o)
+            mat_l_c = v_l_c & (l_vals > bound_l_c)
+            is_material = mat_h_l | mat_h_o | mat_h_c | mat_l_o | mat_l_c
+
+            bounds_ok = (~is_material)
             is_valid &= finite_ohl & pos_ohl & bounds_ok
+
+            # Normalize working copy values for roundoff-only rows so canonical clean values reach downstream
+            is_roundoff = finite_ohl & pos_ohl & has_violation & (~is_material)
+            if np.any(is_roundoff):
+                norm_h = np.maximum(h_vals, np.maximum(o_vals, c_vals))
+                norm_l = np.minimum(l_vals, np.minimum(o_vals, c_vals))
+                norm_h = np.maximum(norm_h, norm_l)
+                result.loc[is_roundoff, "high"] = norm_h[is_roundoff]
+                result.loc[is_roundoff, "low"] = norm_l[is_roundoff]
 
         if "volume" in result.columns:
             v_vals = pd.to_numeric(result["volume"], errors="coerce").to_numpy(dtype=float)

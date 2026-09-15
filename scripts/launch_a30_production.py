@@ -481,7 +481,7 @@ def prepare_fold_data(
             df_raw["session"] = df_raw["session"].astype(str).str.slice(0, 10)
 
         df_aligned = align_to_venue_calendar(df_raw, venue_sessions)
-        val_df = validate_raw_bars(df_aligned, sec_id, quote_unit=1.0)
+        val_df = validate_raw_bars(df_aligned, sec_id, quote_unit=1.0, reject_material=True)
         tr_df = build_total_return_bars(val_df, actions=[], quote_unit=1.0)
         s_min = val_df["session"].min()
         s_max = val_df["session"].max()
@@ -922,7 +922,12 @@ def generate_and_seal_policy_predictions(
                     sorted_cands = sorted(cand_scores.keys(), key=lambda sec: (-cand_scores[sec], sec))
                     dev_acct.plan_entries_at_close(sorted_cands)
                 else:
-                    dev_acct.execute_terminal_liquidation(t, close_prices)
+                    dev_term_close_prices = dict(close_prices)
+                    for sec_id, pos in dev_acct.positions.items():
+                        if sec_id not in dev_term_close_prices or not np.isfinite(dev_term_close_prices[sec_id]) or dev_term_close_prices[sec_id] <= 0.0:
+                            fallback_p = pos.last_valid_price if (pos.last_valid_price > 0.0 and np.isfinite(pos.last_valid_price)) else pos.cost_basis
+                            dev_term_close_prices[sec_id] = float(fallback_p)
+                    dev_acct.execute_terminal_liquidation(t, dev_term_close_prices)
 
             rets = [st.daily_return for st in dev_acct.daily_history]
             if not rets:
@@ -1293,7 +1298,13 @@ def run_continuous_portfolio_simulation(
                                         break
                     else:
                         # Terminal liquidation at final session
-                        acct.execute_terminal_liquidation(t, close_prices)
+                        term_close_prices = dict(close_prices)
+                        for sec_id, pos in acct.positions.items():
+                            if sec_id not in term_close_prices or not np.isfinite(term_close_prices[sec_id]) or term_close_prices[sec_id] <= 0.0:
+                                fallback_p = pos.last_valid_price if (pos.last_valid_price > 0.0 and np.isfinite(pos.last_valid_price)) else pos.cost_basis
+                                print(f"  [AUDIT NOTICE] Held position '{sec_id}' missing terminal quote at {t}; using last valid price {fallback_p:.4f} for terminal liquidation.")
+                                term_close_prices[sec_id] = float(fallback_p)
+                        acct.execute_terminal_liquidation(t, term_close_prices)
                         assert abs(acct.cash - acct.daily_history[-1].total_nav) < 1e-6, (
                             f"Terminal cash reconciliation error for {acct_key}: cash={acct.cash}, nav={acct.daily_history[-1].total_nav}"
                         )
