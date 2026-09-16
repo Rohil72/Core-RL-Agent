@@ -985,6 +985,8 @@ def generate_and_seal_policy_predictions(
         if custom_predictions is not None:
             if qid in custom_predictions:
                 pred = float(custom_predictions[qid])
+            elif sec in custom_predictions:
+                pred = float(custom_predictions[sec])
             elif "default" in custom_predictions:
                 pred = float(custom_predictions["default"])
         rec = PolicyPredictionRecord(
@@ -1587,18 +1589,38 @@ def validate_release_coverage_and_accounting(
     coverage_manifest: List[Dict[str, Any]],
     fold_data_by_year: Dict[int, Dict[str, Any]],
     folds_to_run: List[int],
+    expected_accounts: Optional[Set[Tuple[int, str, str, Optional[int]]]] = None,
 ) -> Dict[str, Any]:
     """Strictly validates coverage accounting and query set equality against independent evaluation populations.
 
     Enforces:
     1. Zero missing sealed forecasts across all simulated accounts.
     2. Exact coverage accounting: candidate_queries == decisions == admitted_queries + sum(exclusion_reasons).
-    3. Zero QUERY_IDENTITY_MISMATCH exclusion errors.
+    3. Zero QUERY_IDENTITY_MISMATCH exclusion errors and permitted exclusion reasons only.
     4. Exact query-key set equality (or count equality if qids not tracked) against independent evaluation records.
     5. Detection and rejection of partial admission drops (e.g. 1 admitted + 999 excluded vs 1000 expected).
     6. Distinction between intentionally empty populations (expected count 0 -> admitted count 0) and missing metadata.
     7. Model policies expected_forecasts == admitted_queries.
+    8. Duplicate coverage account rejection and exact expected-versus-observed account key equality.
+    9. Verification that admitted query IDs agree with fold year and market.
     """
+    PERMITTED_EXCLUSIONS: Set[str] = {
+        "NOT_IN_INDEX",
+        "MISSING_SESSION_BAR",
+        "INVALID_INPUT_WINDOW",
+        "INVALID_BAR_IN_INPUT_WINDOW",
+        "INSUFFICIENT_INPUT_HISTORY",
+        "GAP_IN_INPUT_WINDOW",
+        "MARKET_CLOSED",
+        "MAX_POSITIONS_REACHED",
+        "INSUFFICIENT_CASH",
+        "NEGATIVE_SCORE",
+        "NONPOSITIVE_SCORE",
+        "NO_ELIGIBLE_SELECTION",
+        "HALTED",
+        "SESSION_NOT_SCHEDULED",
+    }
+
     total_candidate_queries = sum(c.get("candidate_queries", 0) for c in coverage_manifest)
     total_admitted_queries = sum(c.get("admitted_queries", 0) for c in coverage_manifest)
     total_expected_forecasts = sum(c.get("expected_forecasts", 0) for c in coverage_manifest)
@@ -1611,12 +1633,20 @@ def validate_release_coverage_and_accounting(
             f"RELEASE_VERIFICATION_FAILURE: {missing_forecasts} expected forecasts are missing across simulated accounts!"
         )
 
-    # 1. Reconcile internal coverage accounting for each account entry
+    # 1. Reconcile internal coverage accounting for each account entry and check account duplicates
+    seen_account_keys: Set[Tuple[int, str, str, Optional[int]]] = set()
     for c in coverage_manifest:
         f_yr = c.get("fold_year")
         mkt = c.get("market")
         pol = c.get("policy_id", "")
         real_id = c.get("realization_id")
+        acct_key = (f_yr, mkt, pol, real_id)
+        if acct_key in seen_account_keys:
+            raise RuntimeError(
+                f"RELEASE_VERIFICATION_FAILURE: Duplicate coverage manifest entry for account key: {acct_key}!"
+            )
+        seen_account_keys.add(acct_key)
+
         cand = c.get("candidate_queries", 0)
         dec = c.get("decisions", 0)
         adm = c.get("admitted_queries", 0)
@@ -1638,6 +1668,12 @@ def validate_release_coverage_and_accounting(
                 f"RELEASE_VERIFICATION_FAILURE: QUERY_IDENTITY_MISMATCH recorded in exclusions for "
                 f"({f_yr}, {mkt}, {pol}, {real_id})!"
             )
+        for reason in excls:
+            if reason not in PERMITTED_EXCLUSIONS:
+                raise RuntimeError(
+                    f"RELEASE_VERIFICATION_FAILURE: Non-permitted exclusion reason '{reason}' recorded for "
+                    f"({f_yr}, {mkt}, {pol}, {real_id})!"
+                )
         if pol not in ("PASSIVE_EQUAL_WEIGHT", "MOMENTUM_21", "VOL_MOMENTUM_21"):
             exp_fc = c.get("expected_forecasts", 0)
             if exp_fc != adm:
@@ -1645,6 +1681,40 @@ def validate_release_coverage_and_accounting(
                     f"RELEASE_VERIFICATION_FAILURE: Model policy {pol} expected forecasts ({exp_fc}) "
                     f"does not match admitted queries ({adm}) for ({f_yr}, {mkt}, {real_id})!"
                 )
+
+        adm_qids = c.get("admitted_qids")
+        if adm > 0 and (adm_qids is None or len(adm_qids) == 0):
+            raise RuntimeError(
+                f"RELEASE_VERIFICATION_FAILURE: Account ({f_yr}, {mkt}, {pol}, {real_id}) "
+                f"has {adm} admitted queries but admitted_qids is missing or empty!"
+            )
+        if adm_qids:
+            for qid in adm_qids:
+                parts = qid.split("_")
+                if len(parts) >= 3:
+                    q_fold = parts[0]
+                    q_mkt = parts[1]
+                    if q_fold != str(f_yr):
+                        raise RuntimeError(
+                            f"RELEASE_VERIFICATION_FAILURE: Query ID '{qid}' fold prefix '{q_fold}' "
+                            f"does not match account fold year '{f_yr}'!"
+                        )
+                    if q_mkt != mkt and not str(mkt).startswith(q_mkt):
+                        raise RuntimeError(
+                            f"RELEASE_VERIFICATION_FAILURE: Query ID '{qid}' market prefix '{q_mkt}' "
+                            f"does not match account market '{mkt}'!"
+                        )
+
+    # 1b. Check exact expected-versus-observed account key equality if expected_accounts provided
+    if expected_accounts is not None:
+        missing_accounts = expected_accounts - seen_account_keys
+        unexpected_accounts = seen_account_keys - expected_accounts
+        if missing_accounts or unexpected_accounts:
+            raise RuntimeError(
+                f"RELEASE_VERIFICATION_FAILURE: Exact account set mismatch! "
+                f"Missing accounts: {len(missing_accounts)}, Unexpected accounts: {len(unexpected_accounts)}: "
+                f"missing={sorted(list(missing_accounts))[:5]}, unexpected={sorted(list(unexpected_accounts))[:5]}!"
+            )
 
     # 2. Reconcile against independent evaluation dataset population
     for f_yr in folds_to_run:

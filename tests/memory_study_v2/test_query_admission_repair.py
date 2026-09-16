@@ -950,17 +950,31 @@ def test_recovery_script_source_immutability_and_separation(tmp_path: Path):
             data_dir=tmp_path,
         )
 
-    # 2. Recovery failure when checkpoints are missing or invalid must NOT delete or mutate source files
-    output_dir = tmp_path / "mock_recovery_out"
-    output_dir.mkdir()
+    # 2. Recovery must reject pre-existing output directory
+    preexisting_dir = tmp_path / "preexisting_out"
+    preexisting_dir.mkdir()
+    with pytest.raises(ValueError, match="CRITICAL SAFETY VIOLATION.*Output directory.*already exists"):
+        execute_zero_retraining_recovery(
+            source_dir=source_dir,
+            output_dir=preexisting_dir,
+            config={},
+            sample_ids_dir=tmp_path,
+            data_dir=tmp_path,
+        )
 
+    # 3. Recovery failure when checkpoints are missing or invalid must NOT delete or mutate source files
+    fresh_output_dir = tmp_path / "fresh_recovery_out"
+    mock_data_dir = tmp_path / "mock_data"
+    mock_data_dir.mkdir()
+    mock_sample_ids_dir = tmp_path / "mock_sample_ids"
+    mock_sample_ids_dir.mkdir()
     with pytest.raises(RuntimeError, match="RECOVERY_ABORTED"):
         execute_zero_retraining_recovery(
             source_dir=source_dir,
-            output_dir=output_dir,
+            output_dir=fresh_output_dir,
             config={"neural": {"seeds": [7], "architectures": ["MLP_ANNUAL_966_64_128_1"]}, "folds": [{"evaluation_year": 2020}, {"evaluation_year": 2021}]},
-            sample_ids_dir=tmp_path,
-            data_dir=tmp_path,
+            sample_ids_dir=mock_sample_ids_dir,
+            data_dir=mock_data_dir,
         )
 
     # Assert source file was bit-for-bit preserved (not unlinked or overwritten)
