@@ -131,13 +131,15 @@ class DecisionRecord:
     market: str
     policy_id: str
     realization_id: Optional[int]
-    prediction: float
+    prediction: Optional[float]
     volatility_21: float
-    score: float
+    score: Optional[float]
     eligible: bool
     rank: int
     selected_for_entry: bool
     action: str
+    decision_state: str = "ELIGIBLE_SCORE"
+    exclusion_reason: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -147,13 +149,15 @@ class DecisionRecord:
             "market": str(self.market),
             "policy_id": str(self.policy_id),
             "realization_id": int(self.realization_id) if self.realization_id is not None else None,
-            "prediction": float(self.prediction),
+            "prediction": float(self.prediction) if (self.prediction is not None and math.isfinite(self.prediction)) else None,
             "volatility_21": float(self.volatility_21),
-            "score": float(self.score),
+            "score": float(self.score) if (self.score is not None and math.isfinite(self.score)) else None,
             "eligible": bool(self.eligible),
             "rank": int(self.rank),
             "selected_for_entry": bool(self.selected_for_entry),
             "action": str(self.action),
+            "decision_state": str(self.decision_state),
+            "exclusion_reason": str(self.exclusion_reason) if self.exclusion_reason is not None else None,
         }
 
 
@@ -1116,6 +1120,8 @@ def run_continuous_portfolio_simulation(
     max_positions: int = 3,
 ) -> Dict[str, Any]:
     """Execute continuous multi-year portfolio simulation preserving account state across native market sessions."""
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
     policy_accounts: Dict[Tuple[str, str, Optional[int]], PortfolioAccount] = {}
     all_decisions: Dict[Tuple[str, str, Optional[int]], List[DecisionRecord]] = collections.defaultdict(list)
 
@@ -1123,7 +1129,10 @@ def run_continuous_portfolio_simulation(
     all_account_keys: Set[Tuple[str, str, Optional[int]]] = set()
     for y in folds_to_run:
         for r in predictions_by_year.get(y, []):
-            all_account_keys.add((r.policy_id, r.market, r.realization_id))
+            p_id = getattr(r, "policy_id", None) or (r.get("policy_id") if isinstance(r, dict) else None)
+            mkt = getattr(r, "market", None) or (r.get("market") if isinstance(r, dict) else None)
+            real_id = getattr(r, "realization_id", None) if hasattr(r, "realization_id") else (r.get("realization_id") if isinstance(r, dict) else None)
+            all_account_keys.add((p_id, mkt, real_id))
 
     sorted_account_keys = sorted(all_account_keys, key=lambda k: (k[0], k[1], k[2] if k[2] is not None else -1))
     first_fold_data = fold_data_by_year[folds_to_run[0]]
@@ -1150,11 +1159,34 @@ def run_continuous_portfolio_simulation(
 
     unique_markets = sorted(list(set(k[1] for k in sorted_account_keys)))
 
+    cov_counts: Dict[Tuple[int, str, str, Optional[int]], Dict[str, Any]] = collections.defaultdict(lambda: {
+        "candidate_queries": 0,
+        "admitted_queries": 0,
+        "exclusion_reasons": collections.defaultdict(int),
+        "expected_forecasts": 0,
+        "sealed_forecasts": 0,
+        "valid_scores": 0,
+        "eligible_scores": 0,
+        "decisions": 0,
+        "orders": 0,
+        "fills": 0,
+        "exposure_sessions": 0,
+    })
+
     for fold_idx, fold_year in enumerate(folds_to_run):
         is_last_fold = (fold_idx == len(folds_to_run) - 1)
         fold_data = fold_data_by_year[fold_year]
         sec_info = fold_data["sec_info"]
         market_calendars = fold_data.get("market_calendars", {})
+
+        fold_eval_records = fold_data.get("eval_records")
+        fold_eval_qids: Optional[Set[str]] = {r.query_id for r in fold_eval_records} if fold_eval_records else None
+
+        # Build session record map for fast lookup of input_window_valid and exclusion_reason
+        sec_recs_map: Dict[str, Dict[str, Any]] = {
+            s: {r.session: r for r in s_data.get("recs", [])}
+            for s, s_data in sec_info.items()
+        }
 
         # Pre-index price, feature, and prediction lookups for O(1) step access
         open_map: Dict[str, Dict[str, float]] = collections.defaultdict(dict)
@@ -1181,7 +1213,12 @@ def run_continuous_portfolio_simulation(
 
         pred_index: Dict[Tuple[str, Optional[int], str, str], float] = {}
         for r in predictions_by_year.get(fold_year, []):
-            pred_index[(r.policy_id, r.realization_id, r.security_id, r.decision_session)] = r.prediction
+            p_id = getattr(r, "policy_id", None) or (r.get("policy_id") if isinstance(r, dict) else None)
+            real_id = getattr(r, "realization_id", None) if hasattr(r, "realization_id") else (r.get("realization_id") if isinstance(r, dict) else None)
+            s_id = getattr(r, "security_id", None) or (r.get("security_id") if isinstance(r, dict) else None)
+            d_sess = getattr(r, "decision_session", None) or (r.get("decision_session") if isinstance(r, dict) else None)
+            pred_val = getattr(r, "prediction", None) if hasattr(r, "prediction") else (r.get("prediction") if isinstance(r, dict) else None)
+            pred_index[(p_id, real_id, s_id, d_sess)] = pred_val
 
         # Drive accounts strictly by their native market scheduled sessions
         for mkt in unique_markets:
@@ -1214,6 +1251,8 @@ def run_continuous_portfolio_simulation(
                 for acct_key in mkt_accounts:
                     pol_id, _, real_id = acct_key
                     acct = policy_accounts[acct_key]
+                    cov_key = (fold_year, mkt, pol_id, real_id)
+                    cov = cov_counts[cov_key]
 
                     # 1. Passive benchmark initial purchase at fold 0 session 0
                     if isinstance(acct, PassiveEqualWeightAccount) and not acct.initial_entry_completed:
@@ -1228,42 +1267,100 @@ def run_continuous_portfolio_simulation(
                     # 4. Close stops & NAV update
                     acct.evaluate_close_stops_and_update_state(t, close_prices, atr_ratios)
 
+                    # Track holding exposure
+                    if len(acct.positions) > 0:
+                        cov["exposure_sessions"] += 1
+
                     # 5. Entry planning at close (unless final study session)
                     if not is_final_session:
                         if isinstance(acct, PassiveEqualWeightAccount):
                             acct.plan_entries_at_close([])
+                            for s in mkt_securities:
+                                cov["candidate_queries"] += 1
+                                cov["decisions"] += 1
+                                qid = f"{fold_year}_{s}_{t}"
+                                rec = sec_recs_map.get(s, {}).get(t)
+                                is_adm = (rec is not None and rec.input_window_valid and (fold_eval_qids is None or qid in fold_eval_qids))
+                                if is_adm:
+                                    cov["admitted_queries"] += 1
+                                else:
+                                    excl = rec.exclusion_reason if (rec and rec.exclusion_reason) else ("MISSING_SESSION_BAR" if (rec and rec.input_window_valid) else "NOT_IN_INDEX")
+                                    cov["exclusion_reasons"][excl] += 1
                         else:
                             scores: Dict[str, float] = {}
+                            cand_states: Dict[str, Tuple[str, Optional[str], Optional[float], Optional[float], bool]] = {}
+                            # s -> (decision_state, exclusion_reason, raw_pred, score, is_pos)
+
                             for s in mkt_securities:
-                                vol = vol_map[s].get(t, 0.0)
-                                mom = mom_map[s].get(t, 0.0)
+                                cov["candidate_queries"] += 1
+                                cov["decisions"] += 1
+                                qid = f"{fold_year}_{s}_{t}"
+                                rec = sec_recs_map.get(s, {}).get(t)
+                                is_admitted = (rec is not None and rec.input_window_valid and (fold_eval_qids is None or qid in fold_eval_qids))
 
-                                if pol_id == "MOMENTUM_21":
-                                    score = mom
-                                elif pol_id == "VOL_MOMENTUM_21":
-                                    score = mom / (vol + volatility_guard)
+                                if not is_admitted:
+                                    excl_reason = rec.exclusion_reason if (rec and rec.exclusion_reason) else ("MISSING_SESSION_BAR" if (rec and rec.input_window_valid) else "NOT_IN_INDEX")
+                                    cov["exclusion_reasons"][excl_reason] += 1
+                                    cand_states[s] = ("NO_ADMISSIBLE_INPUT", excl_reason, None, None, False)
+                                    scores[s] = -math.inf
                                 else:
-                                    pred_val = pred_index.get((pol_id, real_id, s, t), 0.0)
-                                    score = pred_val / (vol + volatility_guard)
+                                    cov["admitted_queries"] += 1
+                                    vol = vol_map[s].get(t, 0.0)
+                                    mom = mom_map[s].get(t, 0.0)
 
-                                scores[s] = score
+                                    if pol_id == "MOMENTUM_21":
+                                        if mom is None or not math.isfinite(mom):
+                                            raise ValueError(f"INVALID_PREDICTION: Non-finite momentum for query '{qid}'")
+                                        raw_pred = float(mom)
+                                        sc = raw_pred
+                                    elif pol_id == "VOL_MOMENTUM_21":
+                                        if mom is None or vol is None or not math.isfinite(mom) or not math.isfinite(vol):
+                                            raise ValueError(f"INVALID_PREDICTION: Non-finite momentum/vol for query '{qid}'")
+                                        raw_pred = float(mom)
+                                        sc = raw_pred / (float(vol) + volatility_guard)
+                                    else:
+                                        cov["expected_forecasts"] += 1
+                                        p_key = (pol_id, real_id, s, t)
+                                        if p_key not in pred_index:
+                                            raise RuntimeError(
+                                                f"MISSING_REQUIRED_PREDICTION: Admitted query '{qid}' lacks required "
+                                                f"sealed prediction for policy '{pol_id}' (realization {real_id}) in fold {fold_year}!"
+                                            )
+                                        pred_val = pred_index[p_key]
+                                        if pred_val is None or not math.isfinite(pred_val):
+                                            raise ValueError(
+                                                f"INVALID_PREDICTION: Prediction for admitted query '{qid}' is non-finite: {pred_val}!"
+                                            )
+                                        cov["sealed_forecasts"] += 1
+                                        raw_pred = float(pred_val)
+                                        sc = raw_pred / (float(vol) + volatility_guard)
 
-                            # Rank by score descending, tie-break by security_id ascending
+                                    if not math.isfinite(sc):
+                                        raise ValueError(f"INVALID_PREDICTION: Score for query '{qid}' is non-finite: {sc}!")
+
+                                    cov["valid_scores"] += 1
+                                    if sc <= 0.0:
+                                        cand_states[s] = ("NONPOSITIVE_SCORE", None, raw_pred, sc, False)
+                                    else:
+                                        cov["eligible_scores"] += 1
+                                        cand_states[s] = ("ELIGIBLE_SCORE", None, raw_pred, sc, True)
+
+                                    scores[s] = sc
+
                             sorted_cands = sorted(scores.keys(), key=lambda s: (-scores[s], s))
 
                             eligible_cands = []
                             for rank_num, s in enumerate(sorted_cands, start=1):
-                                sc = scores[s]
+                                d_state, excl_r, raw_pred, sc, is_pos = cand_states[s]
                                 is_held = (s in acct.positions)
                                 is_trad = tradable_flags.get(s, False)
-                                is_pos = (sc > 0.0 and math.isfinite(sc))
-                                is_elig = (not is_held and is_trad and is_pos)
+                                is_elig = (d_state == "ELIGIBLE_SCORE" and not is_held and is_trad and is_pos)
                                 if is_elig:
                                     eligible_cands.append(s)
 
-                                raw_pred = pred_index.get((pol_id, real_id, s, t), 0.0)
-                                action = "INELIGIBLE"
-                                if is_held:
+                                if d_state == "NO_ADMISSIBLE_INPUT":
+                                    action = f"EXCLUDED_{excl_r}"
+                                elif is_held:
                                     action = "HELD_ALREADY"
                                 elif not is_trad:
                                     action = "UNTRADABLE"
@@ -1271,6 +1368,8 @@ def run_continuous_portfolio_simulation(
                                     action = "NONPOSITIVE_SCORE"
                                 elif is_elig:
                                     action = "ELIGIBLE_CANDIDATE"
+                                else:
+                                    action = "INELIGIBLE"
 
                                 all_decisions[acct_key].append(DecisionRecord(
                                     session=t,
@@ -1286,9 +1385,12 @@ def run_continuous_portfolio_simulation(
                                     rank=rank_num,
                                     selected_for_entry=False,
                                     action=action,
+                                    decision_state=d_state,
+                                    exclusion_reason=excl_r,
                                 ))
 
                             acct.plan_entries_at_close(eligible_cands)
+                            cov["orders"] += len(acct.pending_entries)
 
                             for sec_planned in acct.pending_entries:
                                 for dec in reversed(all_decisions[acct_key]):
@@ -1313,6 +1415,67 @@ def run_continuous_portfolio_simulation(
                         assert abs(comp_nav - acct.cash) < 1e-4, (
                             f"Terminal compound return reconciliation error for {acct_key}: comp={comp_nav}, cash={acct.cash}"
                         )
+
+        # Export fold coverage manifest
+        fold_cov_list = []
+        for acct_key in sorted_account_keys:
+            pol_id, mkt, real_id = acct_key
+            cov_key = (fold_year, mkt, pol_id, real_id)
+            cov = cov_counts[cov_key]
+            buy_fills = len([
+                tr for tr in policy_accounts[acct_key].trades
+                if tr.session.startswith(str(fold_year)) and tr.side == "BUY"
+            ])
+            cov["fills"] = buy_fills
+            fold_cov_list.append({
+                "fold_year": fold_year,
+                "market": mkt,
+                "policy_id": pol_id,
+                "realization_id": real_id,
+                "candidate_queries": cov["candidate_queries"],
+                "admitted_queries": cov["admitted_queries"],
+                "exclusion_reasons": dict(cov["exclusion_reasons"]),
+                "expected_forecasts": cov["expected_forecasts"],
+                "sealed_forecasts": cov["sealed_forecasts"],
+                "valid_scores": cov["valid_scores"],
+                "eligible_scores": cov["eligible_scores"],
+                "decisions": cov["decisions"],
+                "orders": cov["orders"],
+                "fills": cov["fills"],
+                "exposure_sessions": cov["exposure_sessions"],
+            })
+        fold_cov_path = output_dir / f"fold_{fold_year}" / "coverage_manifest.json"
+        if (output_dir / f"fold_{fold_year}").exists():
+            with open(fold_cov_path, "w", encoding="utf-8") as f:
+                f.write(to_canonical_json(fold_cov_list))
+
+    # Full coverage manifest across all folds
+    total_coverage_list = []
+    for fold_year in folds_to_run:
+        for acct_key in sorted_account_keys:
+            pol_id, mkt, real_id = acct_key
+            cov_key = (fold_year, mkt, pol_id, real_id)
+            cov = cov_counts[cov_key]
+            total_coverage_list.append({
+                "fold_year": fold_year,
+                "market": mkt,
+                "policy_id": pol_id,
+                "realization_id": real_id,
+                "candidate_queries": cov["candidate_queries"],
+                "admitted_queries": cov["admitted_queries"],
+                "exclusion_reasons": dict(cov["exclusion_reasons"]),
+                "expected_forecasts": cov["expected_forecasts"],
+                "sealed_forecasts": cov["sealed_forecasts"],
+                "valid_scores": cov["valid_scores"],
+                "eligible_scores": cov["eligible_scores"],
+                "decisions": cov["decisions"],
+                "orders": cov["orders"],
+                "fills": cov["fills"],
+                "exposure_sessions": cov["exposure_sessions"],
+            })
+    cov_manifest_path = output_dir / "coverage_manifest.json"
+    with open(cov_manifest_path, "w", encoding="utf-8") as f:
+        f.write(to_canonical_json(total_coverage_list))
 
     # Construct union calendar and per-series market-open mask for statistical analysis
     union_sessions = sorted(list(set(
@@ -1390,6 +1553,7 @@ def run_continuous_portfolio_simulation(
         "union_sessions": union_sessions,
         "aligned_returns": aligned_returns,
         "market_open_mask": market_open_mask,
+        "coverage_manifest": total_coverage_list,
     }
 
 def run_production_experiment_driver(context: Dict[str, Any]) -> Dict[str, Any]:
@@ -1896,6 +2060,17 @@ def run_production_experiment_driver(context: Dict[str, Any]) -> Dict[str, Any]:
         code_revision=current_run_identity["code_revision"],
     )
 
+    # Coverage verification check for release validation
+    coverage_manifest = port_res.get("coverage_manifest", [])
+    total_admitted_queries = sum(c.get("admitted_queries", 0) for c in coverage_manifest)
+    total_expected_forecasts = sum(c.get("expected_forecasts", 0) for c in coverage_manifest)
+    total_sealed_forecasts = sum(c.get("sealed_forecasts", 0) for c in coverage_manifest)
+    missing_forecasts = total_expected_forecasts - total_sealed_forecasts
+    if missing_forecasts > 0:
+        raise RuntimeError(
+            f"RELEASE_VERIFICATION_FAILURE: {missing_forecasts} expected forecasts are missing across simulated accounts!"
+        )
+
     pipeline_summary = {
         "status": status,
         "pipeline_stage": "RELEASE_VERIFIED",
@@ -1910,6 +2085,12 @@ def run_production_experiment_driver(context: Dict[str, Any]) -> Dict[str, Any]:
         "jobs_failed": jobs_failed,
         "accounts_simulated": len(policy_accounts),
         "union_sessions": len(union_sessions),
+        "coverage_summary": {
+            "total_admitted_queries": total_admitted_queries,
+            "total_expected_forecasts": total_expected_forecasts,
+            "total_sealed_forecasts": total_sealed_forecasts,
+            "missing_forecasts": missing_forecasts,
+        },
         "primary_contrasts_evaluated": len(contrast_results),
         "replay_report": replay_report,
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
@@ -1919,10 +2100,14 @@ def run_production_experiment_driver(context: Dict[str, Any]) -> Dict[str, Any]:
     with open(output_dir / "pipeline_completion.json", "w", encoding="utf-8") as f:
         f.write(to_canonical_json(pipeline_summary))
 
+    cov_path = output_dir / "coverage_manifest.json"
     rel_artifacts = {
         "pipeline_summary.json": hashlib.sha256((output_dir / "pipeline_summary.json").read_bytes()).hexdigest(),
         "runtime_config.authorized.json": hashlib.sha256(runtime_cfg_path.read_bytes()).hexdigest(),
     }
+    if cov_path.exists():
+        rel_artifacts["coverage_manifest.json"] = hashlib.sha256(cov_path.read_bytes()).hexdigest()
+
     with open(output_dir / "release_manifest.json", "w", encoding="utf-8") as f:
         f.write(to_canonical_json({
             "status": "RELEASE_VERIFIED",
