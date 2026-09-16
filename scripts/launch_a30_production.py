@@ -1295,17 +1295,18 @@ def run_continuous_portfolio_simulation(
                                 cov["decisions"] += 1
                                 qid = f"{fold_year}_{s}_{t}"
                                 rec = sec_recs_map.get(s, {}).get(t)
-                                if rec is not None and rec.input_window_valid and fold_eval_qids is not None and qid not in fold_eval_qids:
+                                is_bar_valid = valid_map[s].get(t, False)
+                                if rec is not None and rec.input_window_valid and is_bar_valid and fold_eval_qids is not None and qid not in fold_eval_qids:
                                     raise RuntimeError(
                                         f"QUERY_IDENTITY_MISMATCH: Query '{qid}' has valid input window for session {t} "
                                         f"but was not admitted in fold_eval_qids ({len(fold_eval_qids)} ids registered)"
                                     )
-                                is_adm = (rec is not None and rec.input_window_valid and (fold_eval_qids is None or qid in fold_eval_qids))
+                                is_adm = (rec is not None and rec.input_window_valid and is_bar_valid and (fold_eval_qids is None or qid in fold_eval_qids))
                                 if is_adm:
                                     cov["admitted_queries"] += 1
                                     cov["admitted_qids"].add(qid)
                                 else:
-                                    excl = rec.exclusion_reason if (rec and rec.exclusion_reason) else ("MISSING_SESSION_BAR" if rec is None else "INVALID_BAR_IN_INPUT_WINDOW")
+                                    excl = rec.exclusion_reason if (rec and rec.exclusion_reason) else ("MISSING_SESSION_BAR" if (rec is None or not is_bar_valid) else "INVALID_BAR_IN_INPUT_WINDOW")
                                     cov["exclusion_reasons"][excl] += 1
                         else:
                             scores: Dict[str, float] = {}
@@ -1317,15 +1318,16 @@ def run_continuous_portfolio_simulation(
                                 cov["decisions"] += 1
                                 qid = f"{fold_year}_{s}_{t}"
                                 rec = sec_recs_map.get(s, {}).get(t)
-                                if rec is not None and rec.input_window_valid and fold_eval_qids is not None and qid not in fold_eval_qids:
+                                is_bar_valid = valid_map[s].get(t, False)
+                                if rec is not None and rec.input_window_valid and is_bar_valid and fold_eval_qids is not None and qid not in fold_eval_qids:
                                     raise RuntimeError(
                                         f"QUERY_IDENTITY_MISMATCH: Query '{qid}' has valid input window for session {t} "
                                         f"but was not admitted in fold_eval_qids ({len(fold_eval_qids)} ids registered)"
                                     )
-                                is_admitted = (rec is not None and rec.input_window_valid and (fold_eval_qids is None or qid in fold_eval_qids))
+                                is_admitted = (rec is not None and rec.input_window_valid and is_bar_valid and (fold_eval_qids is None or qid in fold_eval_qids))
 
                                 if not is_admitted:
-                                    excl_reason = rec.exclusion_reason if (rec and rec.exclusion_reason) else ("MISSING_SESSION_BAR" if rec is None else "INVALID_BAR_IN_INPUT_WINDOW")
+                                    excl_reason = rec.exclusion_reason if (rec and rec.exclusion_reason) else ("MISSING_SESSION_BAR" if (rec is None or not is_bar_valid) else "INVALID_BAR_IN_INPUT_WINDOW")
                                     cov["exclusion_reasons"][excl_reason] += 1
                                     cand_states[s] = ("NO_ADMISSIBLE_INPUT", excl_reason, None, None, False)
                                     scores[s] = -math.inf

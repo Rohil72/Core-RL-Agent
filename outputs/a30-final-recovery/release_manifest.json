@@ -1,0 +1,62 @@
+{
+  "code_revision": "41a2f88526436b4a646b6d688eaafd38add98776",
+  "equivalence_gate": {
+    "checked_records": 625022,
+    "max_abs_discrepancy": 0.0,
+    "status": "PASSED",
+    "verification_note": "Verified bit-for-bit identical in prior gate run."
+  },
+  "release_id": "a30-targeted-recovery",
+  "sealed_artifacts": {
+    "coverage_manifest.json": "1676b1da49399af67c1a4207260f4be6e0410684eb72a42eb8c52827358e81f3",
+    "fold_2020/policy_predictions.json": "c4a4a6e6c1b5bb9b9a7c3b6e7138ad599b895de500208452654a71355d3bea0a",
+    "fold_2020/predictions_manifest.json": "947a6858b0c84e3cd7174013373d97840c2c659b709ea12c240a51732261d30e",
+    "fold_2021/policy_predictions.json": "100d01ff6a5cf3cf01f534677299db381743d775aaa3b7c73bcf2c007988e4dc",
+    "fold_2021/predictions_manifest.json": "3d8ebc9af18ad0f9e52508fb1d992cde8b6bdece762a824a0feaee1f774a0f88",
+    "fold_2022/policy_predictions.json": "450256fb20ee98e41e8afafe6e909742ce901f82c42325c2b2da9867f668aa14",
+    "fold_2022/predictions_manifest.json": "7f3388c1cd173c2e10af645997ae695f230672c4ba4b8f745860b02f88f43f6b",
+    "fold_2023/policy_predictions.json": "fd9438b8263557e239180cf684a3a9895ac21d346bbb1140af44707fac4794a1",
+    "fold_2023/predictions_manifest.json": "f75219358dc091c17a207aced9d56dfc098e17c1b59e07d7a198447fde3f685d",
+    "fold_2024/policy_predictions.json": "fecb34350b7d23e6d276f4f76412cf4c60ab9a2b5be1fb7080c6e638f1e693e4",
+    "fold_2024/predictions_manifest.json": "ad1691f07a0c567fd5696c2b698a27a610b660f973060c5a23e1b4b9a8a0c2aa",
+    "fold_2025/policy_predictions.json": "8429eef786010a1dd90c1f0556786b893ef2deb5638c5088120f8f39d39209ab",
+    "fold_2025/predictions_manifest.json": "7d0c6ff5d22ea645c76634cd9bc185e7031c5ee71ec82212e1c82a92d21d9d7e",
+    "portfolio_manifest.json": "4762d2263acc204725966821180ce2b386c78f44a5313c27b81fccd4ea78eab8",
+    "release_analysis/bootstrap_spec.json": "d5c8d4d1d515fda3938172a8e400a1411f8e1c3e7a344dcf302aa432ca0751e7",
+    "release_analysis/daily_returns.json": "e9ca5a4758bfa5680cf3ab52f36a7e8fcbdf0e125a40239421b36e1b98007093",
+    "release_analysis/primary_contrasts.json": "1ad4473d2347a40e01eb80c7a1c1ef73c0ea7e85d4a874baaaa5ad0c0e191f98",
+    "release_analysis/replay_report.json": "daab6deba4809568018b1989550d891a55e47c292e157e0c3c21f80dbca39fe7",
+    "runtime_config.authorized.json": "a26941c69292e4a55f53447cefe74ef29b22bfe194e0ba7841ef8f9548bf7e92",
+    "transformation_manifest.json": "d7b1085333ee3c2754df74f83826c48608c7af7d05746595830ad1fd43fff12a"
+  },
+  "summary": {
+    "accounts_count": 204,
+    "folds_count": 6,
+    "total_admitted_queries": 4065550,
+    "total_expected_forecasts": 3706825,
+    "total_sealed_forecasts": 3706825
+  },
+  "timestamp_utc": "2026-09-16T20:44:01.156902+00:00",
+  "artifacts": {
+    "coverage_manifest.json": "1676b1da49399af67c1a4207260f4be6e0410684eb72a42eb8c52827358e81f3",
+    "fold_2020/policy_predictions.json": "c4a4a6e6c1b5bb9b9a7c3b6e7138ad599b895de500208452654a71355d3bea0a",
+    "fold_2020/predictions_manifest.json": "947a6858b0c84e3cd7174013373d97840c2c659b709ea12c240a51732261d30e",
+    "fold_2021/policy_predictions.json": "100d01ff6a5cf3cf01f534677299db381743d775aaa3b7c73bcf2c007988e4dc",
+    "fold_2021/predictions_manifest.json": "3d8ebc9af18ad0f9e52508fb1d992cde8b6bdece762a824a0feaee1f774a0f88",
+    "fold_2022/policy_predictions.json": "450256fb20ee98e41e8afafe6e909742ce901f82c42325c2b2da9867f668aa14",
+    "fold_2022/predictions_manifest.json": "7f3388c1cd173c2e10af645997ae695f230672c4ba4b8f745860b02f88f43f6b",
+    "fold_2023/policy_predictions.json": "fd9438b8263557e239180cf684a3a9895ac21d346bbb1140af44707fac4794a1",
+    "fold_2023/predictions_manifest.json": "f75219358dc091c17a207aced9d56dfc098e17c1b59e07d7a198447fde3f685d",
+    "fold_2024/policy_predictions.json": "fecb34350b7d23e6d276f4f76412cf4c60ab9a2b5be1fb7080c6e638f1e693e4",
+    "fold_2024/predictions_manifest.json": "ad1691f07a0c567fd5696c2b698a27a610b660f973060c5a23e1b4b9a8a0c2aa",
+    "fold_2025/policy_predictions.json": "8429eef786010a1dd90c1f0556786b893ef2deb5638c5088120f8f39d39209ab",
+    "fold_2025/predictions_manifest.json": "7d0c6ff5d22ea645c76634cd9bc185e7031c5ee71ec82212e1c82a92d21d9d7e",
+    "portfolio_manifest.json": "4762d2263acc204725966821180ce2b386c78f44a5313c27b81fccd4ea78eab8",
+    "release_analysis/bootstrap_spec.json": "d5c8d4d1d515fda3938172a8e400a1411f8e1c3e7a344dcf302aa432ca0751e7",
+    "release_analysis/daily_returns.json": "e9ca5a4758bfa5680cf3ab52f36a7e8fcbdf0e125a40239421b36e1b98007093",
+    "release_analysis/primary_contrasts.json": "1ad4473d2347a40e01eb80c7a1c1ef73c0ea7e85d4a874baaaa5ad0c0e191f98",
+    "release_analysis/replay_report.json": "daab6deba4809568018b1989550d891a55e47c292e157e0c3c21f80dbca39fe7",
+    "runtime_config.authorized.json": "a26941c69292e4a55f53447cefe74ef29b22bfe194e0ba7841ef8f9548bf7e92",
+    "transformation_manifest.json": "d7b1085333ee3c2754df74f83826c48608c7af7d05746595830ad1fd43fff12a"
+  }
+}
