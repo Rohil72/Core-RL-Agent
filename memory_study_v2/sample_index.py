@@ -47,7 +47,7 @@ def build_security_sample_index(
     security_id: str,
     bars_df: pd.DataFrame,
     venue_calendar: Optional[VenueCalendar] = None,
-    evaluation_year: int = 2020,
+    evaluation_year: Optional[int] = None,
     required_feature_warmup: int = 252,
     required_repr_window: int = 252,
 ) -> List[SampleIndexRecord]:
@@ -57,13 +57,18 @@ def build_security_sample_index(
         security_id: Canonical ticker (e.g. "US_AAPL").
         bars_df: DataFrame with 'session' (or DatetimeIndex) and price columns ('close' or 'tr_close').
         venue_calendar: Authoritative VenueCalendar singleton.
-        evaluation_year: Fold evaluation year for query_id formatting.
+        evaluation_year: Mandatory fold evaluation year for query_id formatting (e.g. 2020..2025).
         required_feature_warmup: Number of bars required for technical feature warmup (252).
         required_repr_window: Number of feature bars required for annual representation (252).
 
     Total preceding history bars required: (required_feature_warmup - 1) + required_repr_window = 503 bars.
     Strictly uses rows t-503 through t-1 (session t is the decision session and excluded from inputs).
     """
+    if evaluation_year is None or not isinstance(evaluation_year, int) or evaluation_year < 1900 or evaluation_year > 2200:
+        raise ValueError(
+            f"Explicit valid integer evaluation_year is required for sample index construction, got: {evaluation_year}"
+        )
+
     vc = venue_calendar or get_venue_calendar()
 
     # Reindex onto venue calendar

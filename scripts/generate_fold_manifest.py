@@ -68,7 +68,7 @@ def generate_manifest(
         vc = get_market_venue_calendar(mkt, execution_mode="production")
 
         df = pd.read_parquet(p)
-        recs = build_security_sample_index(sec_id, df, venue_calendar=vc)
+        recs = build_security_sample_index(sec_id, df, venue_calendar=vc, evaluation_year=2020)
         all_records.extend(recs)
 
         file_annual: Dict[int, int] = {}
