@@ -51,6 +51,7 @@ if str(REPO_ROOT) not in sys.path:
 from scripts.launch_a30_production import (
     MLPAnnual,
     TransformerAnnual,
+    build_expected_account_keys,
     fit_ridge_model,
     generate_and_seal_policy_predictions,
     prepare_fold_data,
@@ -119,6 +120,81 @@ def assert_directory_unchanged(dir_path: Path, before_manifest: Dict[str, str], 
         )
 
 
+def load_and_validate_checkpoint_inventory(inventory_path: Path) -> Dict[str, Dict[str, Any]]:
+    """Loads and strictly validates the machine-readable checkpoint reuse inventory.
+
+    Enforces:
+    1. Valid JSON array.
+    2. Rejection of duplicate job_id identities.
+    3. Rejection of conflicting relative_path or parameter assignments.
+    4. Validation of mandatory schema fields: job_id, sha256, disposition.
+    """
+    inv_file = Path(inventory_path)
+    if not inv_file.exists():
+        raise FileNotFoundError(f"Checkpoint reuse inventory file not found: {inv_file}")
+
+    inv_data = json.loads(inv_file.read_text(encoding="utf-8"))
+    if not isinstance(inv_data, list):
+        raise ValueError(f"Inventory at {inv_file} must be a JSON list of items, got {type(inv_data)}")
+
+    seen_job_ids: Set[str] = set()
+    seen_rel_paths: Dict[str, str] = {}
+    inventory_by_job_id: Dict[str, Dict[str, Any]] = {}
+
+    for idx, item in enumerate(inv_data):
+        if not isinstance(item, dict):
+            raise ValueError(f"Inventory entry #{idx} is not an object")
+        jid = item.get("job_id")
+        if not jid:
+            raise ValueError(f"Inventory entry #{idx} is missing required 'job_id'")
+        if jid in seen_job_ids:
+            raise ValueError(f"CRITICAL INVENTORY VIOLATION: Duplicate inventory identity: '{jid}'")
+        seen_job_ids.add(jid)
+
+        sha = item.get("sha256")
+        if not sha:
+            raise ValueError(f"Inventory entry '{jid}' is missing required 'sha256'")
+
+        disp = item.get("disposition")
+        if not disp:
+            raise ValueError(f"Inventory entry '{jid}' is missing required 'disposition'")
+
+        rel_path = item.get("relative_path")
+        if rel_path:
+            if rel_path in seen_rel_paths and seen_rel_paths[rel_path] != jid:
+                raise ValueError(
+                    f"CRITICAL INVENTORY VIOLATION: Conflicting inventory assignment: path '{rel_path}' "
+                    f"is assigned to multiple identities: '{seen_rel_paths[rel_path]}' and '{jid}'"
+                )
+            seen_rel_paths[rel_path] = jid
+
+        inventory_by_job_id[jid] = item
+
+    return inventory_by_job_id
+
+
+def parse_inventory_disposition(disp_str: Optional[str]) -> str:
+    """Normalizes and maps inventory disposition strings to canonical status."""
+    if not disp_str:
+        return "REUSE_PENDING"
+    norm = str(disp_str).strip().lower()
+    if norm in ("reuse_approved", "approved", "reuse approved"):
+        return "REUSE_APPROVED"
+    elif norm in ("reuse_rejected", "rejected", "reuse rejected"):
+        return "REUSE_REJECTED"
+    elif norm in (
+        "reuse_pending",
+        "pending",
+        "reuse candidate—verification pending",
+        "reuse candidate-verification pending",
+        "reuse candidate - verification pending",
+        "candidate",
+    ):
+        return "REUSE_PENDING"
+    else:
+        return "REUSE_PENDING"
+
+
 def verify_checkpoint_identity(
     checkpoint_path: Path,
     fold_year: int,
@@ -126,15 +202,16 @@ def verify_checkpoint_identity(
     seed: int,
     expected_sha256: Optional[str] = None,
     provenance_dir: Optional[Path] = None,
+    inventory_entry: Optional[Dict[str, Any]] = None,
     current_code_revision: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Verifies checkpoint artifact integrity, scientific compatibility, and provenance.
+    """Verifies checkpoint artifact integrity, scientific compatibility, reviewed disposition, and provenance.
 
     Returns a dict with disposition:
-      - REUSE_APPROVED: required integrity, architecture, weights, and provenance established.
-      - REUSE_PENDING: expected digest or required provenance receipt missing/inconclusive.
+      - REUSE_APPROVED: required integrity, architecture, weights, inventory disposition, and provenance established.
+      - REUSE_PENDING: expected digest, reviewed approval, or required provenance receipt missing/inconclusive.
       - REUSE_REJECTED: explicit incompatibility demonstrated (digest mismatch, non-finite weights,
-        parameter shape mismatch, or identity mismatch).
+        parameter shape mismatch, identity mismatch, or rejected disposition).
     """
     result: Dict[str, Any] = {
         "checkpoint_path": str(checkpoint_path),
@@ -180,7 +257,29 @@ def verify_checkpoint_identity(
         return result
     result["integrity_verified"] = True
 
-    # 4. Deserialization & Architecture Parameter Compatibility
+    # 4. Check inventory reviewed disposition
+    if inventory_entry is not None:
+        inv_disp = parse_inventory_disposition(inventory_entry.get("disposition"))
+        if inv_disp == "REUSE_REJECTED":
+            result["disposition"] = "REUSE_REJECTED"
+            result["reasons"].append(
+                f"Reviewed inventory disposition is REUSE_REJECTED: '{inventory_entry.get('disposition')}'"
+            )
+            return result
+        elif inv_disp == "REUSE_PENDING":
+            result["disposition"] = "REUSE_PENDING"
+            result["reasons"].append(
+                f"Reviewed inventory disposition is pending: '{inventory_entry.get('disposition')}'"
+            )
+            return result
+        elif inv_disp != "REUSE_APPROVED":
+            result["disposition"] = "REUSE_PENDING"
+            result["reasons"].append(
+                f"Reviewed inventory disposition is unapproved: '{inventory_entry.get('disposition')}'"
+            )
+            return result
+
+    # 5. Deserialization & Architecture Parameter Compatibility
     try:
         chk_data = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
         if hasattr(chk_data, "model_state"):
@@ -238,7 +337,7 @@ def verify_checkpoint_identity(
         result["reasons"].append(f"Architecture compatibility failure: {e}")
         return result
 
-    # 5. Provenance verification from job_completion.json / training_identity.json
+    # 6. Provenance verification from job_completion.json / training_identity.json
     prov_dir = provenance_dir or checkpoint_path.parent
     job_comp_file = prov_dir / "job_completion.json"
     if not job_comp_file.exists():
@@ -259,8 +358,34 @@ def verify_checkpoint_identity(
             )
             return result
 
-        training_ident = job_comp.get("training_identity", {})
-        result["training_revision"] = training_ident.get("code_revision", "NOT_RECORDED")
+        status = job_comp.get("status")
+        if status != "STAGE_COMPLETED":
+            result["disposition"] = "REUSE_REJECTED"
+            result["reasons"].append(f"Incomplete provenance status: '{status}', expected 'STAGE_COMPLETED'")
+            return result
+
+        training_ident = job_comp.get("training_identity")
+        if not training_ident or not isinstance(training_ident, dict):
+            result["disposition"] = "REUSE_PENDING"
+            result["reasons"].append("Missing required 'training_identity' in job_completion.json")
+            return result
+
+        # Validate mandatory training provenance fields
+        REQUIRED_PROVENANCE_FIELDS = [
+            "code_revision",
+            "job_identity_sha256",
+            "neural_configuration_sha256",
+            "train_sample_ids_sha256",
+            "train_markets",
+        ]
+        for fld in REQUIRED_PROVENANCE_FIELDS:
+            val = training_ident.get(fld)
+            if val is None or (isinstance(val, (str, list, dict)) and len(val) == 0) or val in ("NOT_RECORDED", "UNKNOWN"):
+                result["disposition"] = "REUSE_PENDING"
+                result["reasons"].append(f"Missing required training provenance field '{fld}' in job_completion.json")
+                return result
+
+        result["training_revision"] = training_ident.get("code_revision")
         result["recovery_revision"] = current_code_revision
         result["job_identity_sha256"] = training_ident.get("job_identity_sha256")
         result["neural_configuration_sha256"] = training_ident.get("neural_configuration_sha256")
@@ -271,13 +396,52 @@ def verify_checkpoint_identity(
         result["reasons"].append(f"Provenance parsing failure: {e}")
         return result
 
-    # 6. Approved disposition
+    # 7. Approved disposition
     result["disposition"] = "REUSE_APPROVED"
     return result
 
 
 # Backwards compatibility alias
 verify_checkpoint_compatibility = verify_checkpoint_identity
+
+
+def verify_release_manifest(output_dir: Path) -> Dict[str, Any]:
+    """Verifies that all artifacts bound in release_manifest.json exist and match their recorded SHA-256 digests.
+
+    Raises:
+        FileNotFoundError: If release_manifest.json does not exist.
+        RuntimeError: If any bound artifact is missing or has a modified digest (tampering detected).
+    """
+    out_path = Path(output_dir)
+    manifest_path = out_path / "release_manifest.json"
+    if not manifest_path.exists():
+        raise FileNotFoundError(f"release_manifest.json does not exist in {out_path}")
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    artifacts = manifest.get("artifacts", {})
+    if not artifacts:
+        raise RuntimeError("RELEASE_MANIFEST_TAMPERED: release_manifest.json contains no bound artifacts")
+
+    verified_count = 0
+    for rel_path_str, expected_sha in artifacts.items():
+        if rel_path_str == "source_inventory_sha256":
+            continue
+        art_path = out_path / rel_path_str
+        if not art_path.exists():
+            raise RuntimeError(f"RELEASE_MANIFEST_TAMPERED: Bound artifact '{rel_path_str}' is missing from {out_path}!")
+        actual_sha = hashlib.sha256(art_path.read_bytes()).hexdigest()
+        if actual_sha != expected_sha:
+            raise RuntimeError(
+                f"RELEASE_MANIFEST_TAMPERED: Digest mismatch for '{rel_path_str}': "
+                f"expected {expected_sha}, got {actual_sha}!"
+            )
+        verified_count += 1
+
+    return {
+        "status": "RELEASE_MANIFEST_VERIFIED",
+        "verified_artifacts_count": verified_count,
+        "code_revision": manifest.get("code_revision"),
+    }
 
 
 def audit_source_checkpoints(
@@ -289,30 +453,21 @@ def audit_source_checkpoints(
     current_code_revision: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Audits all required checkpoints in source_dir against reviewed inventory and provenance receipts."""
+    inventory_entries: Dict[str, Dict[str, Any]] = {}
+    inv_file = None
+    if inventory_path and Path(inventory_path).exists():
+        inv_file = Path(inventory_path)
+    elif (REPO_ROOT / "outputs" / "ops" / "checkpoint_reuse_inventory.json").exists():
+        inv_file = REPO_ROOT / "outputs" / "ops" / "checkpoint_reuse_inventory.json"
+
+    if inv_file:
+        inventory_entries = load_and_validate_checkpoint_inventory(inv_file)
+
     inventory: List[Dict[str, Any]] = []
     total_expected = len(folds) * len(architectures) * len(seeds)
     approved_count = 0
     pending_count = 0
     rejected_count = 0
-
-    # Load inventory if provided or if default exists
-    expected_digests: Dict[str, str] = {}
-    if inventory_path and Path(inventory_path).exists():
-        inv_data = json.loads(Path(inventory_path).read_text(encoding="utf-8"))
-        if isinstance(inv_data, list):
-            for item in inv_data:
-                jid = item.get("job_id")
-                sha = item.get("sha256")
-                if jid and sha:
-                    expected_digests[jid] = sha
-    elif (REPO_ROOT / "outputs" / "ops" / "checkpoint_reuse_inventory.json").exists():
-        inv_data = json.loads((REPO_ROOT / "outputs" / "ops" / "checkpoint_reuse_inventory.json").read_text(encoding="utf-8"))
-        if isinstance(inv_data, list):
-            for item in inv_data:
-                jid = item.get("job_id")
-                sha = item.get("sha256")
-                if jid and sha:
-                    expected_digests[jid] = sha
 
     print(f"\n[Audit] Inspecting {total_expected} required model checkpoints in {source_dir}...")
 
@@ -324,8 +479,9 @@ def audit_source_checkpoints(
                 chk_dir = fold_dir / f"checkpoints_{arch}_seed{seed}"
                 best_pt = chk_dir / "best_checkpoint.pt"
 
-                # Expected digest from inventory or original receipt
-                expected_sha = expected_digests.get(job_id)
+                inv_item = inventory_entries.get(job_id)
+                expected_sha = inv_item.get("sha256") if inv_item else None
+
                 if not expected_sha and (chk_dir / "job_completion.json").exists():
                     try:
                         jc = json.loads((chk_dir / "job_completion.json").read_text(encoding="utf-8"))
@@ -340,6 +496,7 @@ def audit_source_checkpoints(
                     seed=seed,
                     expected_sha256=expected_sha,
                     provenance_dir=chk_dir,
+                    inventory_entry=inv_item,
                     current_code_revision=current_code_revision,
                 )
                 item["job_id"] = job_id
@@ -458,6 +615,7 @@ def execute_zero_retraining_recovery(
 
     # Capture source directory manifest before execution for byte-level immutability guarantee
     before_source_manifest = compute_directory_manifest(source_path)
+    recovery_completed_successfully = False
 
     try:
         git_rev = get_current_git_revision()
@@ -595,12 +753,26 @@ def execute_zero_retraining_recovery(
 
         # 5. Strict Release Coverage & Accounting Validation
         print("\n=== Stage 4 (Recovery): Release Coverage & Accounting Validation ===")
+        # Automatically construct expected account keys from configuration and market universe
+        all_markets = sorted(list(set(
+            m for fd in fold_data_by_year.values()
+            for m in (list(fd.get("sec_info_by_market", {}).keys()) or [s_data.get("market") for s_data in fd.get("sec_info", {}).values()])
+            if m
+        )))
+        auto_expected_accounts = build_expected_account_keys(
+            config=config,
+            folds=folds_to_run,
+            markets=all_markets,
+            allow_reduced_arms=allow_reduced_arms,
+        )
+        active_expected_accounts = auto_expected_accounts if expected_accounts is None else set(expected_accounts)
+
         coverage_manifest = port_res.get("coverage_manifest", [])
         validation_res = validate_release_coverage_and_accounting(
             coverage_manifest=coverage_manifest,
             fold_data_by_year=fold_data_by_year,
             folds_to_run=folds_to_run,
-            expected_accounts=expected_accounts,
+            expected_accounts=active_expected_accounts,
         )
         print(f"  Coverage Validation: {validation_res['status']}")
 
@@ -664,12 +836,65 @@ def execute_zero_retraining_recovery(
         with open(release_analysis_dir / "replay_report.json", "w", encoding="utf-8") as f:
             f.write(to_canonical_json(replay_report))
 
-        # 9. Release Sealing & Completion Receipt
-        print("\n=== Stage 8 (Recovery): Release Sealing & Completion Receipt ===")
+        # 9. Pre-Publication Security Gate: Assert Source Immutability BEFORE publishing completion markers
+        print("\n=== Pre-Publication Security Gate: Source Directory Immutability Check ===")
+        assert_directory_unchanged(source_path, before_source_manifest, "zero-retraining recovery execution")
+
+        # 10. Transactional Release Sealing & Cryptographic Manifest Binding
+        print("\n=== Stage 8 (Recovery): Transactional Release Sealing & Atomic Completion ===")
         total_admitted_queries = validation_res["total_admitted_queries"]
         total_expected_forecasts = validation_res["total_expected_forecasts"]
         total_sealed_forecasts = validation_res["total_sealed_forecasts"]
         missing_forecasts = total_expected_forecasts - total_sealed_forecasts
+
+        runtime_cfg_path = output_path / "runtime_config.authorized.json"
+        auth_config = copy.deepcopy(config)
+        auth_config["production_authorized"] = True
+        auth_config["execution_mode"] = "recovery"
+        with open(runtime_cfg_path, "w", encoding="utf-8") as f:
+            f.write(to_canonical_json(auth_config))
+
+        # Build full cryptographic artifact dictionary binding all recovery evidence
+        rel_artifacts: Dict[str, str] = {}
+        rel_artifacts["runtime_config.authorized.json"] = hashlib.sha256(runtime_cfg_path.read_bytes()).hexdigest()
+
+        if inventory_path and Path(inventory_path).exists():
+            inv_bytes = Path(inventory_path).read_bytes()
+            rel_artifacts["source_inventory_sha256"] = hashlib.sha256(inv_bytes).hexdigest()
+
+        for f_yr in folds_to_run:
+            f_dir = output_path / f"fold_{f_yr}"
+            p_json = f_dir / "policy_predictions.json"
+            p_man = f_dir / "policy_predictions_manifest.json"
+            if p_json.exists():
+                rel_artifacts[str(p_json.relative_to(output_path))] = hashlib.sha256(p_json.read_bytes()).hexdigest()
+            if p_man.exists():
+                rel_artifacts[str(p_man.relative_to(output_path))] = hashlib.sha256(p_man.read_bytes()).hexdigest()
+
+        port_man = output_path / "portfolio_manifest.json"
+        if port_man.exists():
+            rel_artifacts["portfolio_manifest.json"] = hashlib.sha256(port_man.read_bytes()).hexdigest()
+        cov_man = output_path / "coverage_manifest.json"
+        if cov_man.exists():
+            rel_artifacts["coverage_manifest.json"] = hashlib.sha256(cov_man.read_bytes()).hexdigest()
+
+        analysis_dir = output_path / "release_analysis"
+        if analysis_dir.exists():
+            for art_name in ["daily_returns.json", "primary_contrasts.json", "replay_report.json", "contrast_draws.npy", "sampled_weeks.npy"]:
+                a_path = analysis_dir / art_name
+                if a_path.exists():
+                    rel_artifacts[str(a_path.relative_to(output_path))] = hashlib.sha256(a_path.read_bytes()).hexdigest()
+
+        rel_manifest_data = {
+            "status": "RELEASE_VERIFIED",
+            "code_revision": git_rev,
+            "artifacts": rel_artifacts,
+            "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+        }
+        rel_manifest_bytes = to_canonical_json(rel_manifest_data).encode("utf-8")
+        rel_manifest_sha = hashlib.sha256(rel_manifest_bytes).hexdigest()
+
+        (output_path / "release_manifest.json").write_bytes(rel_manifest_bytes)
 
         recovery_summary = {
             "status": "RECOVERY_SUCCESS",
@@ -679,6 +904,7 @@ def execute_zero_retraining_recovery(
             "code_revision": git_rev,
             "executed_folds": folds_to_run,
             "recovered_checkpoint_hashes": recovered_checkpoint_hashes,
+            "release_manifest_sha256": rel_manifest_sha,
             "coverage_summary": {
                 "total_admitted_queries": total_admitted_queries,
                 "total_expected_forecasts": total_expected_forecasts,
@@ -690,44 +916,30 @@ def execute_zero_retraining_recovery(
             "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         }
 
-        with open(output_path / "recovery_summary.json", "w", encoding="utf-8") as f:
-            f.write(to_canonical_json(recovery_summary))
-        with open(output_path / "pipeline_summary.json", "w", encoding="utf-8") as f:
-            f.write(to_canonical_json(recovery_summary))
-        with open(output_path / "recovery_completion.json", "w", encoding="utf-8") as f:
-            f.write(to_canonical_json(recovery_summary))
+        summary_bytes = to_canonical_json(recovery_summary).encode("utf-8")
+        (output_path / "recovery_summary.json").write_bytes(summary_bytes)
+        (output_path / "pipeline_summary.json").write_bytes(summary_bytes)
+        (output_path / "recovery_completion.json").write_bytes(summary_bytes)
 
-        runtime_cfg_path = output_path / "runtime_config.authorized.json"
-        auth_config = copy.deepcopy(config)
-        auth_config["production_authorized"] = True
-        auth_config["execution_mode"] = "recovery"
-        with open(runtime_cfg_path, "w", encoding="utf-8") as f:
-            f.write(to_canonical_json(auth_config))
-
-        cov_path = output_path / "coverage_manifest.json"
-        rel_artifacts = {
-            "recovery_summary.json": hashlib.sha256((output_path / "recovery_summary.json").read_bytes()).hexdigest(),
-            "pipeline_summary.json": hashlib.sha256((output_path / "pipeline_summary.json").read_bytes()).hexdigest(),
-            "recovery_completion.json": hashlib.sha256((output_path / "recovery_completion.json").read_bytes()).hexdigest(),
-            "runtime_config.authorized.json": hashlib.sha256(runtime_cfg_path.read_bytes()).hexdigest(),
-        }
-        if cov_path.exists():
-            rel_artifacts["coverage_manifest.json"] = hashlib.sha256(cov_path.read_bytes()).hexdigest()
-
-        with open(output_path / "release_manifest.json", "w", encoding="utf-8") as f:
-            f.write(to_canonical_json({
-                "status": "RELEASE_VERIFIED",
-                "code_revision": git_rev,
-                "artifacts": rel_artifacts,
-                "timestamp_utc": datetime.now(timezone.utc).isoformat(),
-            }))
-
-        # Final assertion of source directory immutability
-        assert_directory_unchanged(source_path, before_source_manifest, "zero-retraining recovery execution")
+        recovery_completed_successfully = True
         print("\n[SUCCESS] Recovery pipeline completed and verified cleanly.")
         return recovery_summary
 
     finally:
+        if not recovery_completed_successfully:
+            # Atomic cleanup: ensure NO success receipts survive if any stage failed
+            for marker in [
+                "recovery_summary.json",
+                "pipeline_summary.json",
+                "recovery_completion.json",
+                "release_manifest.json",
+            ]:
+                p = output_path / marker
+                if p.exists():
+                    try:
+                        p.unlink()
+                    except Exception:
+                        pass
         # Guarantee source directory immutability even on unhandled failure
         assert_directory_unchanged(source_path, before_source_manifest, "recovery preflight / execution teardown")
 

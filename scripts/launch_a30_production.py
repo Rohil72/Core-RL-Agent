@@ -1585,6 +1585,58 @@ def run_continuous_portfolio_simulation(
         "coverage_manifest": total_coverage_list,
     }
 
+
+def build_expected_account_keys(
+    config: Dict[str, Any],
+    folds: List[int],
+    markets: List[str],
+    allow_reduced_arms: bool = False,
+) -> Set[Tuple[int, str, str, Optional[int]]]:
+    """Constructs the exact set of expected account keys (fold_year, market, policy_id, realization_id).
+
+    Constructed strictly from approved configuration and market universe, NEVER inferred from emitted predictions.
+    """
+    seeds = [int(s) for s in config.get("neural", {}).get("seeds", [7, 17, 37])]
+    neural_archs = [str(a).upper() for a in config.get("neural", {}).get("architectures", [])]
+    has_mlp = any("MLP" in a for a in neural_archs)
+    has_trans = any("TRANSFORMER" in a for a in neural_archs)
+
+    configured_policies = config.get("configured_policies") or config.get("policies")
+
+    if configured_policies is not None:
+        active_policies = list(configured_policies)
+    else:
+        # Standard policies derived from configured architectures
+        active_policies = [
+            "MEM_SIM", "KNN_PLAIN", "HIST_PRIOR", "RIDGE_ANNUAL",
+            "MOMENTUM_21", "VOL_MOMENTUM_21", "PASSIVE_EQUAL_WEIGHT",
+        ]
+        if has_mlp or has_trans:
+            active_policies.append("MEM_RANDOM")
+        if has_mlp:
+            active_policies.extend(["MLP_BASE", "MLP_MIX_MSE", "MLP_MIX_SR", "MLP_GATE"])
+        if has_trans:
+            active_policies.extend(["TRANS_BASE", "TRANS_MIX_MSE", "TRANS_MIX_SR", "TRANS_GATE"])
+
+    seeded_policies = {
+        "MEM_RANDOM", "MLP_BASE", "TRANS_BASE",
+        "MLP_MIX_MSE", "TRANS_MIX_MSE", "MLP_MIX_SR", "TRANS_MIX_SR",
+        "MLP_GATE", "TRANS_GATE",
+    }
+
+    expected: Set[Tuple[int, str, str, Optional[int]]] = set()
+    for f_yr in folds:
+        for mkt in markets:
+            for pol in active_policies:
+                if pol in seeded_policies:
+                    for s in seeds:
+                        expected.add((int(f_yr), str(mkt), str(pol), int(s)))
+                else:
+                    expected.add((int(f_yr), str(mkt), str(pol), None))
+
+    return expected
+
+
 def validate_release_coverage_and_accounting(
     coverage_manifest: List[Dict[str, Any]],
     fold_data_by_year: Dict[int, Dict[str, Any]],
@@ -1594,13 +1646,13 @@ def validate_release_coverage_and_accounting(
     """Strictly validates coverage accounting and query set equality against independent evaluation populations.
 
     Enforces:
-    1. Zero missing sealed forecasts across all simulated accounts.
+    1. Zero missing sealed forecasts across all simulated accounts (both global sum and exact per-account reconciliation).
     2. Exact coverage accounting: candidate_queries == decisions == admitted_queries + sum(exclusion_reasons).
     3. Zero QUERY_IDENTITY_MISMATCH exclusion errors and permitted exclusion reasons only.
     4. Exact query-key set equality (or count equality if qids not tracked) against independent evaluation records.
     5. Detection and rejection of partial admission drops (e.g. 1 admitted + 999 excluded vs 1000 expected).
     6. Distinction between intentionally empty populations (expected count 0 -> admitted count 0) and missing metadata.
-    7. Model policies expected_forecasts == admitted_queries.
+    7. Model policies expected_forecasts == admitted_queries == sealed_forecasts.
     8. Duplicate coverage account rejection and exact expected-versus-observed account key equality.
     9. Verification that admitted query IDs agree with fold year and market.
     """
@@ -1676,10 +1728,17 @@ def validate_release_coverage_and_accounting(
                 )
         if pol not in ("PASSIVE_EQUAL_WEIGHT", "MOMENTUM_21", "VOL_MOMENTUM_21"):
             exp_fc = c.get("expected_forecasts", 0)
+            seal_fc = c.get("sealed_forecasts", 0)
             if exp_fc != adm:
                 raise RuntimeError(
                     f"RELEASE_VERIFICATION_FAILURE: Model policy {pol} expected forecasts ({exp_fc}) "
                     f"does not match admitted queries ({adm}) for ({f_yr}, {mkt}, {real_id})!"
+                )
+            if seal_fc != exp_fc:
+                raise RuntimeError(
+                    f"RELEASE_VERIFICATION_FAILURE: Model policy {pol} sealed forecasts ({seal_fc}) "
+                    f"does not match expected forecasts ({exp_fc}) for ({f_yr}, {mkt}, {real_id})! "
+                    f"Missing forecasts: {exp_fc - seal_fc}."
                 )
 
         adm_qids = c.get("admitted_qids")

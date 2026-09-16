@@ -39,6 +39,9 @@ import pandas as pd
 import pytest
 import torch
 
+import scripts.launch_a30_production
+import scripts.recover_a30_production
+
 from memory_study_v2.backbones import MLPAnnual
 from memory_study_v2.contracts import to_canonical_json
 from memory_study_v2.sample_index import SampleIndexRecord
@@ -52,6 +55,7 @@ from memory_study_v2.inference import (
 from memory_study_v2.venue_calendar import VenueCalendar
 from scripts.launch_a30_production import (
     PolicyPredictionRecord,
+    build_expected_account_keys,
     run_continuous_portfolio_simulation,
     validate_release_coverage_and_accounting,
 )
@@ -60,7 +64,10 @@ from scripts.recover_a30_production import (
     audit_source_checkpoints,
     compute_directory_manifest,
     execute_zero_retraining_recovery,
+    load_and_validate_checkpoint_inventory,
+    parse_inventory_disposition,
     verify_checkpoint_identity,
+    verify_release_manifest,
 )
 
 
@@ -104,6 +111,7 @@ def cpu_recovery_fixture(tmp_path: Path):
                 "job_identity_sha256": f"job_sha_{yr}",
                 "neural_configuration_sha256": "cfg_sha",
                 "train_sample_ids_sha256": "sample_ids_sha",
+                "train_markets": ["US"],
             },
         }
         (chk_dir / "job_completion.json").write_text(to_canonical_json(job_comp), encoding="utf-8")
@@ -115,7 +123,7 @@ def cpu_recovery_fixture(tmp_path: Path):
             "seed": 7,
             "sha256": chk_sha,
             "relative_path": f"fold_{yr}/checkpoints_MLP_ANNUAL_966_64_128_1_seed7/best_checkpoint.pt",
-            "disposition": "reuse candidate—verification pending",
+            "disposition": "REUSE_APPROVED",
         })
 
     inv_path = fixture_root / "reviewed_inventory.json"
@@ -275,6 +283,27 @@ def test_recovery_pipeline_end_to_end_cpu_acceptance(cpu_recovery_fixture, monke
     assert any(s.startswith("2020") for s in sessions)
     assert any(s.startswith("2021") for s in sessions)
     assert sessions == sorted(sessions), "Continuous account sessions must be monotonically ordered"
+
+    # Explicit cross-boundary state reconciliation between last session of 2020 and first of 2021
+    nav_by_session = {st["session"]: st for st in nav_hist}
+    sessions_2020 = sorted([s for s in nav_by_session if s.startswith("2020")])
+    sessions_2021 = sorted([s for s in nav_by_session if s.startswith("2021")])
+    last_2020_sess = sessions_2020[-1]
+    first_2021_sess = sessions_2021[0]
+    st_last_2020 = nav_by_session[last_2020_sess]
+    st_first_2021 = nav_by_session[first_2021_sess]
+
+    # Cash and positions must carry over across the boundary without reset
+    assert abs(st_first_2021["cash"] - st_last_2020["cash"]) < 1e-6, "Cash must carry over exactly across boundary"
+    assert st_first_2021["num_positions"] == st_last_2020["num_positions"], "Positions count must carry over across boundary"
+    assert st_first_2021["num_positions"] > 0, "Held positions must carry over into fold 2021"
+    assert abs(st_first_2021["cash"] - 100000.0) > 1000.0, "Cash must not be reset to initial capital"
+    assert abs(st_first_2021["total_nav"] - (st_first_2021["cash"] + st_first_2021["holdings_value"])) < 1e-6, "NAV identity must hold"
+
+    # Verify release manifest integrity and cryptographic artifact binding
+    manifest_verification = verify_release_manifest(output_dir)
+    assert manifest_verification["status"] == "RELEASE_MANIFEST_VERIFIED"
+    assert manifest_verification["verified_artifacts_count"] > 0
 
     # Assert source fixture remains 100% bit-for-bit unchanged
     after_manifest = compute_directory_manifest(source_dir)
@@ -876,3 +905,270 @@ def test_failure_condition_19_accidental_neural_training_call_fails_test(monkeyp
     with pytest.raises(AssertionError, match="CRITICAL VIOLATION: Neural training driver was invoked!"):
         train_backbone_model(None, None, None, None, None, None, None, 7, None, None)
     assert training_invoked is True
+
+
+# =============================================================================
+# 3. Explicit Acceptance Regression Suite for Section 1-3 Review Closures
+# =============================================================================
+
+def test_acceptance_checkpoint_pending_in_inventory_halts_recovery(cpu_recovery_fixture):
+    """Category 1: Take a valid checkpoint with correct digest, mark inventory pending -> halts before predictions."""
+    inv_file = cpu_recovery_fixture["inv_path"]
+    inv_data = json.loads(inv_file.read_text(encoding="utf-8"))
+    inv_data[0]["disposition"] = "reuse candidate—verification pending"
+    inv_file.write_text(to_canonical_json(inv_data), encoding="utf-8")
+
+    out_dir = cpu_recovery_fixture["fixture_root"] / "out_pending"
+
+    with pytest.raises(RuntimeError, match="RECOVERY_ABORTED.*not approved for reuse"):
+        execute_zero_retraining_recovery(
+            source_dir=cpu_recovery_fixture["source_dir"],
+            output_dir=out_dir,
+            config=cpu_recovery_fixture["config"],
+            sample_ids_dir=cpu_recovery_fixture["sample_ids_dir"],
+            data_dir=cpu_recovery_fixture["data_dir"],
+            selected_folds=[2020, 2021],
+            inventory_path=inv_file,
+            allow_reduced_arms=True,
+        )
+
+    assert not (out_dir / "fold_2020" / "policy_predictions.json").exists()
+
+
+def test_acceptance_checkpoint_rejected_in_inventory_halts_recovery(cpu_recovery_fixture):
+    """Category 1: Take a valid checkpoint with correct digest, mark inventory rejected -> halts before predictions."""
+    inv_file = cpu_recovery_fixture["inv_path"]
+    inv_data = json.loads(inv_file.read_text(encoding="utf-8"))
+    inv_data[0]["disposition"] = "REUSE_REJECTED"
+    inv_file.write_text(to_canonical_json(inv_data), encoding="utf-8")
+
+    out_dir = cpu_recovery_fixture["fixture_root"] / "out_rejected"
+
+    with pytest.raises(RuntimeError, match="RECOVERY_ABORTED.*not approved for reuse"):
+        execute_zero_retraining_recovery(
+            source_dir=cpu_recovery_fixture["source_dir"],
+            output_dir=out_dir,
+            config=cpu_recovery_fixture["config"],
+            sample_ids_dir=cpu_recovery_fixture["sample_ids_dir"],
+            data_dir=cpu_recovery_fixture["data_dir"],
+            selected_folds=[2020, 2021],
+            inventory_path=inv_file,
+            allow_reduced_arms=True,
+        )
+
+    assert not (out_dir / "fold_2020" / "policy_predictions.json").exists()
+
+
+def test_acceptance_missing_or_incomplete_training_provenance_halts_recovery(cpu_recovery_fixture):
+    """Category 1: Missing or stripped training_identity in provenance halts recovery before prediction generation."""
+    source_dir = cpu_recovery_fixture["source_dir"]
+    comp_file = source_dir / "fold_2020" / "checkpoints_MLP_ANNUAL_966_64_128_1_seed7" / "job_completion.json"
+    comp_data = json.loads(comp_file.read_text(encoding="utf-8"))
+
+    # Case A: Delete training_identity entirely
+    del comp_data["training_identity"]
+    comp_file.write_text(to_canonical_json(comp_data), encoding="utf-8")
+
+    out_dir = cpu_recovery_fixture["fixture_root"] / "out_missing_prov"
+    with pytest.raises(RuntimeError, match="RECOVERY_ABORTED.*not approved for reuse"):
+        execute_zero_retraining_recovery(
+            source_dir=source_dir,
+            output_dir=out_dir,
+            config=cpu_recovery_fixture["config"],
+            sample_ids_dir=cpu_recovery_fixture["sample_ids_dir"],
+            data_dir=cpu_recovery_fixture["data_dir"],
+            selected_folds=[2020, 2021],
+            inventory_path=cpu_recovery_fixture["inv_path"],
+            allow_reduced_arms=True,
+        )
+
+    assert not (out_dir / "fold_2020" / "policy_predictions.json").exists()
+
+
+def test_acceptance_duplicate_or_conflicting_inventory_identities_rejected(tmp_path: Path):
+    """Category 1: Reject duplicate inventory identities and conflicting relative path assignments."""
+    # 1. Duplicate job_id
+    dup_inv = tmp_path / "dup_inv.json"
+    dup_inv.write_text(to_canonical_json([
+        {"job_id": "fold_2020_model_1", "sha256": "abc", "disposition": "REUSE_APPROVED"},
+        {"job_id": "fold_2020_model_1", "sha256": "def", "disposition": "REUSE_APPROVED"},
+    ]), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="CRITICAL INVENTORY VIOLATION: Duplicate inventory identity"):
+        load_and_validate_checkpoint_inventory(dup_inv)
+
+    # 2. Conflicting relative path
+    conflict_inv = tmp_path / "conflict_inv.json"
+    conflict_inv.write_text(to_canonical_json([
+        {"job_id": "fold_2020_model_1", "sha256": "abc", "relative_path": "fold_2020/best.pt", "disposition": "REUSE_APPROVED"},
+        {"job_id": "fold_2020_model_2", "sha256": "def", "relative_path": "fold_2020/best.pt", "disposition": "REUSE_APPROVED"},
+    ]), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="CRITICAL INVENTORY VIOLATION: Conflicting inventory assignment"):
+        load_and_validate_checkpoint_inventory(conflict_inv)
+
+
+def test_acceptance_normal_recovery_orchestration_rejects_missing_configured_account(cpu_recovery_fixture, monkeypatch):
+    """Category 2: Normal recovery orchestration (without manual expected_accounts) fails on missing configured account."""
+    real_sim = run_continuous_portfolio_simulation
+
+    def monkey_sim(*args, **kwargs):
+        res = real_sim(*args, **kwargs)
+        # Drop one configured account from coverage_manifest
+        cov_list = res["coverage_manifest"]
+        filtered_cov = [c for c in cov_list if not (c.get("fold_year") == 2020 and c.get("policy_id") == "MEM_SIM")]
+        res["coverage_manifest"] = filtered_cov
+        return res
+
+    monkeypatch.setattr("scripts.recover_a30_production.run_continuous_portfolio_simulation", monkey_sim)
+
+    out_dir = cpu_recovery_fixture["fixture_root"] / "out_missing_acct"
+    # Call without passing expected_accounts: orchestration must construct it automatically
+    with pytest.raises(RuntimeError, match="RELEASE_VERIFICATION_FAILURE: Exact account set mismatch! Missing accounts: 1"):
+        execute_zero_retraining_recovery(
+            source_dir=cpu_recovery_fixture["source_dir"],
+            output_dir=out_dir,
+            config=cpu_recovery_fixture["config"],
+            sample_ids_dir=cpu_recovery_fixture["sample_ids_dir"],
+            data_dir=cpu_recovery_fixture["data_dir"],
+            selected_folds=[2020, 2021],
+            inventory_path=cpu_recovery_fixture["inv_path"],
+            selected_securities=["US_AAPL", "US_MSFT"],
+            allow_reduced_arms=True,
+        )
+
+
+def test_acceptance_normal_recovery_orchestration_rejects_unexpected_account_same_count(cpu_recovery_fixture, monkeypatch):
+    """Category 2: Normal recovery orchestration fails when replacing a configured account with an unexpected one."""
+    real_sim = run_continuous_portfolio_simulation
+
+    def monkey_sim(*args, **kwargs):
+        res = real_sim(*args, **kwargs)
+        cov_list = res["coverage_manifest"]
+        for c in cov_list:
+            if c.get("fold_year") == 2020 and c.get("policy_id") == "MEM_SIM":
+                c["policy_id"] = "UNEXPECTED_ROGUE_POLICY"
+                break
+        res["coverage_manifest"] = cov_list
+        return res
+
+    monkeypatch.setattr("scripts.recover_a30_production.run_continuous_portfolio_simulation", monkey_sim)
+
+    out_dir = cpu_recovery_fixture["fixture_root"] / "out_unexpected_acct"
+    # Call without passing expected_accounts: orchestration must construct it automatically and reject
+    with pytest.raises(RuntimeError, match="RELEASE_VERIFICATION_FAILURE: Exact account set mismatch!.*Unexpected accounts: 1"):
+        execute_zero_retraining_recovery(
+            source_dir=cpu_recovery_fixture["source_dir"],
+            output_dir=out_dir,
+            config=cpu_recovery_fixture["config"],
+            sample_ids_dir=cpu_recovery_fixture["sample_ids_dir"],
+            data_dir=cpu_recovery_fixture["data_dir"],
+            selected_folds=[2020, 2021],
+            inventory_path=cpu_recovery_fixture["inv_path"],
+            selected_securities=["US_AAPL", "US_MSFT"],
+            allow_reduced_arms=True,
+        )
+
+
+def test_acceptance_per_account_forecast_mismatch_fails_validation():
+    """Category 2: Reconciles exact forecast equality per account (sealed_forecasts == expected_forecasts)."""
+    # Two accounts where total missing forecasts is 0 globally, but individual account 1 has a shortfall
+    cov = [
+        {
+            "fold_year": 2021,
+            "market": "US",
+            "policy_id": "MLP_BASE",
+            "realization_id": 7,
+            "candidate_queries": 10,
+            "decisions": 10,
+            "admitted_queries": 10,
+            "admitted_qids": [f"2021_US_AAPL_{i}" for i in range(10)],
+            "exclusion_reasons": {},
+            "expected_forecasts": 10,
+            "sealed_forecasts": 9,  # SHORTFALL OF 1
+        },
+        {
+            "fold_year": 2021,
+            "market": "US",
+            "policy_id": "TRANS_BASE",
+            "realization_id": 7,
+            "candidate_queries": 10,
+            "decisions": 10,
+            "admitted_queries": 10,
+            "admitted_qids": [f"2021_US_AAPL_{i}" for i in range(10)],
+            "exclusion_reasons": {},
+            "expected_forecasts": 10,
+            "sealed_forecasts": 11,  # SURPLUS OF 1, TOTAL SUM BALANCED
+        },
+    ]
+
+    with pytest.raises(RuntimeError, match="RELEASE_VERIFICATION_FAILURE: Model policy MLP_BASE sealed forecasts \\(9\\) does not match expected forecasts \\(10\\)"):
+        validate_release_coverage_and_accounting(
+            coverage_manifest=cov,
+            fold_data_by_year={2021: {"eval_records": [], "sec_info": {}}},
+            folds_to_run=[2021],
+        )
+
+
+def test_acceptance_transactionality_deliberate_immutability_failure_leaves_no_success_markers(cpu_recovery_fixture, monkeypatch):
+    """Category 3: Deliberate failure at the final immutability check leaves no success receipts in output_dir."""
+    source_dir = cpu_recovery_fixture["source_dir"]
+    output_dir = cpu_recovery_fixture["fixture_root"] / "out_immutability_fail"
+
+    real_assert_unchanged = scripts.recover_a30_production.assert_directory_unchanged
+
+    def monkey_assert_unchanged(dir_path, before_manifest, stage_name):
+        if "zero-retraining recovery execution" in stage_name:
+            raise AssertionError("SIMULATED CRITICAL IMMUTABILITY BREACH: Source modified!")
+        return real_assert_unchanged(dir_path, before_manifest, stage_name)
+
+    monkeypatch.setattr("scripts.recover_a30_production.assert_directory_unchanged", monkey_assert_unchanged)
+
+    with pytest.raises(AssertionError, match="SIMULATED CRITICAL IMMUTABILITY BREACH"):
+        execute_zero_retraining_recovery(
+            source_dir=source_dir,
+            output_dir=output_dir,
+            config=cpu_recovery_fixture["config"],
+            sample_ids_dir=cpu_recovery_fixture["sample_ids_dir"],
+            data_dir=cpu_recovery_fixture["data_dir"],
+            selected_folds=[2020, 2021],
+            inventory_path=cpu_recovery_fixture["inv_path"],
+            selected_securities=["US_AAPL", "US_MSFT"],
+            allow_reduced_arms=True,
+        )
+
+    # Assert that NO success completion markers survive in the output directory
+    assert not (output_dir / "recovery_summary.json").exists(), "recovery_summary.json must NOT survive on failure"
+    assert not (output_dir / "pipeline_summary.json").exists(), "pipeline_summary.json must NOT survive on failure"
+    assert not (output_dir / "recovery_completion.json").exists(), "recovery_completion.json must NOT survive on failure"
+    assert not (output_dir / "release_manifest.json").exists(), "release_manifest.json must NOT survive on failure"
+
+
+def test_acceptance_release_manifest_detects_artifact_tampering(cpu_recovery_fixture):
+    """Category 3: Completed release manifest detects post-sealing tampering with any bound artifact."""
+    output_dir = cpu_recovery_fixture["fixture_root"] / "out_tamper_test"
+
+    res = execute_zero_retraining_recovery(
+        source_dir=cpu_recovery_fixture["source_dir"],
+        output_dir=output_dir,
+        config=cpu_recovery_fixture["config"],
+        sample_ids_dir=cpu_recovery_fixture["sample_ids_dir"],
+        data_dir=cpu_recovery_fixture["data_dir"],
+        selected_folds=[2020, 2021],
+        inventory_path=cpu_recovery_fixture["inv_path"],
+        selected_securities=["US_AAPL", "US_MSFT"],
+        allow_reduced_arms=True,
+    )
+    assert res["status"] == "RECOVERY_SUCCESS"
+
+    # Verify initially passes
+    v_clean = verify_release_manifest(output_dir)
+    assert v_clean["status"] == "RELEASE_MANIFEST_VERIFIED"
+
+    # Tamper with an analysis artifact
+    contrast_file = output_dir / "release_analysis" / "primary_contrasts.json"
+    contrast_file.write_text("TAMPERED_PRIMARY_CONTRASTS_PAYLOAD", encoding="utf-8")
+
+    # verify_release_manifest must detect tampering and raise RuntimeError
+    with pytest.raises(RuntimeError, match="RELEASE_MANIFEST_TAMPERED: Digest mismatch for 'release_analysis/primary_contrasts.json'"):
+        verify_release_manifest(output_dir)
