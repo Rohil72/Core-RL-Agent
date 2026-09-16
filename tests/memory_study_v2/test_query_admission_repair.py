@@ -55,6 +55,12 @@ from scripts.launch_a30_production import (
     compute_prediction_identity,
     run_continuous_portfolio_simulation,
     to_canonical_json,
+    validate_release_coverage_and_accounting,
+)
+from scripts.recover_a30_production import (
+    audit_source_checkpoints,
+    execute_zero_retraining_recovery,
+    verify_checkpoint_compatibility,
 )
 
 
@@ -506,38 +512,40 @@ def test_end_to_end_decision_path_and_execution_across_fold_boundary(tmp_path: P
     """
     sessions_2020 = ["2020-12-29", "2020-12-30", "2020-12-31"]
     sessions_2021 = ["2021-01-04", "2021-01-05", "2021-01-06"]
-    sec_ids = ["US_AAPL"]
+    sec_ids = ["US_AAPL", "US_MSFT"]
 
     fold_data_2020 = _make_mock_fold_data(sessions=sessions_2020, sec_ids=sec_ids, evaluation_year=2020)
     fold_data_2021 = _make_mock_fold_data(sessions=sessions_2021, sec_ids=sec_ids, evaluation_year=2021)
 
     preds_2020 = [
         PolicyPredictionRecord(
-            query_id=f"2020_US_AAPL_{s}",
+            query_id=f"2020_{s_id}_{s}",
             policy_id="MLP_BASE",
             realization_id=7,
             market="US",
-            security_id="US_AAPL",
+            security_id=s_id,
             decision_session=s,
-            prediction=0.08,
+            prediction=0.08 if s_id == "US_AAPL" else -0.05,
             fold=2020,
             source_artifact_id="test_2020",
         )
         for s in sessions_2020
+        for s_id in sec_ids
     ]
     preds_2021 = [
         PolicyPredictionRecord(
-            query_id=f"2021_US_AAPL_{s}",
+            query_id=f"2021_{s_id}_{s}",
             policy_id="MLP_BASE",
             realization_id=7,
             market="US",
-            security_id="US_AAPL",
+            security_id=s_id,
             decision_session=s,
             prediction=0.09,
             fold=2021,
             source_artifact_id="test_2021",
         )
         for s in sessions_2021
+        for s_id in sec_ids
     ]
 
     res = run_continuous_portfolio_simulation(
@@ -550,13 +558,17 @@ def test_end_to_end_decision_path_and_execution_across_fold_boundary(tmp_path: P
     accounts = res["policy_accounts"]
     acct = accounts[("MLP_BASE", "US", 7)]
 
-    # Verify orders were planned and account recorded daily history
+    # Verify orders were planned, post-boundary fills occurred, and account recorded continuous daily history
     cov_2020 = next(c for c in res["coverage_manifest"] if c["fold_year"] == 2020)
     cov_2021 = next(c for c in res["coverage_manifest"] if c["fold_year"] == 2021)
 
     assert cov_2020["orders"] > 0, "Expected orders planned in 2020"
+    assert cov_2020["fills"] > 0, "Expected buy fills in 2020"
     assert cov_2021["admitted_queries"] > 0, "Expected queries admitted in 2021"
     assert cov_2021["sealed_forecasts"] > 0, "Expected sealed forecasts in 2021"
+    assert cov_2021["orders"] > 0, "Expected orders planned in 2021"
+    assert cov_2021["fills"] > 0, "Expected post-boundary fills in 2021"
+    assert any(tr.session.startswith("2021") and tr.side == "BUY" for tr in acct.trades), "Expected post-boundary BUY fill in 2021"
     assert len(acct.daily_history) == len(sessions_2020) + len(sessions_2021)
 
 
@@ -638,12 +650,11 @@ def test_unaffected_2020_fixture_behavior_preserved(tmp_path: Path):
 
 
 # ============================================================================
-# 6. Strengthened Release Audit Coverage Tests (Section 7)
+# 6. Strengthened Production Release Audit and Recovery Tests (Section 7)
 # ============================================================================
 
-def test_release_audit_catches_query_admission_silence():
-    """Verify that release checks fail if a market has valid evaluation queries but 0 admitted queries in simulation."""
-    # Build simulated coverage where admitted_queries = 0 despite valid queries in fold
+def test_production_validator_catches_query_admission_silence():
+    """Verify that validate_release_coverage_and_accounting fails if a market has valid queries but 0 admitted."""
     fake_coverage = [{
         "fold_year": 2021,
         "market": "US",
@@ -651,6 +662,7 @@ def test_release_audit_catches_query_admission_silence():
         "realization_id": 7,
         "candidate_queries": 100,
         "admitted_queries": 0,  # SILENT ADMISSION FAILURE
+        "admitted_qids": [],
         "decisions": 100,
         "exclusion_reasons": {"MISSING_SESSION_BAR": 100},
         "expected_forecasts": 0,
@@ -683,73 +695,277 @@ def test_release_audit_catches_query_admission_silence():
         }
     }
 
-    # Simulate release check logic
-    with pytest.raises(RuntimeError, match="RELEASE_VERIFICATION_FAILURE.*admitted 0 queries"):
-        for f_yr in [2021]:
-            f_d = fold_data.get(f_yr, {})
-            f_eval = f_d.get("eval_records", [])
-            f_sec = f_d.get("sec_info", {})
-            eval_by_mkt = {"US": len(f_eval)}
-            for mkt, exp_evals in eval_by_mkt.items():
-                mkt_entries = [c for c in fake_coverage if c.get("fold_year") == f_yr and c.get("market") == mkt]
-                for entry in mkt_entries:
-                    if exp_evals > 0 and entry.get("admitted_queries", 0) == 0:
-                        raise RuntimeError(
-                            f"RELEASE_VERIFICATION_FAILURE: Market {mkt} in fold {f_yr} has {exp_evals} "
-                            f"valid evaluation queries in dataset, but account ({entry.get('policy_id')}, "
-                            f"{entry.get('realization_id')}) admitted 0 queries!"
-                        )
+    with pytest.raises(RuntimeError, match=r"RELEASE_VERIFICATION_FAILURE: Partial or mismatched query admission.*expected 1 queries, but admitted 0"):
+        validate_release_coverage_and_accounting(
+            coverage_manifest=fake_coverage,
+            fold_data_by_year=fold_data,
+            folds_to_run=[2021],
+        )
 
 
-def test_release_audit_catches_query_identity_mismatch_in_exclusions():
-    """Verify that release checks fail if QUERY_IDENTITY_MISMATCH appears in exclusion reasons."""
+def test_production_validator_rejects_partial_query_loss():
+    """Verify that validate_release_coverage_and_accounting fails loudly on partial query losses (e.g. 1 admitted vs 1000 expected)."""
+    # 1000 expected evaluation queries
+    eval_recs = [
+        SampleIndexRecord(
+            security_id=f"US_SEC_{i}",
+            session="2021-01-04",
+            session_ordinal=1,
+            query_id=f"2021_US_SEC_{i}_2021-01-04",
+            input_window_valid=True,
+            target_63_valid=True,
+            target_63_available_at="2021-04-05",
+            bank_126_valid=True,
+            bank_126_available_at="2021-07-05",
+        )
+        for i in range(1000)
+    ]
+    sec_info = {f"US_SEC_{i}": {"market": "US"} for i in range(1000)}
+
+    # Partial admission: only 1 query admitted, 999 excluded
     fake_coverage = [{
         "fold_year": 2021,
         "market": "US",
         "policy_id": "MLP_BASE",
         "realization_id": 7,
-        "candidate_queries": 100,
-        "admitted_queries": 50,
-        "decisions": 100,
-        "exclusion_reasons": {"QUERY_IDENTITY_MISMATCH": 50},
-        "expected_forecasts": 50,
-        "sealed_forecasts": 50,
+        "candidate_queries": 1000,
+        "admitted_queries": 1,
+        "admitted_qids": ["2021_US_SEC_0_2021-01-04"],
+        "decisions": 1000,
+        "exclusion_reasons": {"INVALID_BAR_IN_INPUT_WINDOW": 999},
+        "expected_forecasts": 1,
+        "sealed_forecasts": 1,
+        "valid_scores": 1,
+        "eligible_scores": 1,
+        "orders": 1,
+        "fills": 0,
+        "exposure_sessions": 0,
     }]
 
-    with pytest.raises(RuntimeError, match="RELEASE_VERIFICATION_FAILURE: QUERY_IDENTITY_MISMATCH recorded"):
-        for c in fake_coverage:
-            excls = c.get("exclusion_reasons", {})
-            if "QUERY_IDENTITY_MISMATCH" in excls and excls["QUERY_IDENTITY_MISMATCH"] > 0:
-                raise RuntimeError(
-                    f"RELEASE_VERIFICATION_FAILURE: QUERY_IDENTITY_MISMATCH recorded in exclusions for "
-                    f"({c.get('fold_year')}, {c.get('market')}, {c.get('policy_id')})!"
-                )
+    fold_data = {
+        2021: {
+            "eval_records": eval_recs,
+            "sec_info": sec_info,
+        }
+    }
+
+    with pytest.raises(RuntimeError, match="RELEASE_VERIFICATION_FAILURE: Partial or mismatched query admission.*expected 1000 queries, but admitted 1"):
+        validate_release_coverage_and_accounting(
+            coverage_manifest=fake_coverage,
+            fold_data_by_year=fold_data,
+            folds_to_run=[2021],
+        )
 
 
-def test_release_audit_catches_forecast_expectation_discrepancy():
-    """Verify that release checks fail if model expected_forecasts does not match admitted_queries."""
-    fake_coverage = [{
+def test_production_validator_empty_population_vs_missing_metadata():
+    """Verify distinction between intentionally empty population and missing metadata."""
+    # 1. Intentionally empty population: eval_records is explicitly empty list []
+    fold_data_empty = {
+        2021: {
+            "eval_records": [],
+            "sec_info": {},
+        }
+    }
+    coverage_empty = [{
         "fold_year": 2021,
         "market": "US",
         "policy_id": "MLP_BASE",
         "realization_id": 7,
-        "candidate_queries": 100,
-        "admitted_queries": 50,
-        "decisions": 100,
-        "exclusion_reasons": {"INVALID_BAR_IN_INPUT_WINDOW": 50},
-        "expected_forecasts": 0,  # Mismatch: 50 queries admitted but 0 expected forecasts!
+        "candidate_queries": 0,
+        "admitted_queries": 0,
+        "admitted_qids": [],
+        "decisions": 0,
+        "exclusion_reasons": {},
+        "expected_forecasts": 0,
         "sealed_forecasts": 0,
+        "valid_scores": 0,
+        "eligible_scores": 0,
+        "orders": 0,
+        "fills": 0,
+        "exposure_sessions": 0,
     }]
 
-    with pytest.raises(RuntimeError, match="RELEASE_VERIFICATION_FAILURE: Model policy MLP_BASE expected forecasts"):
-        for c in fake_coverage:
-            pol = c.get("policy_id", "")
-            adm = c.get("admitted_queries", 0)
-            if pol not in ("PASSIVE_EQUAL_WEIGHT", "MOMENTUM_21", "VOL_MOMENTUM_21"):
-                exp_fc = c.get("expected_forecasts", 0)
-                if exp_fc != adm:
-                    raise RuntimeError(
-                        f"RELEASE_VERIFICATION_FAILURE: Model policy {pol} expected forecasts ({exp_fc}) "
-                        f"does not match admitted queries ({adm}) for ({c.get('fold_year')}, {c.get('market')})!"
-                    )
+    # Intentionally empty passes validation cleanly
+    res = validate_release_coverage_and_accounting(
+        coverage_manifest=coverage_empty,
+        fold_data_by_year=fold_data_empty,
+        folds_to_run=[2021],
+    )
+    assert res["status"] == "VALIDATED"
+
+    # 2. Missing eval_records metadata entirely
+    fold_data_missing_eval = {
+        2021: {
+            "sec_info": {},
+        }
+    }
+    with pytest.raises(RuntimeError, match="RELEASE_VERIFICATION_FAILURE: Missing required 'eval_records' metadata"):
+        validate_release_coverage_and_accounting(
+            coverage_manifest=coverage_empty,
+            fold_data_by_year=fold_data_missing_eval,
+            folds_to_run=[2021],
+        )
+
+    # 3. Missing sec_info metadata entirely
+    fold_data_missing_sec = {
+        2021: {
+            "eval_records": [],
+        }
+    }
+    with pytest.raises(RuntimeError, match="RELEASE_VERIFICATION_FAILURE: Missing required 'sec_info' metadata"):
+        validate_release_coverage_and_accounting(
+            coverage_manifest=coverage_empty,
+            fold_data_by_year=fold_data_missing_sec,
+            folds_to_run=[2021],
+        )
+
+
+def test_production_validator_rejects_query_set_mismatch():
+    """Verify that validate_release_coverage_and_accounting verifies exact set equality of query keys."""
+    eval_recs = [
+        SampleIndexRecord(
+            security_id="US_AAPL",
+            session="2021-01-04",
+            session_ordinal=1,
+            query_id="2021_US_AAPL_2021-01-04",
+            input_window_valid=True,
+            target_63_valid=True,
+            target_63_available_at="2021-04-05",
+            bank_126_valid=True,
+            bank_126_available_at="2021-07-05",
+        ),
+        SampleIndexRecord(
+            security_id="US_MSFT",
+            session="2021-01-04",
+            session_ordinal=1,
+            query_id="2021_US_MSFT_2021-01-04",
+            input_window_valid=True,
+            target_63_valid=True,
+            target_63_available_at="2021-04-05",
+            bank_126_valid=True,
+            bank_126_available_at="2021-07-05",
+        ),
+    ]
+    sec_info = {
+        "US_AAPL": {"market": "US"},
+        "US_MSFT": {"market": "US"},
+    }
+
+    # Same count (2 queries), but one key is different
+    fake_coverage = [{
+        "fold_year": 2021,
+        "market": "US",
+        "policy_id": "MLP_BASE",
+        "realization_id": 7,
+        "candidate_queries": 2,
+        "admitted_queries": 2,
+        "admitted_qids": ["2021_US_AAPL_2021-01-04", "2021_US_WRONG_2021-01-04"],
+        "decisions": 2,
+        "exclusion_reasons": {},
+        "expected_forecasts": 2,
+        "sealed_forecasts": 2,
+        "valid_scores": 2,
+        "eligible_scores": 2,
+        "orders": 0,
+        "fills": 0,
+        "exposure_sessions": 0,
+    }]
+
+    fold_data = {
+        2021: {
+            "eval_records": eval_recs,
+            "sec_info": sec_info,
+        }
+    }
+
+    with pytest.raises(RuntimeError, match="RELEASE_VERIFICATION_FAILURE: Admitted query set mismatch for market US in fold 2021"):
+        validate_release_coverage_and_accounting(
+            coverage_manifest=fake_coverage,
+            fold_data_by_year=fold_data,
+            folds_to_run=[2021],
+        )
+
+
+def test_simulation_rejects_duplicate_prediction_keys(tmp_path: Path):
+    """Verify that run_continuous_portfolio_simulation rejects duplicate prediction records for the same account/security/session."""
+    sessions = ["2021-01-04", "2021-01-05"]
+    sec_ids = ["US_AAPL"]
+
+    fold_data = _make_mock_fold_data(sessions=sessions, sec_ids=sec_ids, evaluation_year=2021)
+
+    # Two duplicate predictions for the same query key (MLP_BASE, 7, US_AAPL, 2021-01-04)
+    preds = [
+        PolicyPredictionRecord(
+            query_id="2021_US_AAPL_2021-01-04",
+            policy_id="MLP_BASE",
+            realization_id=7,
+            market="US",
+            security_id="US_AAPL",
+            decision_session="2021-01-04",
+            prediction=0.05,
+            fold=2021,
+            source_artifact_id="first_source",
+        ),
+        PolicyPredictionRecord(
+            query_id="2021_US_AAPL_2021-01-04",
+            policy_id="MLP_BASE",
+            realization_id=7,
+            market="US",
+            security_id="US_AAPL",
+            decision_session="2021-01-04",
+            prediction=0.06,  # DUPLICATE!
+            fold=2021,
+            source_artifact_id="second_source",
+        ),
+    ]
+
+    with pytest.raises(ValueError, match="DUPLICATE_PREDICTION_KEY"):
+        run_continuous_portfolio_simulation(
+            folds_to_run=[2021],
+            fold_data_by_year={2021: fold_data},
+            predictions_by_year={2021: preds},
+            output_dir=tmp_path,
+        )
+
+
+def test_recovery_script_source_immutability_and_separation(tmp_path: Path):
+    """Verify that recover_a30_production enforces separate directories and never modifies source artifacts."""
+    source_dir = tmp_path / "mock_source"
+    source_dir.mkdir()
+    chk_dir = source_dir / "fold_2020" / "checkpoints_MLP_ANNUAL_966_64_128_1_seed7"
+    chk_dir.mkdir(parents=True)
+    fake_chk = chk_dir / "best_checkpoint.pt"
+    fake_chk.write_bytes(b"MOCK_CHECKPOINT_DATA_SAFE")
+
+    before_sha = hashlib.sha256(fake_chk.read_bytes()).hexdigest()
+    before_mtime = fake_chk.stat().st_mtime_ns
+
+    # 1. Recovery must reject source_dir == output_dir
+    with pytest.raises(ValueError, match="CRITICAL SAFETY VIOLATION.*Source dir.*output dir.*must NOT be identical"):
+        execute_zero_retraining_recovery(
+            source_dir=source_dir,
+            output_dir=source_dir,
+            config={},
+            sample_ids_dir=tmp_path,
+            data_dir=tmp_path,
+        )
+
+    # 2. Recovery failure when checkpoints are missing or invalid must NOT delete or mutate source files
+    output_dir = tmp_path / "mock_recovery_out"
+    output_dir.mkdir()
+
+    with pytest.raises(RuntimeError, match="RECOVERY_ABORTED"):
+        execute_zero_retraining_recovery(
+            source_dir=source_dir,
+            output_dir=output_dir,
+            config={"neural": {"seeds": [7], "architectures": ["MLP_ANNUAL_966_64_128_1"]}, "folds": [{"evaluation_year": 2020}, {"evaluation_year": 2021}]},
+            sample_ids_dir=tmp_path,
+            data_dir=tmp_path,
+        )
+
+    # Assert source file was bit-for-bit preserved (not unlinked or overwritten)
+    assert fake_chk.exists(), "Source checkpoint must not be deleted"
+    assert hashlib.sha256(fake_chk.read_bytes()).hexdigest() == before_sha, "Source checkpoint bytes must not change"
+    assert fake_chk.stat().st_mtime_ns == before_mtime, "Source checkpoint timestamp must remain unchanged"
+
 

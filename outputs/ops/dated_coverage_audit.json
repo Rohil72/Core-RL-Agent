@@ -1,0 +1,192 @@
+{
+  "audit_title": "Dated Vendor OHLCV Coverage and Session Outage Audit",
+  "created_at_utc": "2026-09-16T11:46:29.887153+00:00",
+  "base_reference_revision": "6be9ef58aaa24d096a6ee0fc35a7568542e78874",
+  "history_requirement_policy": {
+    "description": "Strict preservation of representation and feature warmup windows without relaxing history requirements",
+    "required_feature_warmup_sessions": 252,
+    "required_representation_window_sessions": 252,
+    "total_required_uninterrupted_history_sessions": 503,
+    "relaxation_policy": "NO_RELAXATION (strict adherence to causal, uninterrupted data integrity)"
+  },
+  "market_audits": {
+    "US": {
+      "vendor_coverage_status": "COMPLETE",
+      "missing_session_dates": [],
+      "outage_periods": [],
+      "fold_admissibility": {
+        "2020": "FULL_COVERAGE",
+        "2021": "FULL_COVERAGE",
+        "2022": "FULL_COVERAGE",
+        "2023": "FULL_COVERAGE",
+        "2024": "FULL_COVERAGE",
+        "2025": "FULL_COVERAGE"
+      }
+    },
+    "UK": {
+      "vendor_coverage_status": "COMPLETE",
+      "missing_session_dates": [],
+      "outage_periods": [],
+      "fold_admissibility": {
+        "2020": "FULL_COVERAGE",
+        "2021": "FULL_COVERAGE",
+        "2022": "FULL_COVERAGE",
+        "2023": "FULL_COVERAGE",
+        "2024": "FULL_COVERAGE",
+        "2025": "FULL_COVERAGE"
+      }
+    },
+    "France": {
+      "vendor_coverage_status": "COMPLETE",
+      "missing_session_dates": [],
+      "outage_periods": [],
+      "fold_admissibility": {
+        "2020": "FULL_COVERAGE",
+        "2021": "FULL_COVERAGE",
+        "2022": "FULL_COVERAGE",
+        "2023": "FULL_COVERAGE",
+        "2024": "FULL_COVERAGE",
+        "2025": "FULL_COVERAGE"
+      }
+    },
+    "Brazil": {
+      "vendor_coverage_status": "COMPLETE",
+      "missing_session_dates": [],
+      "outage_periods": [],
+      "fold_admissibility": {
+        "2020": "FULL_COVERAGE",
+        "2021": "FULL_COVERAGE",
+        "2022": "FULL_COVERAGE",
+        "2023": "FULL_COVERAGE",
+        "2024": "FULL_COVERAGE",
+        "2025": "FULL_COVERAGE"
+      }
+    },
+    "China": {
+      "vendor_coverage_status": "PARTIAL_VENDOR_GAPS",
+      "missing_session_dates": [
+        "2019-04-29",
+        "2019-04-30"
+      ],
+      "root_cause": "Vendor OHLCV daily parquet files omit two consecutive scheduled trading sessions in April 2019",
+      "outage_periods": [
+        {
+          "start_session": "2019-04-29",
+          "end_session": "2021-05-27",
+          "first_admissible_session": "2021-05-28",
+          "reason": "503-session continuous history window required; 2019-04-30 gap contaminates all evaluation input windows through 2021-05-27"
+        }
+      ],
+      "fold_admissibility": {
+        "2020": "ZERO_ADMISSIBLE (legitimately excluded by 503-session history rule; INVALID_BAR_IN_INPUT_WINDOW)",
+        "2021": "PARTIAL_ADMISSIBLE (excluded through 2021-05-27; fully admissible from 2021-05-28 through 2021-12-31)",
+        "2022": "FULL_COVERAGE",
+        "2023": "FULL_COVERAGE",
+        "2024": "FULL_COVERAGE",
+        "2025": "FULL_COVERAGE"
+      }
+    },
+    "India": {
+      "vendor_coverage_status": "PARTIAL_VENDOR_GAPS",
+      "missing_session_dates": [
+        "2019-02-13",
+        "2019-03-29",
+        "2024-01-20"
+      ],
+      "root_cause": "Vendor OHLCV daily parquets omit early 2019 scheduled sessions (2019-02-13, 2019-03-29) and a special Saturday disaster-recovery trading session (2024-01-20)",
+      "outage_periods": [
+        {
+          "start_session": "2019-02-13",
+          "end_session": "2021-04-19",
+          "first_admissible_session": "2021-04-20",
+          "reason": "503-session continuous history window required; 2019-03-29 gap contaminates evaluation input windows through 2021-04-19"
+        },
+        {
+          "start_session": "2024-01-20",
+          "end_session": "2025-12-31",
+          "first_admissible_session": null,
+          "reason": "Missing Saturday disaster-recovery session (2024-01-20) present in venue calendar but missing in vendor parquets invalidates subsequent 503 sessions across 2024 and 2025"
+        }
+      ],
+      "fold_admissibility": {
+        "2020": "ZERO_ADMISSIBLE (legitimately excluded by 503-session history rule; INVALID_BAR_IN_INPUT_WINDOW)",
+        "2021": "PARTIAL_ADMISSIBLE (excluded through 2021-04-19; fully admissible from 2021-04-20 through 2021-12-31)",
+        "2022": "FULL_COVERAGE",
+        "2023": "FULL_COVERAGE",
+        "2024": "ZERO_ADMISSIBLE (legitimately excluded by 2024-01-20 missing Saturday session under strict history rule)",
+        "2025": "ZERO_ADMISSIBLE (legitimately excluded by 2024-01-20 missing Saturday session under strict history rule)"
+      }
+    }
+  },
+  "fold_summary": {
+    "2020": {
+      "active_markets": [
+        "Brazil",
+        "France",
+        "UK",
+        "US"
+      ],
+      "excluded_markets": [
+        "China",
+        "India"
+      ]
+    },
+    "2021": {
+      "active_markets": [
+        "Brazil",
+        "France",
+        "UK",
+        "US",
+        "China (from 2021-05-28)",
+        "India (from 2021-04-20)"
+      ],
+      "excluded_markets": []
+    },
+    "2022": {
+      "active_markets": [
+        "Brazil",
+        "China",
+        "France",
+        "India",
+        "UK",
+        "US"
+      ],
+      "excluded_markets": []
+    },
+    "2023": {
+      "active_markets": [
+        "Brazil",
+        "China",
+        "France",
+        "India",
+        "UK",
+        "US"
+      ],
+      "excluded_markets": []
+    },
+    "2024": {
+      "active_markets": [
+        "Brazil",
+        "China",
+        "France",
+        "UK",
+        "US"
+      ],
+      "excluded_markets": [
+        "India"
+      ]
+    },
+    "2025": {
+      "active_markets": [
+        "Brazil",
+        "China",
+        "France",
+        "UK",
+        "US"
+      ],
+      "excluded_markets": [
+        "India"
+      ]
+    }
+  }
+}

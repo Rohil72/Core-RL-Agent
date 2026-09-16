@@ -1162,6 +1162,7 @@ def run_continuous_portfolio_simulation(
     cov_counts: Dict[Tuple[int, str, str, Optional[int]], Dict[str, Any]] = collections.defaultdict(lambda: {
         "candidate_queries": 0,
         "admitted_queries": 0,
+        "admitted_qids": set(),
         "exclusion_reasons": collections.defaultdict(int),
         "expected_forecasts": 0,
         "sealed_forecasts": 0,
@@ -1180,7 +1181,9 @@ def run_continuous_portfolio_simulation(
         market_calendars = fold_data.get("market_calendars", {})
 
         fold_eval_records = fold_data.get("eval_records")
-        fold_eval_qids: Optional[Set[str]] = {r.query_id for r in fold_eval_records} if fold_eval_records else None
+        if fold_eval_records is None:
+            raise ValueError(f"MISSING_EVAL_RECORDS: fold_data for fold {fold_year} is missing 'eval_records' field")
+        fold_eval_qids: Set[str] = {r.query_id for r in fold_eval_records}
 
         # Build session record map for fast lookup of input_window_valid and exclusion_reason
         sec_recs_map: Dict[str, Dict[str, Any]] = {
@@ -1218,7 +1221,17 @@ def run_continuous_portfolio_simulation(
             s_id = getattr(r, "security_id", None) or (r.get("security_id") if isinstance(r, dict) else None)
             d_sess = getattr(r, "decision_session", None) or (r.get("decision_session") if isinstance(r, dict) else None)
             pred_val = getattr(r, "prediction", None) if hasattr(r, "prediction") else (r.get("prediction") if isinstance(r, dict) else None)
-            pred_index[(p_id, real_id, s_id, d_sess)] = pred_val
+            qid_r = getattr(r, "query_id", None) or (r.get("query_id") if isinstance(r, dict) else None)
+
+            pred_key = (p_id, real_id, s_id, d_sess)
+            if pred_key in pred_index:
+                raise ValueError(f"DUPLICATE_PREDICTION_KEY: Duplicate prediction for key {pred_key} in fold {fold_year}")
+            expected_qid = f"{fold_year}_{s_id}_{d_sess}"
+            if qid_r is not None and qid_r != expected_qid:
+                raise RuntimeError(
+                    f"QUERY_IDENTITY_MISMATCH: Prediction query_id '{qid_r}' does not match expected '{expected_qid}' for fold {fold_year}"
+                )
+            pred_index[pred_key] = pred_val
 
         # Drive accounts strictly by their native market scheduled sessions
         for mkt in unique_markets:
@@ -1288,6 +1301,7 @@ def run_continuous_portfolio_simulation(
                                 is_adm = (rec is not None and rec.input_window_valid and (fold_eval_qids is None or qid in fold_eval_qids))
                                 if is_adm:
                                     cov["admitted_queries"] += 1
+                                    cov["admitted_qids"].add(qid)
                                 else:
                                     excl = rec.exclusion_reason if (rec and rec.exclusion_reason) else ("MISSING_SESSION_BAR" if rec is None else "INVALID_BAR_IN_INPUT_WINDOW")
                                     cov["exclusion_reasons"][excl] += 1
@@ -1315,6 +1329,7 @@ def run_continuous_portfolio_simulation(
                                     scores[s] = -math.inf
                                 else:
                                     cov["admitted_queries"] += 1
+                                    cov["admitted_qids"].add(qid)
                                     vol = vol_map[s].get(t, 0.0)
                                     mom = mom_map[s].get(t, 0.0)
 
@@ -1444,6 +1459,7 @@ def run_continuous_portfolio_simulation(
                 "realization_id": real_id,
                 "candidate_queries": cov["candidate_queries"],
                 "admitted_queries": cov["admitted_queries"],
+                "admitted_qids": sorted(list(cov["admitted_qids"])),
                 "exclusion_reasons": dict(cov["exclusion_reasons"]),
                 "expected_forecasts": cov["expected_forecasts"],
                 "sealed_forecasts": cov["sealed_forecasts"],
@@ -1473,6 +1489,7 @@ def run_continuous_portfolio_simulation(
                 "realization_id": real_id,
                 "candidate_queries": cov["candidate_queries"],
                 "admitted_queries": cov["admitted_queries"],
+                "admitted_qids": sorted(list(cov["admitted_qids"])),
                 "exclusion_reasons": dict(cov["exclusion_reasons"]),
                 "expected_forecasts": cov["expected_forecasts"],
                 "sealed_forecasts": cov["sealed_forecasts"],
@@ -1565,6 +1582,190 @@ def run_continuous_portfolio_simulation(
         "market_open_mask": market_open_mask,
         "coverage_manifest": total_coverage_list,
     }
+
+def validate_release_coverage_and_accounting(
+    coverage_manifest: List[Dict[str, Any]],
+    fold_data_by_year: Dict[int, Dict[str, Any]],
+    folds_to_run: List[int],
+) -> Dict[str, Any]:
+    """Strictly validates coverage accounting and query set equality against independent evaluation populations.
+
+    Enforces:
+    1. Zero missing sealed forecasts across all simulated accounts.
+    2. Exact coverage accounting: candidate_queries == decisions == admitted_queries + sum(exclusion_reasons).
+    3. Zero QUERY_IDENTITY_MISMATCH exclusion errors.
+    4. Exact query-key set equality (or count equality if qids not tracked) against independent evaluation records.
+    5. Detection and rejection of partial admission drops (e.g. 1 admitted + 999 excluded vs 1000 expected).
+    6. Distinction between intentionally empty populations (expected count 0 -> admitted count 0) and missing metadata.
+    7. Model policies expected_forecasts == admitted_queries.
+    """
+    total_candidate_queries = sum(c.get("candidate_queries", 0) for c in coverage_manifest)
+    total_admitted_queries = sum(c.get("admitted_queries", 0) for c in coverage_manifest)
+    total_expected_forecasts = sum(c.get("expected_forecasts", 0) for c in coverage_manifest)
+    total_sealed_forecasts = sum(c.get("sealed_forecasts", 0) for c in coverage_manifest)
+    total_decisions = sum(c.get("decisions", 0) for c in coverage_manifest)
+
+    missing_forecasts = total_expected_forecasts - total_sealed_forecasts
+    if missing_forecasts > 0:
+        raise RuntimeError(
+            f"RELEASE_VERIFICATION_FAILURE: {missing_forecasts} expected forecasts are missing across simulated accounts!"
+        )
+
+    # 1. Reconcile internal coverage accounting for each account entry
+    for c in coverage_manifest:
+        f_yr = c.get("fold_year")
+        mkt = c.get("market")
+        pol = c.get("policy_id", "")
+        real_id = c.get("realization_id")
+        cand = c.get("candidate_queries", 0)
+        dec = c.get("decisions", 0)
+        adm = c.get("admitted_queries", 0)
+        excls = c.get("exclusion_reasons", {})
+        total_excl = sum(excls.values())
+
+        if cand != dec:
+            raise RuntimeError(
+                f"RELEASE_VERIFICATION_FAILURE: Decisions count {dec} does not equal candidate queries {cand} "
+                f"for ({f_yr}, {mkt}, {pol}, {real_id})!"
+            )
+        if cand != adm + total_excl:
+            raise RuntimeError(
+                f"RELEASE_VERIFICATION_FAILURE: Candidate queries {cand} does not reconcile with "
+                f"admitted ({adm}) + exclusions ({total_excl}) for ({f_yr}, {mkt}, {pol}, {real_id})!"
+            )
+        if "QUERY_IDENTITY_MISMATCH" in excls and excls["QUERY_IDENTITY_MISMATCH"] > 0:
+            raise RuntimeError(
+                f"RELEASE_VERIFICATION_FAILURE: QUERY_IDENTITY_MISMATCH recorded in exclusions for "
+                f"({f_yr}, {mkt}, {pol}, {real_id})!"
+            )
+        if pol not in ("PASSIVE_EQUAL_WEIGHT", "MOMENTUM_21", "VOL_MOMENTUM_21"):
+            exp_fc = c.get("expected_forecasts", 0)
+            if exp_fc != adm:
+                raise RuntimeError(
+                    f"RELEASE_VERIFICATION_FAILURE: Model policy {pol} expected forecasts ({exp_fc}) "
+                    f"does not match admitted queries ({adm}) for ({f_yr}, {mkt}, {real_id})!"
+                )
+
+    # 2. Reconcile against independent evaluation dataset population
+    for f_yr in folds_to_run:
+        if f_yr not in fold_data_by_year:
+            raise RuntimeError(f"RELEASE_VERIFICATION_FAILURE: Missing fold data metadata for fold {f_yr}!")
+        f_data = fold_data_by_year[f_yr]
+        if not isinstance(f_data, dict):
+            raise RuntimeError(f"RELEASE_VERIFICATION_FAILURE: Invalid fold data structure for fold {f_yr}!")
+        if "eval_records" not in f_data:
+            raise RuntimeError(f"RELEASE_VERIFICATION_FAILURE: Missing required 'eval_records' metadata for fold {f_yr}!")
+        if "sec_info" not in f_data:
+            raise RuntimeError(f"RELEASE_VERIFICATION_FAILURE: Missing required 'sec_info' metadata for fold {f_yr}!")
+
+        f_eval_recs = f_data["eval_records"]
+        if f_eval_recs is None:
+            raise RuntimeError(f"RELEASE_VERIFICATION_FAILURE: 'eval_records' is None for fold {f_yr}!")
+        f_sec_info = f_data["sec_info"]
+        if f_sec_info is None:
+            raise RuntimeError(f"RELEASE_VERIFICATION_FAILURE: 'sec_info' is None for fold {f_yr}!")
+
+        # Determine terminal study session if this is the final fold in folds_to_run
+        # The final session of the entire study performs terminal liquidation at close and plans no next-day entries
+        terminal_sessions_by_mkt: Dict[str, Set[str]] = collections.defaultdict(set)
+        if f_yr == folds_to_run[-1]:
+            market_cals = f_data.get("market_calendars", {})
+            for s_meta in f_sec_info.values():
+                mkt_cand = s_meta.get("market") if isinstance(s_meta, dict) else getattr(s_meta, "market", None)
+                if mkt_cand and mkt_cand not in terminal_sessions_by_mkt:
+                    mkt_cal = market_cals.get(mkt_cand) or get_market_venue_calendar(mkt_cand)
+                    if mkt_cal is not None:
+                        sched = mkt_cal.sessions_in_range(f"{f_yr}-01-01", f"{f_yr}-12-31")
+                        if sched and len(sched) > 1:
+                            terminal_sessions_by_mkt[mkt_cand].add(sched[-1])
+
+        # Group expected query IDs by market
+        expected_qids_by_mkt: Dict[str, Set[str]] = collections.defaultdict(set)
+        for r in f_eval_recs:
+            qid = getattr(r, "query_id", None) or (r.get("query_id") if isinstance(r, dict) else None)
+            if not qid:
+                raise RuntimeError(f"RELEASE_VERIFICATION_FAILURE: Missing query_id in eval_records for fold {f_yr}!")
+            s_id = getattr(r, "security_id", None) or (r.get("security_id") if isinstance(r, dict) else None)
+            mkt = getattr(r, "market", None) or (r.get("market") if isinstance(r, dict) else None)
+            if not mkt and s_id and s_id in f_sec_info:
+                sec_meta = f_sec_info[s_id]
+                mkt = sec_meta.get("market") if isinstance(sec_meta, dict) else getattr(sec_meta, "market", None)
+            if not mkt:
+                raise RuntimeError(f"RELEASE_VERIFICATION_FAILURE: Missing market metadata for query '{qid}' in fold {f_yr}!")
+
+            sess = getattr(r, "session", None) or (r.get("session") if isinstance(r, dict) else None)
+            if f_yr == folds_to_run[-1] and sess and sess in terminal_sessions_by_mkt.get(mkt, set()):
+                continue
+
+            expected_qids_by_mkt[mkt].add(qid)
+
+        cov_entries = [c for c in coverage_manifest if c.get("fold_year") == f_yr]
+        if not cov_entries and (f_eval_recs or any(len(q) > 0 for q in expected_qids_by_mkt.values())):
+            raise RuntimeError(f"RELEASE_VERIFICATION_FAILURE: Independent population has eval queries for fold {f_yr}, but no simulation accounts were found!")
+
+        cov_by_mkt: Dict[str, List[Dict[str, Any]]] = collections.defaultdict(list)
+        for c in cov_entries:
+            mkt = c.get("market")
+            if not mkt:
+                raise RuntimeError(f"RELEASE_VERIFICATION_FAILURE: Coverage entry missing market in fold {f_yr}: {c}")
+            cov_by_mkt[mkt].append(c)
+
+        # Check markets present in expected_qids
+        for mkt, exp_qids in expected_qids_by_mkt.items():
+            mkt_cov = cov_by_mkt.get(mkt, [])
+            if len(exp_qids) > 0 and not mkt_cov:
+                raise RuntimeError(
+                    f"RELEASE_VERIFICATION_FAILURE: Independent population has {len(exp_qids)} eval queries "
+                    f"for market {mkt} in fold {f_yr}, but no simulation accounts were found!"
+                )
+
+        # Validate accounts in cov_by_mkt against expected query population
+        for mkt, mkt_cov in cov_by_mkt.items():
+            exp_qids = expected_qids_by_mkt.get(mkt, set())
+            exp_count = len(exp_qids)
+
+            for entry in mkt_cov:
+                pol_id = entry.get("policy_id")
+                real_id = entry.get("realization_id")
+                adm_count = entry.get("admitted_queries", 0)
+                cand_count = entry.get("candidate_queries", 0)
+                excls = entry.get("exclusion_reasons", {})
+
+                # Intentionally empty population:
+                if exp_count == 0 and adm_count != 0:
+                    raise RuntimeError(
+                        f"RELEASE_VERIFICATION_FAILURE: Market {mkt} in fold {f_yr} has empty expected evaluation population, "
+                        f"but account ({pol_id}, {real_id}) admitted {adm_count} queries!"
+                    )
+
+                if exp_count > 0:
+                    if adm_count != exp_count:
+                        raise RuntimeError(
+                            f"RELEASE_VERIFICATION_FAILURE: Partial or mismatched query admission for market {mkt} in fold {f_yr}, "
+                            f"policy {pol_id}, realization {real_id}: expected {exp_count} queries, but admitted {adm_count} "
+                            f"(candidate={cand_count}, exclusions={excls})!"
+                        )
+
+                    admitted_qids = entry.get("admitted_qids")
+                    if admitted_qids is not None:
+                        adm_set = set(admitted_qids)
+                        if adm_set != exp_qids:
+                            diff_missing = exp_qids - adm_set
+                            diff_extra = adm_set - exp_qids
+                            raise RuntimeError(
+                                f"RELEASE_VERIFICATION_FAILURE: Admitted query set mismatch for market {mkt} in fold {f_yr}, "
+                                f"policy {pol_id}, realization {real_id}: missing={len(diff_missing)}, unexpected={len(diff_extra)}!"
+                            )
+
+    return {
+        "status": "VALIDATED",
+        "total_candidate_queries": total_candidate_queries,
+        "total_admitted_queries": total_admitted_queries,
+        "total_expected_forecasts": total_expected_forecasts,
+        "total_sealed_forecasts": total_sealed_forecasts,
+        "total_decisions": total_decisions,
+    }
+
 
 def run_production_experiment_driver(context: Dict[str, Any]) -> Dict[str, Any]:
     """Full production experiment driver: trains backbones, executes retrieval, policies, and stats."""
@@ -2072,73 +2273,15 @@ def run_production_experiment_driver(context: Dict[str, Any]) -> Dict[str, Any]:
 
     # Coverage verification check for release validation (Section 7)
     coverage_manifest = port_res.get("coverage_manifest", [])
-    total_candidate_queries = sum(c.get("candidate_queries", 0) for c in coverage_manifest)
-    total_admitted_queries = sum(c.get("admitted_queries", 0) for c in coverage_manifest)
-    total_expected_forecasts = sum(c.get("expected_forecasts", 0) for c in coverage_manifest)
-    total_sealed_forecasts = sum(c.get("sealed_forecasts", 0) for c in coverage_manifest)
-    total_decisions = sum(c.get("decisions", 0) for c in coverage_manifest)
+    cov_val_res = validate_release_coverage_and_accounting(
+        coverage_manifest=coverage_manifest,
+        fold_data_by_year=fold_data_by_year,
+        folds_to_run=folds_to_run,
+    )
+    total_admitted_queries = cov_val_res["total_admitted_queries"]
+    total_expected_forecasts = cov_val_res["total_expected_forecasts"]
+    total_sealed_forecasts = cov_val_res["total_sealed_forecasts"]
     missing_forecasts = total_expected_forecasts - total_sealed_forecasts
-    if missing_forecasts > 0:
-        raise RuntimeError(
-            f"RELEASE_VERIFICATION_FAILURE: {missing_forecasts} expected forecasts are missing across simulated accounts!"
-        )
-
-    # 1. Reconcile coverage accounting: candidate_queries == decisions == admitted + exclusions
-    for c in coverage_manifest:
-        cand = c.get("candidate_queries", 0)
-        dec = c.get("decisions", 0)
-        adm = c.get("admitted_queries", 0)
-        excls = c.get("exclusion_reasons", {})
-        total_excl = sum(excls.values())
-        if cand != dec:
-            raise RuntimeError(
-                f"RELEASE_VERIFICATION_FAILURE: Decisions count {dec} does not equal candidate queries {cand} "
-                f"for ({c.get('fold_year')}, {c.get('market')}, {c.get('policy_id')})!"
-            )
-        if cand != adm + total_excl:
-            raise RuntimeError(
-                f"RELEASE_VERIFICATION_FAILURE: Candidate queries {cand} does not reconcile with "
-                f"admitted ({adm}) + exclusions ({total_excl}) for ({c.get('fold_year')}, {c.get('market')}, {c.get('policy_id')})!"
-            )
-        if "QUERY_IDENTITY_MISMATCH" in excls and excls["QUERY_IDENTITY_MISMATCH"] > 0:
-            raise RuntimeError(
-                f"RELEASE_VERIFICATION_FAILURE: QUERY_IDENTITY_MISMATCH recorded in exclusions for "
-                f"({c.get('fold_year')}, {c.get('market')}, {c.get('policy_id')})!"
-            )
-        pol = c.get("policy_id", "")
-        if pol not in ("PASSIVE_EQUAL_WEIGHT", "MOMENTUM_21", "VOL_MOMENTUM_21"):
-            exp_fc = c.get("expected_forecasts", 0)
-            if exp_fc != adm:
-                raise RuntimeError(
-                    f"RELEASE_VERIFICATION_FAILURE: Model policy {pol} expected forecasts ({exp_fc}) "
-                    f"does not match admitted queries ({adm}) for ({c.get('fold_year')}, {c.get('market')})!"
-                )
-
-    # 2. Reconcile against independent evaluation dataset population
-    for f_yr in folds_to_run:
-        f_data = fold_data_by_year.get(f_yr, {})
-        f_eval_recs = f_data.get("eval_records", [])
-        f_sec_info = f_data.get("sec_info", {})
-        if f_eval_recs:
-            eval_by_mkt: Dict[str, int] = collections.defaultdict(int)
-            for r in f_eval_recs:
-                mkt = getattr(r, "market", None) or f_sec_info.get(r.security_id, {}).get("market", "US")
-                eval_by_mkt[mkt] += 1
-
-            for mkt, exp_mkt_evals in eval_by_mkt.items():
-                mkt_cov_entries = [c for c in coverage_manifest if c.get("fold_year") == f_yr and c.get("market") == mkt]
-                if exp_mkt_evals > 0 and not mkt_cov_entries:
-                    raise RuntimeError(
-                        f"RELEASE_VERIFICATION_FAILURE: Independent population has {exp_mkt_evals} eval queries "
-                        f"for market {mkt} in fold {f_yr}, but no simulation accounts were found!"
-                    )
-                for entry in mkt_cov_entries:
-                    if exp_mkt_evals > 0 and entry.get("admitted_queries", 0) == 0:
-                        raise RuntimeError(
-                            f"RELEASE_VERIFICATION_FAILURE: Market {mkt} in fold {f_yr} has {exp_mkt_evals} "
-                            f"valid evaluation queries in dataset, but account ({entry.get('policy_id')}, "
-                            f"{entry.get('realization_id')}) admitted 0 queries!"
-                        )
 
     pipeline_summary = {
         "status": status,
