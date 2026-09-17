@@ -51,6 +51,20 @@ class MemoryBank:
         # Vector matrix: shape (N, 966), float32
         self.vectors = np.stack([r.vector for r in self.records], axis=0).astype(np.float32)
 
+        # Cached representations (Finding 5 / C6 & Gate A optimization)
+        self.vectors_float32 = self.vectors
+        self.vectors_float64 = np.ascontiguousarray(self.vectors, dtype=np.float64)
+        self.targets_float64 = self.targets_63
+        self.session_ordinals_int32 = np.ascontiguousarray(self.session_ordinals, dtype=np.int32)
+
+        unique_secs = sorted(list(set(self.security_ids)))
+        self.security_id_to_code = {s: i for i, s in enumerate(unique_secs)}
+        self.security_codes_int32 = np.array([self.security_id_to_code[s] for s in self.security_ids], dtype=np.int32)
+
+        # Precompute norms automatically
+        self._bank_norms_sq = np.einsum("ij,ij->i", self.vectors_float64, self.vectors_float64)
+        self.bank_norms_float64 = self._bank_norms_sq
+
         # Unconditional historical prior mean of mature targets
         self.unconditional_mean = float(np.mean(self.targets_63))
 
@@ -68,9 +82,8 @@ class MemoryBank:
         Reference formula (Section 6.1):
         d_i^2 = sum_{d=1}^966 (q_d - v_{i,d})^2 in float64.
         """
-        q_64 = query_vector.astype(np.float64)
-        v_64 = self.vectors.astype(np.float64)
-        diff = v_64 - q_64
+        q_64 = np.asarray(query_vector, dtype=np.float64)
+        diff = self.vectors_float64 - q_64
         dist_sq = np.sum(diff ** 2, axis=1)
         return dist_sq
 
@@ -89,7 +102,7 @@ class MemoryBank:
         if len(candidate_indices) == 0:
             return np.empty(0, dtype=np.float64)
         q_64 = np.asarray(query_vector, dtype=np.float64)
-        cand_vecs_64 = self.vectors[candidate_indices].astype(np.float64)
+        cand_vecs_64 = self.vectors_float64[candidate_indices]
         diff = cand_vecs_64 - q_64
         return np.sum(diff ** 2, axis=1)
 

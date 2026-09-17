@@ -1363,6 +1363,10 @@ def test_checkpoint_modification_regenerates_policy_predictions(real_driver_env,
     job_comp_file.write_text(json.dumps(job_comp), encoding="utf-8")
     chk_mtime_before = job_comp_file.stat().st_mtime
 
+    # Record portfolio manifest mtime before restart so we can verify it is regenerated
+    port_manifest_path = out_dir / "portfolio_manifest.json"
+    port_manifest_mtime_before = port_manifest_path.stat().st_mtime if port_manifest_path.exists() else None
+
     # Invalidate pipeline completion to trigger restart
     (out_dir / "pipeline_summary.json").unlink(missing_ok=True)
     (out_dir / "pipeline_completion.json").unlink(missing_ok=True)
@@ -1425,5 +1429,14 @@ def test_checkpoint_modification_regenerates_policy_predictions(real_driver_env,
         expected_eval = modified_model(torch.tensor(fold_data["eval_x_mlp"], dtype=torch.float32, device=device)).squeeze(-1).cpu().numpy().tolist()
     actual_eval = [new_mlp_preds[r.query_id] for r in fold_data["eval_records"]]
     np.testing.assert_allclose(actual_eval, expected_eval, atol=1e-3)
+
+    # Assert dependent portfolio outputs were regenerated, not served from a stale cache.
+    # The portfolio manifest must exist and must have been rewritten during the second run.
+    assert port_manifest_path.exists(), "portfolio_manifest.json must exist after second run"
+    port_manifest_mtime_after = port_manifest_path.stat().st_mtime
+    assert port_manifest_mtime_after != port_manifest_mtime_before, (
+        "portfolio_manifest.json mtime unchanged: dependent portfolio outputs were NOT regenerated "
+        "after prediction identity mismatch — stale artifacts were served."
+    )
 
 
