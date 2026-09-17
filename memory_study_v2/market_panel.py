@@ -25,6 +25,7 @@ class MarketPanel:
     atr_ratio_14: np.ndarray   # 2D shape (T, S), float64
     sec_to_idx: Dict[str, int]
     sess_to_idx: Dict[str, int]
+    query_index: Optional[np.ndarray] = None  # 2D shape (T, S), int64 (-1 when absent)
 
     @classmethod
     def build_from_sec_info(
@@ -32,6 +33,7 @@ class MarketPanel:
         market: str,
         sec_info: Dict[str, Any],
         sessions: List[str],
+        records: Optional[List[Any]] = None,
     ) -> MarketPanel:
         """Build MarketPanel from sec_info dictionaries and target sessions."""
         market_secs = sorted([s for s, s_data in sec_info.items() if s_data.get("market", "US") == market])
@@ -46,6 +48,14 @@ class MarketPanel:
         tradable = np.zeros((T, S), dtype=bool)
         volatility_21 = np.zeros((T, S), dtype=np.float64)
         atr_ratio_14 = np.zeros((T, S), dtype=np.float64)
+        query_index = np.full((T, S), -1, dtype=np.int64)
+
+        if records is not None:
+            for orig_idx, r in enumerate(records):
+                s_id = getattr(r, "security_id", None)
+                s_sess = getattr(r, "session", None)
+                if s_id in sec_to_idx and s_sess in sess_to_idx:
+                    query_index[sess_to_idx[s_sess], sec_to_idx[s_id]] = orig_idx
 
         for s_idx, s in enumerate(market_secs):
             s_data = sec_info[s]
@@ -103,4 +113,5 @@ class MarketPanel:
             atr_ratio_14=atr_ratio_14,
             sec_to_idx=sec_to_idx,
             sess_to_idx=sess_to_idx,
+            query_index=query_index,
         )

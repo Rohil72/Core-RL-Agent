@@ -56,46 +56,126 @@ class SecurityFeatureCache:
     feature_spec_id: str = FEATURE_SPEC_ID
     target_spec_id: str = TARGET_SPEC_ID
 
-    def save(self, cache_file: Union[str, Path]) -> None:
-        """Save cache record atomically to compressed NPZ."""
-        cache_file = Path(cache_file)
-        cache_file.parent.mkdir(parents=True, exist_ok=True)
-        tmp_file = cache_file.with_suffix(".tmp.npz")
+    def save(self, cache_dest: Union[str, Path]) -> None:
+        """Save cache record atomically as .npy memmaps plus manifest.json, or uncompressed .npz."""
+        dest = Path(cache_dest)
+        if dest.suffix == ".npz":
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            tmp_file = dest.with_suffix(".tmp.npz")
+            np.savez(
+                tmp_file,
+                security_id=np.array(self.security_id),
+                sessions=self.sessions,
+                raw_open=self.raw_open,
+                raw_high=self.raw_high,
+                raw_low=self.raw_low,
+                raw_close=self.raw_close,
+                model_open=self.model_open,
+                model_high=self.model_high,
+                model_low=self.model_low,
+                model_close=self.model_close,
+                volume=self.volume,
+                raw_features=self.raw_features,
+                target_63_legacy=self.target_63_legacy,
+                target_executable=self.target_executable,
+                session_ordinals=self.session_ordinals,
+                validity_flags=self.validity_flags,
+                bar_status=self.bar_status,
+                feature_valid_mask=self.feature_valid_mask if self.feature_valid_mask is not None else self.validity_flags,
+                file_sha256=np.array(self.file_sha256),
+                calendar_sha256=np.array(self.calendar_sha256),
+                feature_spec_id=np.array(self.feature_spec_id),
+                target_spec_id=np.array(self.target_spec_id),
+            )
+            if os.name == "nt" and dest.exists():
+                dest.unlink()
+            tmp_file.rename(dest)
+            return
 
-        np.savez_compressed(
-            tmp_file,
-            security_id=np.array(self.security_id),
-            sessions=self.sessions,
-            raw_open=self.raw_open,
-            raw_high=self.raw_high,
-            raw_low=self.raw_low,
-            raw_close=self.raw_close,
-            model_open=self.model_open,
-            model_high=self.model_high,
-            model_low=self.model_low,
-            model_close=self.model_close,
-            volume=self.volume,
-            raw_features=self.raw_features,
-            target_63_legacy=self.target_63_legacy,
-            target_executable=self.target_executable,
-            session_ordinals=self.session_ordinals,
-            validity_flags=self.validity_flags,
-            bar_status=self.bar_status,
-            feature_valid_mask=self.feature_valid_mask if self.feature_valid_mask is not None else self.validity_flags,
-            file_sha256=np.array(self.file_sha256),
-            calendar_sha256=np.array(self.calendar_sha256),
-            feature_spec_id=np.array(self.feature_spec_id),
-            target_spec_id=np.array(self.target_spec_id),
-        )
-        if os.name == "nt" and cache_file.exists():
-            cache_file.unlink()
-        tmp_file.rename(cache_file)
+        # Directory-based .npy memmaps + JSON manifest (Correction 1)
+        dest.mkdir(parents=True, exist_ok=True)
+        import json
+        manifest = {
+            "security_id": str(self.security_id),
+            "file_sha256": str(self.file_sha256),
+            "calendar_sha256": str(self.calendar_sha256),
+            "feature_spec_id": str(self.feature_spec_id),
+            "target_spec_id": str(self.target_spec_id),
+            "arrays": {
+                "sessions": {"dtype": str(self.sessions.dtype), "shape": list(self.sessions.shape)},
+                "raw_open": {"dtype": str(self.raw_open.dtype), "shape": list(self.raw_open.shape)},
+                "raw_high": {"dtype": str(self.raw_high.dtype), "shape": list(self.raw_high.shape)},
+                "raw_low": {"dtype": str(self.raw_low.dtype), "shape": list(self.raw_low.shape)},
+                "raw_close": {"dtype": str(self.raw_close.dtype), "shape": list(self.raw_close.shape)},
+                "model_open": {"dtype": str(self.model_open.dtype), "shape": list(self.model_open.shape)},
+                "model_high": {"dtype": str(self.model_high.dtype), "shape": list(self.model_high.shape)},
+                "model_low": {"dtype": str(self.model_low.dtype), "shape": list(self.model_low.shape)},
+                "model_close": {"dtype": str(self.model_close.dtype), "shape": list(self.model_close.shape)},
+                "volume": {"dtype": str(self.volume.dtype), "shape": list(self.volume.shape)},
+                "raw_features": {"dtype": str(self.raw_features.dtype), "shape": list(self.raw_features.shape)},
+                "target_63_legacy": {"dtype": str(self.target_63_legacy.dtype), "shape": list(self.target_63_legacy.shape)},
+                "target_executable": {"dtype": str(self.target_executable.dtype), "shape": list(self.target_executable.shape)},
+                "session_ordinals": {"dtype": str(self.session_ordinals.dtype), "shape": list(self.session_ordinals.shape)},
+                "validity_flags": {"dtype": str(self.validity_flags.dtype), "shape": list(self.validity_flags.shape)},
+                "bar_status": {"dtype": str(self.bar_status.dtype), "shape": list(self.bar_status.shape)},
+                "feature_valid_mask": {"dtype": str((self.feature_valid_mask if self.feature_valid_mask is not None else self.validity_flags).dtype), "shape": list(self.validity_flags.shape)},
+            }
+        }
+        for name in manifest["arrays"]:
+            arr = getattr(self, name)
+            if arr is None and name == "feature_valid_mask":
+                arr = self.validity_flags
+            np.save(dest / f"{name}.npy", arr)
+
+        manifest_tmp = dest / "manifest.tmp.json"
+        with open(manifest_tmp, "w", encoding="utf-8") as f:
+            json.dump(manifest, f, indent=2)
+        if os.name == "nt" and (dest / "manifest.json").exists():
+            (dest / "manifest.json").unlink()
+        manifest_tmp.rename(dest / "manifest.json")
 
     @classmethod
-    def load(cls, cache_file: Union[str, Path]) -> SecurityFeatureCache:
-        """Load cache record from NPZ."""
-        cache_file = Path(cache_file)
-        with np.load(cache_file, allow_pickle=False) as data:
+    def load(cls, cache_path: Union[str, Path], mmap_mode: Optional[str] = "r") -> SecurityFeatureCache:
+        """Load cache record from .npy memmaps directory or fallback to .npz."""
+        p = Path(cache_path)
+        manifest_file = p / "manifest.json" if p.is_dir() else (p.parent / f"{p.stem}" / "manifest.json" if (p.parent / f"{p.stem}" / "manifest.json").exists() else None)
+        if manifest_file and manifest_file.exists():
+            import json
+            sec_dir = manifest_file.parent
+            with open(manifest_file, "r", encoding="utf-8") as f:
+                manifest = json.load(f)
+
+            def _load_arr(name: str):
+                npy_path = sec_dir / f"{name}.npy"
+                return np.load(npy_path, mmap_mode=mmap_mode)
+
+            return cls(
+                security_id=str(manifest["security_id"]),
+                sessions=_load_arr("sessions").astype('<U10'),
+                raw_open=_load_arr("raw_open"),
+                raw_high=_load_arr("raw_high"),
+                raw_low=_load_arr("raw_low"),
+                raw_close=_load_arr("raw_close"),
+                model_open=_load_arr("model_open"),
+                model_high=_load_arr("model_high"),
+                model_low=_load_arr("model_low"),
+                model_close=_load_arr("model_close"),
+                volume=_load_arr("volume"),
+                raw_features=_load_arr("raw_features"),
+                target_63_legacy=_load_arr("target_63_legacy"),
+                target_executable=_load_arr("target_executable"),
+                session_ordinals=_load_arr("session_ordinals"),
+                validity_flags=_load_arr("validity_flags"),
+                bar_status=_load_arr("bar_status").astype(str),
+                file_sha256=str(manifest["file_sha256"]),
+                calendar_sha256=str(manifest["calendar_sha256"]),
+                feature_valid_mask=_load_arr("feature_valid_mask") if (sec_dir / "feature_valid_mask.npy").exists() else None,
+                feature_spec_id=str(manifest.get("feature_spec_id", FEATURE_SPEC_ID)),
+                target_spec_id=str(manifest.get("target_spec_id", TARGET_SPEC_ID)),
+            )
+
+        # NPZ fallback
+        with np.load(p, allow_pickle=False) as data:
             return cls(
                 security_id=str(data["security_id"]),
                 sessions=data["sessions"].astype('<U10'),
@@ -263,21 +343,45 @@ def get_or_build_security_cache(
     sec_cal: VenueCalendar,
     cache_dir: Union[str, Path],
     force_recompute: bool = False,
+    mmap_mode: Optional[str] = "r",
 ) -> SecurityFeatureCache:
-    """Retrieve existing cached security features if valid, or compute and persist."""
+    """Retrieve existing cached security features (.npy + manifest) if valid, or compute and persist."""
     parquet_path = Path(parquet_path)
     cache_dir = Path(cache_dir)
-    cache_file = cache_dir / f"{parquet_path.stem}.npz"
+    sec_dir = cache_dir / parquet_path.stem
+    manifest_path = sec_dir / "manifest.json"
 
-    if cache_file.exists() and not force_recompute:
-        try:
-            cache = SecurityFeatureCache.load(cache_file)
+    file_bytes = None
+    current_file_sha = None
+    current_cal_sha = None
+
+    def _get_hashes():
+        nonlocal file_bytes, current_file_sha, current_cal_sha
+        if current_file_sha is None:
             file_bytes = parquet_path.read_bytes()
             current_file_sha = hashlib.sha256(file_bytes).hexdigest()
             current_cal_sha = getattr(sec_cal, "schedule_hash", None) or hashlib.sha256("".join(sec_cal.sessions).encode()).hexdigest()
+        return current_file_sha, current_cal_sha
 
-            if (cache.file_sha256 == current_file_sha and
-                cache.calendar_sha256 == current_cal_sha and
+    if manifest_path.exists() and not force_recompute:
+        try:
+            cache = SecurityFeatureCache.load(sec_dir, mmap_mode=mmap_mode)
+            f_sha, c_sha = _get_hashes()
+            if (cache.file_sha256 == f_sha and
+                cache.calendar_sha256 == c_sha and
+                cache.feature_spec_id == FEATURE_SPEC_ID and
+                cache.target_spec_id == TARGET_SPEC_ID):
+                return cache
+        except Exception:
+            pass  # Corrupted cache directory; recompute
+
+    cache_file = cache_dir / f"{parquet_path.stem}.npz"
+    if cache_file.exists() and not force_recompute:
+        try:
+            cache = SecurityFeatureCache.load(cache_file)
+            f_sha, c_sha = _get_hashes()
+            if (cache.file_sha256 == f_sha and
+                cache.calendar_sha256 == c_sha and
                 cache.feature_spec_id == FEATURE_SPEC_ID and
                 cache.target_spec_id == TARGET_SPEC_ID):
                 return cache
@@ -285,5 +389,5 @@ def get_or_build_security_cache(
             pass  # Corrupted cache file; recompute
 
     cache = compute_security_cache(parquet_path, sec_cal)
-    cache.save(cache_file)
+    cache.save(sec_dir)
     return cache

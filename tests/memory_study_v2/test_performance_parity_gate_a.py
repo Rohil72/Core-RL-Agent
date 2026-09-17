@@ -312,6 +312,20 @@ def test_market_panel_vectorization_parity():
             assert panel.volatility_21[t_idx, s_idx] == expected_vol
             assert panel.atr_ratio_14[t_idx, s_idx] == expected_atr
 
+    # Verify query_index field
+    assert panel.query_index is not None
+    assert panel.query_index.shape == (len(sessions), len(secs))
+    assert np.all(panel.query_index == -1)
+
+    # Test query_index population with dummy records
+    from dataclasses import make_dataclass
+    Rec = make_dataclass("Rec", [("security_id", str), ("session", str)])
+    dummy_records = [Rec(secs[0], sessions[2]), Rec(secs[1], sessions[4])]
+    panel_with_recs = MarketPanel.build_from_sec_info("MKT", sec_info, sessions, records=dummy_records)
+    assert panel_with_recs.query_index[2, panel.sec_to_idx[secs[0]]] == 0
+    assert panel_with_recs.query_index[4, panel.sec_to_idx[secs[1]]] == 1
+    assert panel_with_recs.query_index[0, panel.sec_to_idx[secs[0]]] == -1
+
 
 # ---------------------------------------------------------------------------
 # Test 7: Portfolio Simulation Parity and Terminal Liquidation Reconciliation
@@ -438,6 +452,20 @@ def test_security_feature_cache_roundtrip(tmp_path):
     feat_cols = [c for c in feats_df.columns if c not in ("session", "valid_mask")]
     assert feat_cols == list(EXPECTED_FEATURES_ORDERED)
 
+    # Test directory-based .npy memmaps + JSON manifest (Correction 1)
+    dir_save_path = tmp_path / "cache" / "MKT_SEC_TEST"
+    cache.save(dir_save_path)
+    assert (dir_save_path / "manifest.json").exists()
+    assert (dir_save_path / "raw_features.npy").exists()
+
+    loaded_dir = SecurityFeatureCache.load(dir_save_path, mmap_mode="r")
+    assert loaded_dir.security_id == cache.security_id
+    assert loaded_dir.file_sha256 == cache.file_sha256
+    np.testing.assert_array_equal(loaded_dir.sessions, cache.sessions)
+    np.testing.assert_allclose(loaded_dir.raw_features, cache.raw_features)
+    # Check that arrays loaded with mmap_mode='r' are memmaps
+    assert isinstance(loaded_dir.raw_features, np.memmap)
+
 
 # ---------------------------------------------------------------------------
 # Test 9: Deterministic Sharding Consolidation and Resumption Parity
@@ -541,3 +569,80 @@ def test_repo_configuration_authorization_guard_intact():
     assert auth_info["repo_production_authorized"] is False
     assert auth_info["repo_guard_intact"] is True
     assert auth_info["launch_flag_authorized"] is False
+
+
+# ---------------------------------------------------------------------------
+# Test 12: Worker Count Benchmark Sweep (Correction 8)
+# ---------------------------------------------------------------------------
+
+def test_worker_count_benchmark_sweep(synthetic_bank_and_queries):
+    """Parity Test 12: Benchmark worker counts [4, 8, 12, 16, 20] and verify bit-for-bit invariance."""
+    import time
+    bank, _, query_secs, query_ids = synthetic_bank_and_queries
+    bank_hash = "bench_bank_hash_123456789"
+    fold_year = 2020
+    master_seed = 7
+
+    worker_counts = [4, 8, 12, 16, 20]
+    baseline_res = None
+    timings = {}
+
+    for w in worker_counts:
+        t0 = time.perf_counter()
+        res = retrieve_mem_random_parallel(
+            bank,
+            query_security_ids=query_secs,
+            query_ids=query_ids,
+            bank_hash=bank_hash,
+            fold_year=fold_year,
+            master_seed=master_seed,
+            k=10,
+            max_workers=w,
+            chunk_size=4,
+        )
+        elapsed = time.perf_counter() - t0
+        timings[w] = elapsed
+
+        if baseline_res is None:
+            baseline_res = res
+        else:
+            assert len(res) == len(baseline_res)
+            for i in range(len(res)):
+                assert res[i].neighbor_ids == baseline_res[i].neighbor_ids
+                assert pytest.approx(res[i].prediction, abs=1e-12) == baseline_res[i].prediction
+
+    print(f"\n[Worker Count Benchmark Timings] {timings}")
+    assert len(timings) == 5
+
+
+# ---------------------------------------------------------------------------
+# Test 13: Six-Fold Prediction Manifest Parity (Correction 9)
+# ---------------------------------------------------------------------------
+
+def test_six_fold_prediction_manifest_parity():
+    """Parity Test 13: Verify that all six fold prediction manifests (2020-2025) possess valid cryptographic identities."""
+    repo_root = Path(__file__).resolve().parent.parent.parent
+    base_recovery_dir = repo_root / "outputs" / "a30-final-recovery"
+    assert base_recovery_dir.is_dir(), f"Missing reference directory: {base_recovery_dir}"
+
+    expected_folds = [2020, 2021, 2022, 2023, 2024, 2025]
+    for year in expected_folds:
+        fold_dir = base_recovery_dir / f"fold_{year}"
+        manifest_path = fold_dir / "predictions_manifest.json"
+        assert manifest_path.exists(), f"Missing predictions_manifest.json for fold {year}"
+
+        with open(manifest_path, "r", encoding="utf-8") as f:
+            manifest = json.load(f)
+
+        assert manifest["fold_year"] == year
+        assert manifest["count"] > 0
+        assert "sha256" in manifest
+        assert len(manifest["sha256"]) == 64
+
+        identity = manifest.get("prediction_identity")
+        assert identity is not None, f"Missing prediction_identity in fold {year} manifest"
+        assert identity["fold_year"] == year
+        assert "prediction_identity_sha256" in identity
+        assert len(identity["prediction_identity_sha256"]) == 64
+        assert "producing_checkpoints" in identity
+        assert len(identity["producing_checkpoints"]) > 0

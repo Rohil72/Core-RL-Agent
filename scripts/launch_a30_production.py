@@ -1003,35 +1003,42 @@ def generate_and_seal_policy_predictions(
 
         eval_cache: Dict[Tuple[float, int, str], float] = {}
 
-        def dev_eval_fn(lam: float, seed: int, market: str) -> float:
-            cache_key = (round(float(lam), 6), int(seed), str(market))
-            if cache_key in eval_cache:
-                return eval_cache[cache_key]
-
+        def _evaluate_market_seed(seed: int, market: str) -> None:
+            """Evaluate all mixture lambdas in a single pass through the market panel (Correction 5)."""
             panel = market_panels.get(str(market))
             if panel is None or len(panel.sessions) == 0:
-                return 0.0
+                for lam in lambda_grid:
+                    eval_cache[(round(float(lam), 6), int(seed), str(market))] = 0.0
+                return
 
             m_indices = [i for i, r in enumerate(dev_recs) if str(dev_mkts[i]) == market]
             if not m_indices:
-                return 0.0
+                for lam in lambda_grid:
+                    eval_cache[(round(float(lam), 6), int(seed), str(market))] = 0.0
+                return
 
-            mix_preds = (1.0 - lam) * base_by_seed[seed][m_indices] + lam * dev_mem_preds[m_indices]
-            pred_by_sec_sess: Dict[Tuple[str, str], float] = {}
-            for sub_idx, orig_idx in enumerate(m_indices):
-                r = dev_recs[orig_idx]
-                pred_by_sec_sess[(r.security_id, r.session)] = float(mix_preds[sub_idx])
+            accounts = {
+                lam: PortfolioAccount(
+                    initial_capital=initial_cap,
+                    commission=comm,
+                    slippage=slip,
+                    max_positions=max_pos,
+                    cash_budget_fraction=cash_frac,
+                    atr_multiplier=atr_mult,
+                    min_stop_fraction=min_stop,
+                    max_holding_sessions=max_hold,
+                )
+                for lam in lambda_grid
+            }
 
-            dev_acct = PortfolioAccount(
-                initial_capital=initial_cap,
-                commission=comm,
-                slippage=slip,
-                max_positions=max_pos,
-                cash_budget_fraction=cash_frac,
-                atr_multiplier=atr_mult,
-                min_stop_fraction=min_stop,
-                max_holding_sessions=max_hold,
-            )
+            pred_by_lam: Dict[float, Dict[Tuple[str, str], float]] = {}
+            for lam in lambda_grid:
+                mix_preds = (1.0 - lam) * base_by_seed[seed][m_indices] + lam * dev_mem_preds[m_indices]
+                p_map: Dict[Tuple[str, str], float] = {}
+                for sub_idx, orig_idx in enumerate(m_indices):
+                    r = dev_recs[orig_idx]
+                    p_map[(r.security_id, r.session)] = float(mix_preds[sub_idx])
+                pred_by_lam[lam] = p_map
 
             T = len(panel.sessions)
             for t_idx in range(T):
@@ -1061,40 +1068,47 @@ def generate_and_seal_policy_predictions(
                     for s_idx, s in enumerate(panel.securities)
                 }
 
-                dev_acct.handle_corporate_actions_before_open(t, {})
-                dev_acct.process_open_fills(t, open_prices, tradable_flags)
-                dev_acct.evaluate_close_stops_and_update_state(t, close_prices, atr_ratios)
+                for lam, dev_acct in accounts.items():
+                    dev_acct.handle_corporate_actions_before_open(t, {})
+                    dev_acct.process_open_fills(t, open_prices, tradable_flags)
+                    dev_acct.evaluate_close_stops_and_update_state(t, close_prices, atr_ratios)
 
-                if not is_terminal:
-                    cand_scores = {}
-                    for s in panel.securities:
-                        if s in dev_acct.positions:
-                            continue
-                        p_val = pred_by_sec_sess.get((s, t))
-                        if p_val is not None and p_val > 0.0 and np.isfinite(p_val):
-                            v = vol_map.get(s, 0.0)
-                            cand_scores[s] = p_val / (v + 1e-4)
+                    if not is_terminal:
+                        cand_scores = {}
+                        p_map = pred_by_lam[lam]
+                        for s in panel.securities:
+                            if s in dev_acct.positions:
+                                continue
+                            p_val = p_map.get((s, t))
+                            if p_val is not None and p_val > 0.0 and np.isfinite(p_val):
+                                v = vol_map.get(s, 0.0)
+                                cand_scores[s] = p_val / (v + 1e-4)
 
-                    sorted_cands = sorted(cand_scores.keys(), key=lambda sec: (-cand_scores[sec], sec))
-                    dev_acct.plan_entries_at_close(sorted_cands)
+                        sorted_cands = sorted(cand_scores.keys(), key=lambda sec: (-cand_scores[sec], sec))
+                        dev_acct.plan_entries_at_close(sorted_cands)
+                    else:
+                        dev_term_close_prices = dict(close_prices)
+                        for sec_id, pos in dev_acct.positions.items():
+                            if sec_id not in dev_term_close_prices or not np.isfinite(dev_term_close_prices[sec_id]) or dev_term_close_prices[sec_id] <= 0.0:
+                                fallback_p = pos.last_valid_price if (pos.last_valid_price > 0.0 and np.isfinite(pos.last_valid_price)) else pos.cost_basis
+                                dev_term_close_prices[sec_id] = float(fallback_p)
+                        dev_acct.execute_terminal_liquidation(t, dev_term_close_prices)
+
+            for lam, dev_acct in accounts.items():
+                rets = [st.daily_return for st in dev_acct.daily_history]
+                if not rets:
+                    sr = 0.0
                 else:
-                    dev_term_close_prices = dict(close_prices)
-                    for sec_id, pos in dev_acct.positions.items():
-                        if sec_id not in dev_term_close_prices or not np.isfinite(dev_term_close_prices[sec_id]) or dev_term_close_prices[sec_id] <= 0.0:
-                            fallback_p = pos.last_valid_price if (pos.last_valid_price > 0.0 and np.isfinite(pos.last_valid_price)) else pos.cost_basis
-                            dev_term_close_prices[sec_id] = float(fallback_p)
-                    dev_acct.execute_terminal_liquidation(t, dev_term_close_prices)
+                    r_mean = float(np.mean(rets))
+                    r_std = float(np.std(rets, ddof=0))
+                    sr = float((r_mean / r_std) * math.sqrt(252.0)) if r_std > 1e-8 else 0.0
+                eval_cache[(round(float(lam), 6), int(seed), str(market))] = sr
 
-            rets = [st.daily_return for st in dev_acct.daily_history]
-            if not rets:
-                sr = 0.0
-            else:
-                r_mean = float(np.mean(rets))
-                r_std = float(np.std(rets, ddof=0))
-                sr = float((r_mean / r_std) * math.sqrt(252.0)) if r_std > 1e-8 else 0.0
-
-            eval_cache[cache_key] = sr
-            return sr
+        def dev_eval_fn(lam: float, seed: int, market: str) -> float:
+            cache_key = (round(float(lam), 6), int(seed), str(market))
+            if cache_key not in eval_cache:
+                _evaluate_market_seed(seed, market)
+            return eval_cache.get(cache_key, 0.0)
 
         return dev_eval_fn
 

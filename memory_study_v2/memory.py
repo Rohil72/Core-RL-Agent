@@ -192,12 +192,12 @@ class MemoryBank:
             try:
                 import torch
                 if torch.cuda.is_available():
+                    if not hasattr(self, "_gpu_vectors") or self._gpu_vectors is None:
+                        self.init_gpu_cache("cuda")
                     with torch.no_grad():
-                        q_t = torch.as_tensor(q_arr, dtype=torch.float32, device="cuda")
-                        v_t = torch.as_tensor(self.vectors, dtype=torch.float32, device="cuda")
-                        bank_norms_t = torch.as_tensor(self._bank_norms_sq, dtype=torch.float32, device="cuda")
+                        q_t = torch.as_tensor(q_arr, dtype=torch.float32, device=self._gpu_vectors.device)
                         q_norms_t = torch.sum(q_t ** 2, dim=1, keepdim=True)
-                        dist_t = q_norms_t - 2.0 * torch.matmul(q_t, v_t.T) + bank_norms_t.unsqueeze(0)
+                        dist_t = q_norms_t - 2.0 * torch.matmul(q_t, self._gpu_vectors.T) + self._gpu_bank_norms.unsqueeze(0)
                         torch.clamp_min_(dist_t, 0.0)
                         return dist_t.cpu().numpy().astype(np.float64)
             except Exception:
@@ -218,6 +218,58 @@ class MemoryBank:
         # Clamp tiny negative values from floating-point arithmetic to zero
         np.maximum(dist_sq, 0.0, out=dist_sq)
         return dist_sq
+
+    def init_gpu_cache(self, device: Any = "cuda") -> None:
+        """Cache float32 vectors and norms on GPU once per fold (Correction 2)."""
+        try:
+            import torch
+            if torch.cuda.is_available():
+                dev = torch.device(device)
+                vecs = getattr(self, "vectors_float32", None)
+                if vecs is None:
+                    vecs = self.vectors.astype(np.float32)
+                norms = getattr(self, "bank_norms_float64", None)
+                if norms is None:
+                    norms = getattr(self, "_bank_norms_sq", None)
+                if norms is None:
+                    norms = self.precompute_bank_norms()
+                self._gpu_vectors = torch.as_tensor(vecs, dtype=torch.float32, device=dev)
+                self._gpu_bank_norms = torch.as_tensor(norms, dtype=torch.float32, device=dev)
+        except Exception:
+            pass
+
+    def propose_candidates_gpu(
+        self,
+        query_batch: np.ndarray,
+        buffer_size: int,
+        device: Any = "cuda",
+    ) -> Optional[Tuple[np.ndarray, np.ndarray]]:
+        """Compute approximate distances and candidate reduction on GPU without full CPU transfer (Correction 3).
+
+        Returns:
+            (candidate_indices, candidate_approx_dists) of shape (Q, min(buffer_size, N)),
+            or None if GPU is unavailable or error occurs.
+        """
+        try:
+            import torch
+            if not torch.cuda.is_available():
+                return None
+            if not hasattr(self, "_gpu_vectors") or self._gpu_vectors is None:
+                self.init_gpu_cache(device)
+            if not hasattr(self, "_gpu_vectors") or self._gpu_vectors is None:
+                return None
+
+            q_arr = np.asarray(query_batch, dtype=np.float32)
+            actual_k = min(buffer_size, self.N)
+            with torch.no_grad():
+                q_t = torch.as_tensor(q_arr, dtype=torch.float32, device=self._gpu_vectors.device)
+                q_norms_t = torch.sum(q_t ** 2, dim=1, keepdim=True)
+                dist_t = q_norms_t - 2.0 * torch.matmul(q_t, self._gpu_vectors.T) + self._gpu_bank_norms.unsqueeze(0)
+                torch.clamp_min_(dist_t, 0.0)
+                top_dists_t, top_indices_t = torch.topk(dist_t, k=actual_k, dim=1, largest=False, sorted=False)
+                return top_indices_t.cpu().numpy(), top_dists_t.cpu().numpy().astype(np.float64)
+        except Exception:
+            return None
 
     def propose_candidates_batched(
         self,

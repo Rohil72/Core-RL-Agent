@@ -155,13 +155,18 @@ def retrieve_mem_sim_batch(
         chunk_secs = query_security_ids[chunk_start:chunk_end]
         Q_chunk = chunk_end - chunk_start
 
-        # Precompute candidate proposal distances for the chunk
-        dist_matrix = bank.compute_squared_euclidean_batched(chunk_vectors, use_gpu=use_gpu)
+        # GPU candidate reduction (Correction 3)
+        gpu_cands = None
+        dist_matrix = None
+        if use_gpu:
+            gpu_cands = bank.propose_candidates_gpu(chunk_vectors, buffer_size=start_buffer_size)
+        if gpu_cands is None:
+            dist_matrix = bank.compute_squared_euclidean_batched(chunk_vectors, use_gpu=use_gpu)
 
         for q_idx in range(Q_chunk):
             query_vec = chunk_vectors[q_idx]
             query_sec = chunk_secs[q_idx]
-            dist_row = dist_matrix[q_idx]
+            dist_row = dist_matrix[q_idx] if dist_matrix is not None else None
 
             buffer_size = min(start_buffer_size, bank.N)
             accepted_indices: List[int] = []
@@ -171,11 +176,17 @@ def retrieve_mem_sim_batch(
 
             while True:
                 # 1. Candidate Proposal Stage: propose candidates from approximate distance
-                if buffer_size < bank.N:
-                    # Use argpartition to efficiently propose candidate pool without full sort
+                if gpu_cands is not None and buffer_size == start_buffer_size:
+                    candidate_pool = gpu_cands[0][q_idx][:buffer_size]
+                    approx_pool_dists = gpu_cands[1][q_idx][:buffer_size]
+                elif buffer_size < bank.N:
+                    if dist_row is None:
+                        dist_row = bank.compute_squared_euclidean_batched(query_vec[np.newaxis, :], use_gpu=False)[0]
                     candidate_pool = np.argpartition(dist_row, buffer_size)[:buffer_size]
+                    approx_pool_dists = dist_row[candidate_pool]
                 else:
                     candidate_pool = np.arange(bank.N)
+                    approx_pool_dists = None
 
                 # 2. Reference Distance Refinement Step (Finding 5 / C6):
                 # Recompute exact direct float64 squared differences for candidate pool
@@ -232,7 +243,8 @@ def retrieve_mem_sim_batch(
                     continue
 
                 # Boundary ambiguity verification with established mathematical error bound:
-                pool_discrepancies = np.abs(dist_row[candidate_pool] - refined_pool_dists)
+                approx_dists_for_bounds = approx_pool_dists if approx_pool_dists is not None else dist_row[candidate_pool]
+                pool_discrepancies = np.abs(approx_dists_for_bounds - refined_pool_dists)
                 max_pool_discrepancy = float(np.max(pool_discrepancies)) if len(pool_discrepancies) > 0 else 0.0
 
                 D_dim = query_vec.shape[0]
@@ -242,7 +254,7 @@ def retrieve_mem_sim_batch(
                 theoretical_slack = 2.0 * gamma_D * (q_norm_sq + float(np.max(bank._bank_norms_sq)))
                 err_bound = max(2.0 * max_pool_discrepancy, theoretical_slack, 1e-4)
 
-                max_approx_in_pool = float(np.max(dist_row[candidate_pool]))
+                max_approx_in_pool = float(np.max(approx_dists_for_bounds))
                 max_accepted = accepted_distances[-1]
 
                 # If an uninspected candidate could have true distance <= max_accepted, expand or fall back:
@@ -357,13 +369,19 @@ def retrieve_similarity_and_knn_batch(
         chunk_codes = sec_codes[chunk_start:chunk_end]
         Q_chunk = chunk_end - chunk_start
 
-        dist_matrix = bank.compute_squared_euclidean_batched(chunk_vectors, use_gpu=use_gpu)
+        # GPU candidate reduction (Correction 3)
+        gpu_cands = None
+        dist_matrix = None
+        if use_gpu:
+            gpu_cands = bank.propose_candidates_gpu(chunk_vectors, buffer_size=start_buffer_size)
+        if gpu_cands is None:
+            dist_matrix = bank.compute_squared_euclidean_batched(chunk_vectors, use_gpu=use_gpu)
 
         for q_idx in range(Q_chunk):
             query_vec = chunk_vectors[q_idx]
             query_sec = chunk_secs[q_idx]
             query_code = chunk_codes[q_idx]
-            dist_row = dist_matrix[q_idx]
+            dist_row = dist_matrix[q_idx] if dist_matrix is not None else None
 
             buffer_size = min(start_buffer_size, bank.N)
             accepted_indices_mem: List[int] = []
@@ -374,10 +392,17 @@ def retrieve_similarity_and_knn_batch(
             sec_ordinals: Dict[int, List[int]] = {}
 
             while True:
-                if buffer_size < bank.N:
+                if gpu_cands is not None and buffer_size == start_buffer_size:
+                    candidate_pool = gpu_cands[0][q_idx][:buffer_size]
+                    approx_pool_dists = gpu_cands[1][q_idx][:buffer_size]
+                elif buffer_size < bank.N:
+                    if dist_row is None:
+                        dist_row = bank.compute_squared_euclidean_batched(query_vec[np.newaxis, :], use_gpu=False)[0]
                     candidate_pool = np.argpartition(dist_row, buffer_size)[:buffer_size]
+                    approx_pool_dists = dist_row[candidate_pool]
                 else:
                     candidate_pool = np.arange(bank.N)
+                    approx_pool_dists = None
 
                 refined_pool_dists = bank.refine_candidate_distances(query_vec, candidate_pool)
                 sort_order = np.lexsort((bank.record_ids[candidate_pool], refined_pool_dists))
@@ -423,7 +448,8 @@ def retrieve_similarity_and_knn_batch(
                     buffer_size = min(buffer_size * 2, bank.N)
                     continue
 
-                pool_discrepancies = np.abs(dist_row[candidate_pool] - refined_pool_dists)
+                approx_dists_for_bounds = approx_pool_dists if approx_pool_dists is not None else dist_row[candidate_pool]
+                pool_discrepancies = np.abs(approx_dists_for_bounds - refined_pool_dists)
                 max_pool_discrepancy = float(np.max(pool_discrepancies)) if len(pool_discrepancies) > 0 else 0.0
 
                 D_dim = query_vec.shape[0]
@@ -433,12 +459,17 @@ def retrieve_similarity_and_knn_batch(
                 theoretical_slack = 2.0 * gamma_D * (q_norm_sq + float(np.max(bank._bank_norms_sq)))
                 err_bound = max(2.0 * max_pool_discrepancy, theoretical_slack, 1e-4)
 
-                max_approx_in_pool = float(np.max(dist_row[candidate_pool]))
-                max_accepted_mem = accepted_dists_mem[-1]
-                max_accepted_knn = accepted_dists_knn[-1]
-                overall_max_accepted = max(max_accepted_mem, max_accepted_knn)
+                max_approx_in_pool = float(np.max(approx_dists_for_bounds))
+                max_accepted_mem = accepted_dists_mem[-1] if accepted_dists_mem else float("inf")
+                max_accepted_knn = accepted_dists_knn[-1] if accepted_dists_knn else float("inf")
 
-                if max_approx_in_pool - err_bound <= overall_max_accepted:
+                # Separate completeness certification for each policy (Correction 6)
+                # MEM_SIM: excludes query security, enforces cap <= 3 and spacing >= 21
+                # KNN_PLAIN: excludes query security only (no cap, no spacing restrictions)
+                mem_certified = (len(accepted_indices_mem) == k) and (max_approx_in_pool - err_bound > max_accepted_mem)
+                knn_certified = (len(accepted_indices_knn) == k) and (max_approx_in_pool - err_bound > max_accepted_knn)
+
+                if not (mem_certified and knn_certified):
                     new_buffer_size = min(buffer_size * 2, bank.N)
                     if new_buffer_size == buffer_size or new_buffer_size >= bank.N:
                         full_ref_dists = bank.refine_candidate_distances(query_vec, np.arange(bank.N))
@@ -647,31 +678,70 @@ def retrieve_mem_random(
     )
 
 
+_WORKER_BANK_N: int = 0
+_WORKER_BANK_SEC_CODES: Optional[np.ndarray] = None
+_WORKER_BANK_ORDINALS: Optional[np.ndarray] = None
+_WORKER_BANK_TARGETS: Optional[np.ndarray] = None
+_WORKER_BANK_RECORD_IDS: Optional[np.ndarray] = None
+_WORKER_BANK_UNCOND_MEAN: float = 0.0
+
+
+def _init_random_memory_worker(
+    memmap_dir: str,
+    N: int,
+    unconditional_mean: float,
+) -> None:
+    """Pool initializer: workers open read-only .npy memmaps (Correction 4)."""
+    global _WORKER_BANK_N, _WORKER_BANK_SEC_CODES, _WORKER_BANK_ORDINALS
+    global _WORKER_BANK_TARGETS, _WORKER_BANK_RECORD_IDS, _WORKER_BANK_UNCOND_MEAN
+    import os
+    from pathlib import Path
+    os.environ["OMP_NUM_THREADS"] = "1"
+    os.environ["MKL_NUM_THREADS"] = "1"
+    os.environ["OPENBLAS_NUM_THREADS"] = "1"
+    os.environ["NUMEXPR_NUM_THREADS"] = "1"
+    try:
+        import torch
+        torch.set_num_threads(1)
+        torch.set_num_interop_threads(1)
+    except Exception:
+        pass
+
+    p = Path(memmap_dir)
+    _WORKER_BANK_N = N
+    _WORKER_BANK_UNCOND_MEAN = unconditional_mean
+    _WORKER_BANK_SEC_CODES = np.load(p / "sec_codes.npy", mmap_mode="r")
+    _WORKER_BANK_ORDINALS = np.load(p / "ordinals.npy", mmap_mode="r")
+    _WORKER_BANK_TARGETS = np.load(p / "targets.npy", mmap_mode="r")
+    _WORKER_BANK_RECORD_IDS = np.load(p / "record_ids.npy", mmap_mode="r")
+
+
 def _random_memory_worker_chunk(
-    items: List[Tuple[int, str, str]],  # (q_idx, query_id, query_sec_id)
+    items: List[Tuple[int, str, int]],  # (q_idx, query_id, query_sec_code)
     bank_hash: str,
     fold_year: int,
     master_seed: int,
     k: int,
     max_per_security: int,
     min_spacing_sessions: int,
-    N: int,
-    security_ids: List[str],
-    session_ordinals: np.ndarray,
-    targets_63: np.ndarray,
-    record_ids: np.ndarray,
-    unconditional_mean: float,
 ) -> List[Tuple[int, RetrievalResult]]:
-    """Worker task processing a query chunk for MEM_RANDOM (Phase 7)."""
-    results: List[Tuple[int, RetrievalResult]] = []
-    unique_secs = set(item[2] for item in items)
-    eligible_by_sec = {sec: np.array([i for i in range(N) if security_ids[i] != sec], dtype=np.int64) for sec in unique_secs}
+    """Worker task processing a query chunk for MEM_RANDOM using read-only memmaps (Corrections 4 & 7)."""
+    global _WORKER_BANK_N, _WORKER_BANK_SEC_CODES, _WORKER_BANK_ORDINALS
+    global _WORKER_BANK_TARGETS, _WORKER_BANK_RECORD_IDS, _WORKER_BANK_UNCOND_MEAN
 
-    for q_idx, q_id, query_sec in items:
-        eligible_indices = eligible_by_sec[query_sec]
+    results: List[Tuple[int, RetrievalResult]] = []
+    unique_sec_codes = set(item[2] for item in items)
+    # Strictly preserve ascending 0..N-1 index ordering (Correction 7)
+    eligible_by_code = {
+        code: np.where(_WORKER_BANK_SEC_CODES != code)[0]
+        for code in unique_sec_codes
+    }
+
+    for q_idx, q_id, query_sec_code in items:
+        eligible_indices = eligible_by_code[query_sec_code]
         if len(eligible_indices) == 0:
             results.append((q_idx, RetrievalResult(
-                prediction=unconditional_mean,
+                prediction=_WORKER_BANK_UNCOND_MEAN,
                 neighbor_ids=[],
                 neighbor_distances=[],
                 is_fallback=True,
@@ -684,42 +754,42 @@ def _random_memory_worker_chunk(
         permuted_indices = rng.permutation(eligible_indices)
 
         accepted_indices: List[int] = []
-        sec_counts: Dict[str, int] = {}
-        sec_ordinals: Dict[str, List[int]] = {}
+        sec_counts: Dict[int, int] = {}
+        sec_ordinals: Dict[int, List[int]] = {}
 
         for idx in permuted_indices:
-            s_id = security_ids[idx]
-            count = sec_counts.get(s_id, 0)
+            s_code = int(_WORKER_BANK_SEC_CODES[idx])
+            count = sec_counts.get(s_code, 0)
             if count >= max_per_security:
                 continue
 
-            cand_ord = int(session_ordinals[idx])
-            past_ords = sec_ordinals.get(s_id, [])
+            cand_ord = int(_WORKER_BANK_ORDINALS[idx])
+            past_ords = sec_ordinals.get(s_code, [])
             if any(abs(cand_ord - p_ord) < min_spacing_sessions for p_ord in past_ords):
                 continue
 
             accepted_indices.append(idx)
-            sec_counts[s_id] = count + 1
-            if s_id not in sec_ordinals:
-                sec_ordinals[s_id] = []
-            sec_ordinals[s_id].append(cand_ord)
+            sec_counts[s_code] = count + 1
+            if s_code not in sec_ordinals:
+                sec_ordinals[s_code] = []
+            sec_ordinals[s_code].append(cand_ord)
 
             if len(accepted_indices) == k:
                 break
 
         if len(accepted_indices) < k:
             results.append((q_idx, RetrievalResult(
-                prediction=unconditional_mean,
-                neighbor_ids=[int(record_ids[i]) for i in accepted_indices],
+                prediction=_WORKER_BANK_UNCOND_MEAN,
+                neighbor_ids=[int(_WORKER_BANK_RECORD_IDS[i]) for i in accepted_indices],
                 neighbor_distances=[],
                 is_fallback=True,
                 policy="MEM_RANDOM",
             )))
         else:
-            targets = targets_63[accepted_indices]
+            targets = _WORKER_BANK_TARGETS[accepted_indices]
             results.append((q_idx, RetrievalResult(
                 prediction=float(np.mean(targets)),
-                neighbor_ids=[int(record_ids[i]) for i in accepted_indices],
+                neighbor_ids=[int(_WORKER_BANK_RECORD_IDS[i]) for i in accepted_indices],
                 neighbor_distances=[],
                 is_fallback=False,
                 policy="MEM_RANDOM",
@@ -738,10 +808,10 @@ def retrieve_mem_random_parallel(
     k: int = 25,
     max_per_security: int = 3,
     min_spacing_sessions: int = 21,
-    max_workers: int = 16,
+    max_workers: int = 12,
     chunk_size: int = 128,
 ) -> List[RetrievalResult]:
-    """Execute parallel random memory precedent retrieval preserving exact PCG64 seed semantics (Phase 7)."""
+    """Execute parallel random memory precedent retrieval with memmapped pool (Corrections 4 & 7)."""
     Q = len(query_ids)
     if Q == 0:
         return []
@@ -758,36 +828,54 @@ def retrieve_mem_random_parallel(
             for i in range(Q)
         ]
 
+    import tempfile
+    from pathlib import Path
     import multiprocessing as mp
     from concurrent.futures import ProcessPoolExecutor
 
-    items = [(i, query_ids[i], query_security_ids[i]) for i in range(Q)]
+    # Precompute integer security codes for fast comparisons
+    if not hasattr(bank, "security_codes_int32") or not hasattr(bank, "session_ordinals_int32"):
+        bank.precompute_bank_norms()
+
+    sec_map = getattr(bank, "security_id_to_code", None)
+    if sec_map is None:
+        unique_secs = sorted(list(set(bank.security_ids)))
+        sec_map = {sec: i for i, sec in enumerate(unique_secs)}
+    query_sec_codes = [sec_map.get(s, -1) for s in query_security_ids]
+
+    items = [(i, query_ids[i], query_sec_codes[i]) for i in range(Q)]
     chunks = [items[pos:pos + chunk_size] for pos in range(0, Q, chunk_size)]
 
-    ctx = mp.get_context("spawn")
-    results_with_idx: List[Tuple[int, RetrievalResult]] = []
-    with ProcessPoolExecutor(max_workers=max_workers, mp_context=ctx) as executor:
-        futures = [
-            executor.submit(
-                _random_memory_worker_chunk,
-                chunk,
-                bank_hash,
-                fold_year,
-                master_seed,
-                k,
-                max_per_security,
-                min_spacing_sessions,
-                bank.N,
-                bank.security_ids,
-                bank.session_ordinals,
-                bank.targets_63,
-                bank.record_ids,
-                bank.unconditional_mean,
-            )
-            for chunk in chunks
-        ]
-        for f in futures:
-            results_with_idx.extend(f.result())
+    with tempfile.TemporaryDirectory(prefix="rnd_mem_") as tmp_dir:
+        tmp_p = Path(tmp_dir)
+        np.save(tmp_p / "sec_codes.npy", bank.security_codes_int32)
+        np.save(tmp_p / "ordinals.npy", bank.session_ordinals_int32)
+        np.save(tmp_p / "targets.npy", bank.targets_float64)
+        np.save(tmp_p / "record_ids.npy", bank.record_ids)
+
+        ctx = mp.get_context("spawn")
+        results_with_idx: List[Tuple[int, RetrievalResult]] = []
+        with ProcessPoolExecutor(
+            max_workers=max_workers,
+            mp_context=ctx,
+            initializer=_init_random_memory_worker,
+            initargs=(str(tmp_p), bank.N, float(bank.unconditional_mean)),
+        ) as executor:
+            futures = [
+                executor.submit(
+                    _random_memory_worker_chunk,
+                    chunk,
+                    bank_hash,
+                    fold_year,
+                    master_seed,
+                    k,
+                    max_per_security,
+                    min_spacing_sessions,
+                )
+                for chunk in chunks
+            ]
+            for f in futures:
+                results_with_idx.extend(f.result())
 
     results_with_idx.sort(key=lambda x: x[0])
     return [r[1] for r in results_with_idx]
