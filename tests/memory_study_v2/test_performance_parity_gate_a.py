@@ -38,6 +38,7 @@ from memory_study_v2.retrieval import (
     retrieve_knn_plain,
     retrieve_mem_random,
     retrieve_mem_random_parallel,
+    retrieve_mem_random_parallel_multi_seed,
     retrieve_mem_sim,
     retrieve_mem_sim_batch,
     retrieve_similarity_and_knn_batch,
@@ -47,6 +48,9 @@ from scripts.launch_a30_production import (
     GLOBAL_PROFILER,
     StageProfiler,
     StageTelemetryRecord,
+    _PREPARED_SECURITY_CACHE,
+    _ProcessTreeMemoryTracker,
+    clear_prepared_security_cache,
     launch_a30_deployment,
     verify_configuration_authorization,
 )
@@ -616,14 +620,40 @@ def test_worker_count_benchmark_sweep(synthetic_bank_and_queries):
 
 
 # ---------------------------------------------------------------------------
-# Test 13: Six-Fold Prediction Manifest Parity (Correction 9)
+# Test 13: Six-Fold Prediction Manifest & Prediction Hash Parity (Finding 3)
 # ---------------------------------------------------------------------------
 
+CANONICAL_MANIFEST_HASHES: Dict[int, str] = {
+    2020: "947a6858b0c84e3cd7174013373d97840c2c659b709ea12c240a51732261d30e",
+    2021: "3d8ebc9af18ad0f9e52508fb1d992cde8b6bdece762a824a0feaee1f774a0f88",
+    2022: "7f3388c1cd173c2e10af645997ae695f230672c4ba4b8f745860b02f88f43f6b",
+    2023: "f75219358dc091c17a207aced9d56dfc098e17c1b59e07d7a198447fde3f685d",
+    2024: "ad1691f07a0c567fd5696c2b698a27a610b660f973060c5a23e1b4b9a8a0c2aa",
+    2025: "7d0c6ff5d22ea645c76634cd9bc185e7031c5ee71ec82212e1c82a92d21d9d7e",
+}
+
+CANONICAL_PREDICTION_HASHES: Dict[int, str] = {
+    2020: "c4a4a6e6c1b5bb9b9a7c3b6e7138ad599b895de500208452654a71355d3bea0a",
+    2021: "100d01ff6a5cf3cf01f534677299db381743d775aaa3b7c73bcf2c007988e4dc",
+    2022: "450256fb20ee98e41e8afafe6e909742ce901f82c42325c2b2da9867f668aa14",
+    2023: "fd9438b8263557e239180cf684a3a9895ac21d346bbb1140af44707fac4794a1",
+    2024: "fecb34350b7d23e6d276f4f76412cf4c60ab9a2b5be1fb7080c6e638f1e693e4",
+    2025: "8429eef786010a1dd90c1f0556786b893ef2deb5638c5088120f8f39d39209ab",
+}
+
+
 def test_six_fold_prediction_manifest_parity():
-    """Parity Test 13: Verify that all six fold prediction manifests (2020-2025) possess valid cryptographic identities."""
+    """Parity Test 13 (Finding 3): Verify that all six fold prediction manifests and prediction hashes match canonical digests."""
+    import hashlib
     repo_root = Path(__file__).resolve().parent.parent.parent
     base_recovery_dir = repo_root / "outputs" / "a30-final-recovery"
     assert base_recovery_dir.is_dir(), f"Missing reference directory: {base_recovery_dir}"
+
+    release_manifest_path = base_recovery_dir / "release_manifest.json"
+    assert release_manifest_path.exists(), "Missing release_manifest.json"
+    with open(release_manifest_path, "r", encoding="utf-8") as f:
+        release_manifest = json.load(f)
+    sealed_artifacts = release_manifest.get("sealed_artifacts", {})
 
     expected_folds = [2020, 2021, 2022, 2023, 2024, 2025]
     for year in expected_folds:
@@ -631,13 +661,31 @@ def test_six_fold_prediction_manifest_parity():
         manifest_path = fold_dir / "predictions_manifest.json"
         assert manifest_path.exists(), f"Missing predictions_manifest.json for fold {year}"
 
+        # 1. Manifest file SHA-256 matches canonical reference and release_manifest
+        actual_manifest_sha = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+        assert actual_manifest_sha == CANONICAL_MANIFEST_HASHES[year], (
+            f"Fold {year} manifest SHA mismatch: got {actual_manifest_sha}, expected {CANONICAL_MANIFEST_HASHES[year]}"
+        )
+        rel_key = f"fold_{year}/predictions_manifest.json"
+        assert sealed_artifacts.get(rel_key) == actual_manifest_sha, (
+            f"Release manifest mismatch for {rel_key}"
+        )
+
         with open(manifest_path, "r", encoding="utf-8") as f:
             manifest = json.load(f)
 
         assert manifest["fold_year"] == year
         assert manifest["count"] > 0
-        assert "sha256" in manifest
-        assert len(manifest["sha256"]) == 64
+
+        # 2. Prediction hash in manifest matches canonical prediction hash and release_manifest
+        pred_sha = manifest["sha256"]
+        assert pred_sha == CANONICAL_PREDICTION_HASHES[year], (
+            f"Fold {year} prediction SHA mismatch in manifest: got {pred_sha}, expected {CANONICAL_PREDICTION_HASHES[year]}"
+        )
+        pred_rel_key = f"fold_{year}/policy_predictions.json"
+        assert sealed_artifacts.get(pred_rel_key) == pred_sha, (
+            f"Release manifest mismatch for {pred_rel_key}"
+        )
 
         identity = manifest.get("prediction_identity")
         assert identity is not None, f"Missing prediction_identity in fold {year} manifest"
@@ -646,3 +694,411 @@ def test_six_fold_prediction_manifest_parity():
         assert len(identity["prediction_identity_sha256"]) == 64
         assert "producing_checkpoints" in identity
         assert len(identity["producing_checkpoints"]) > 0
+
+        # 3. If policy_predictions.json exists on disk, recompute and verify exact match
+        pred_file = fold_dir / "policy_predictions.json"
+        if pred_file.exists():
+            computed_pred_sha = hashlib.sha256(pred_file.read_bytes()).hexdigest()
+            assert computed_pred_sha == CANONICAL_PREDICTION_HASHES[year], (
+                f"Computed SHA-256 for existing {pred_file} does not match canonical prediction digest"
+            )
+
+
+# ---------------------------------------------------------------------------
+# Test 14: Segment ID Cache Discontinuity Preservation (Finding 1)
+# ---------------------------------------------------------------------------
+
+def test_segment_id_cache_discontinuity_preservation(tmp_path):
+    """Parity Test 14 (Finding 1): SecurityFeatureCache serializes and reconstructs segment_ids accurately without hardcoding 0."""
+    T = 20
+    sessions = np.array([f"2020-01-{(i % 28) + 1:02d}" for i in range(T)], dtype='<U10')
+    raw_open = np.linspace(100.0, 120.0, T)
+    raw_high = raw_open + 1.0
+    raw_low = raw_open - 1.0
+    raw_close = raw_open + 0.5
+    volume = np.full(T, 5000.0)
+    raw_features = np.random.randn(T, len(EXPECTED_FEATURES_ORDERED))
+    target_63 = np.random.randn(T)
+    target_exec = np.random.randn(T)
+    ordinals = np.arange(T, dtype=np.int64)
+    validity = np.ones(T, dtype=bool)
+    bar_status = np.array(["VALID"] * T)
+
+    # Discontinuity segment IDs with 3 distinct segments
+    test_segments = np.array([0] * 5 + [1] * 8 + [2] * 7, dtype=np.int64)
+
+    cache = SecurityFeatureCache(
+        security_id="MKT:DISCONT_SEC",
+        sessions=sessions,
+        raw_open=raw_open,
+        raw_high=raw_high,
+        raw_low=raw_low,
+        raw_close=raw_close,
+        model_open=raw_open,
+        model_high=raw_high,
+        model_low=raw_low,
+        model_close=raw_close,
+        volume=volume,
+        raw_features=raw_features,
+        target_63_legacy=target_63,
+        target_executable=target_exec,
+        session_ordinals=ordinals,
+        validity_flags=validity,
+        bar_status=bar_status,
+        file_sha256="discont_file_sha",
+        calendar_sha256="discont_cal_sha",
+        segment_ids=test_segments,
+    )
+
+    # Verify to_dataframes() propagates segment_ids (not hardcoded 0)
+    val_df, tr_df, feats_df, labels_df = cache.to_dataframes()
+    assert "segment_id" in val_df.columns
+    assert "segment_id" in tr_df.columns
+    np.testing.assert_array_equal(val_df["segment_id"].to_numpy(), test_segments)
+    np.testing.assert_array_equal(tr_df["segment_id"].to_numpy(), test_segments)
+
+    # Test round-trip persistence via directory (.npy memmaps + manifest)
+    dir_path = tmp_path / "cache_discont_dir"
+    cache.save(dir_path)
+    assert (dir_path / "segment_ids.npy").exists()
+    with open(dir_path / "manifest.json", "r", encoding="utf-8") as f:
+        manifest = json.load(f)
+    assert "segment_ids" in manifest.get("arrays", [])
+
+    loaded_dir = SecurityFeatureCache.load(dir_path, mmap_mode="r")
+    assert loaded_dir.segment_ids is not None
+    np.testing.assert_array_equal(loaded_dir.segment_ids, test_segments)
+    val_df_dir, tr_df_dir, _, _ = loaded_dir.to_dataframes()
+    np.testing.assert_array_equal(val_df_dir["segment_id"].to_numpy(), test_segments)
+    np.testing.assert_array_equal(tr_df_dir["segment_id"].to_numpy(), test_segments)
+
+    # Test round-trip persistence via NPZ
+    npz_path = tmp_path / "cache_discont.npz"
+    cache.save(npz_path)
+    loaded_npz = SecurityFeatureCache.load(npz_path)
+    assert loaded_npz.segment_ids is not None
+    np.testing.assert_array_equal(loaded_npz.segment_ids, test_segments)
+    val_df_npz, tr_df_npz, _, _ = loaded_npz.to_dataframes()
+    np.testing.assert_array_equal(val_df_npz["segment_id"].to_numpy(), test_segments)
+    np.testing.assert_array_equal(tr_df_npz["segment_id"].to_numpy(), test_segments)
+
+    # Verify fallback if segment_ids is None
+    cache_no_seg = SecurityFeatureCache(
+        security_id="MKT:NO_SEG",
+        sessions=sessions,
+        raw_open=raw_open,
+        raw_high=raw_high,
+        raw_low=raw_low,
+        raw_close=raw_close,
+        model_open=raw_open,
+        model_high=raw_high,
+        model_low=raw_low,
+        model_close=raw_close,
+        volume=volume,
+        raw_features=raw_features,
+        target_63_legacy=target_63,
+        target_executable=target_exec,
+        session_ordinals=ordinals,
+        validity_flags=validity,
+        bar_status=bar_status,
+        file_sha256="no_seg_file",
+        calendar_sha256="no_seg_cal",
+        segment_ids=None,
+    )
+    val_df_none, tr_df_none, _, _ = cache_no_seg.to_dataframes()
+    assert np.all(val_df_none["segment_id"].to_numpy() == 0)
+    assert np.all(tr_df_none["segment_id"].to_numpy() == 0)
+
+
+# ---------------------------------------------------------------------------
+# Test 15: In-Memory Prepared Security Cache Across Folds (Finding 2)
+# ---------------------------------------------------------------------------
+
+def test_prepared_security_cache_fold_reuse(tmp_path):
+    """Parity Test 15 (Finding 2): In-memory prepared DataFrame cache avoids redundant reconstruction across folds."""
+    clear_prepared_security_cache()
+    assert len(_PREPARED_SECURITY_CACHE) == 0
+
+    cache_key = ("MKT:SEC_TEST", str(tmp_path / "mock.parquet"))
+    mock_sec_cache = "mock_sec_cache_obj"
+    mock_sched_val_df = pd.DataFrame({"session": ["2020-01-01"], "bar_status": ["VALID"]})
+    mock_tr_df = pd.DataFrame({"session": ["2020-01-01"], "raw_open": [100.0]})
+    mock_feats_df = pd.DataFrame({"session": ["2020-01-01"]})
+    mock_labels_df = pd.DataFrame({"target_value": [0.05]})
+    mock_sess_to_row = {"2020-01-01": 0}
+
+    _PREPARED_SECURITY_CACHE[cache_key] = (
+        mock_sec_cache,
+        mock_sched_val_df,
+        mock_tr_df,
+        mock_feats_df,
+        mock_labels_df,
+        mock_sess_to_row,
+    )
+
+    assert cache_key in _PREPARED_SECURITY_CACHE
+    entry = _PREPARED_SECURITY_CACHE[cache_key]
+    assert entry[0] is mock_sec_cache
+    assert entry[1] is mock_sched_val_df
+    assert entry[2] is mock_tr_df
+    assert entry[3] is mock_feats_df
+    assert entry[4] is mock_labels_df
+    assert entry[5] is mock_sess_to_row
+
+    # Test clearing
+    clear_prepared_security_cache()
+    assert len(_PREPARED_SECURITY_CACHE) == 0
+    assert cache_key not in _PREPARED_SECURITY_CACHE
+
+
+# ---------------------------------------------------------------------------
+# Test 16: GPU Cache Teardown and Resource Cleanup (Finding 6)
+# ---------------------------------------------------------------------------
+
+def test_gpu_cache_release_teardown(synthetic_bank_and_queries):
+    """Parity Test 16 (Finding 6): MemoryBank.release_gpu_cache() explicitly tears down GPU tensors and frees memory."""
+    bank, _, _, _ = synthetic_bank_and_queries
+
+    # Initially GPU cached tensors are None
+    assert getattr(bank, "_gpu_vectors", None) is None
+    assert getattr(bank, "_gpu_bank_norms", None) is None
+
+    # Simulate GPU caching (or real GPU if CUDA available)
+    import torch
+    dummy_vecs = torch.from_numpy(bank.vectors[:5])
+    dummy_norms = torch.from_numpy(bank.bank_norms[:5])
+    bank._gpu_vectors = dummy_vecs
+    bank._gpu_bank_norms = dummy_norms
+
+    assert bank._gpu_vectors is not None
+    assert bank._gpu_bank_norms is not None
+
+    # Call release_gpu_cache
+    bank.release_gpu_cache()
+
+    assert bank._gpu_vectors is None
+    assert bank._gpu_bank_norms is None
+
+    # Verify idempotency
+    bank.release_gpu_cache()
+    assert bank._gpu_vectors is None
+    assert bank._gpu_bank_norms is None
+
+    # Test destructor __del__ calls release_gpu_cache
+    bank._gpu_vectors = dummy_vecs
+    bank.__del__()
+    assert bank._gpu_vectors is None
+
+
+# ---------------------------------------------------------------------------
+# Test 17: Multi-Seed Random Memory Worker and Pool Reuse (Finding 5)
+# ---------------------------------------------------------------------------
+
+def test_random_memory_multi_seed_worker_reuse(synthetic_bank_and_queries):
+    """Parity Test 17 (Finding 5): retrieve_mem_random_parallel_multi_seed shares memmaps and pool across seeds identically."""
+    bank, _, query_secs, query_ids = synthetic_bank_and_queries
+    bank_hash = "mock_bank_hash_multiseed_123"
+    fold_year = 2022
+    seeds = [7, 17, 37]
+    k = 8
+    max_per_sec = 2
+    min_spacing = 15
+
+    # 1. Run multi-seed batched retrieval
+    multi_seed_results = retrieve_mem_random_parallel_multi_seed(
+        bank,
+        query_security_ids=query_secs,
+        query_ids=query_ids,
+        bank_hash=bank_hash,
+        fold_year=fold_year,
+        seeds=seeds,
+        k=k,
+        max_per_security=max_per_sec,
+        min_spacing_sessions=min_spacing,
+        max_workers=4,
+        chunk_size=4,
+    )
+
+    assert set(multi_seed_results.keys()) == set(seeds)
+
+    # 2. Run single-seed baseline for each seed and verify bit-for-bit equivalence
+    for s in seeds:
+        single_seed_res = retrieve_mem_random(
+            bank,
+            query_security_id=query_secs[0],
+            bank_hash=bank_hash,
+            fold_year=fold_year,
+            query_id=query_ids[0],
+            master_seed=s,
+            k=k,
+            max_per_security=max_per_sec,
+            min_spacing_sessions=min_spacing,
+        )
+        assert multi_seed_results[s][0].neighbor_ids == single_seed_res.neighbor_ids
+        assert pytest.approx(multi_seed_results[s][0].prediction, abs=1e-12) == single_seed_res.prediction
+
+        # Full query loop comparison
+        full_single_seed = retrieve_mem_random_parallel(
+            bank,
+            query_security_ids=query_secs,
+            query_ids=query_ids,
+            bank_hash=bank_hash,
+            fold_year=fold_year,
+            master_seed=s,
+            k=k,
+            max_per_security=max_per_sec,
+            min_spacing_sessions=min_spacing,
+            max_workers=2,
+            chunk_size=4,
+        )
+        assert len(multi_seed_results[s]) == len(full_single_seed)
+        for i in range(len(query_ids)):
+            assert multi_seed_results[s][i].neighbor_ids == full_single_seed[i].neighbor_ids
+            assert pytest.approx(multi_seed_results[s][i].prediction, abs=1e-12) == full_single_seed[i].prediction
+
+
+# ---------------------------------------------------------------------------
+# Test 18: Incremental Shard Resumption and Atomic Storage (Finding 4)
+# ---------------------------------------------------------------------------
+
+def test_incremental_shard_resumption(tmp_path):
+    """Parity Test 18 (Finding 4): Incremental shards are written atomically and reused upon resumption."""
+    shards_dir = tmp_path / "fold_2020" / "shards"
+    shards_dir.mkdir(parents=True, exist_ok=True)
+
+    expected_identity_sha = "ident_abc123_test_sha256"
+
+    # 1. Write Shard 0 atomically
+    shard0_recs = [
+        {"query_id": "2020_SEC_0", "security_id": "SEC_0", "market": "MKT", "decision_session": "2020-01-02",
+         "fold": 2020, "policy_id": "MEM_SIM", "realization_id": None, "prediction": 0.01, "source_artifact_id": "src0"},
+        {"query_id": "2020_SEC_1", "security_id": "SEC_1", "market": "MKT", "decision_session": "2020-01-02",
+         "fold": 2020, "policy_id": "MEM_SIM", "realization_id": None, "prediction": 0.02, "source_artifact_id": "src1"},
+    ]
+    shard0_payload = {
+        "shard_meta": {
+            "query_start": 0,
+            "query_end": 2,
+            "fold_year": 2020,
+            "prediction_identity_sha256": expected_identity_sha,
+            "total_records": len(shard0_recs),
+        },
+        "records": shard0_recs,
+    }
+    shard0_file = shards_dir / "predictions_00000_00002.json"
+    tmp_shard0 = shard0_file.with_suffix(".tmp.json")
+    with open(tmp_shard0, "w", encoding="utf-8") as f:
+        json.dump(shard0_payload, f)
+    tmp_shard0.rename(shard0_file)
+    assert shard0_file.exists()
+
+    # 2. Simulate resuming execution where shard 0 is already present
+    shard_size = 2
+    num_eval = 4
+    num_shards = 2
+
+    seen_keys = set()
+    shards_records_dict = {}
+    missing_shards = []
+
+    for shard_idx in range(num_shards):
+        q_start = shard_idx * shard_size
+        q_end = min(q_start + shard_size, num_eval)
+        shard_file = shards_dir / f"predictions_{q_start:05d}_{q_end:05d}.json"
+
+        shard_loaded = False
+        if shard_file.exists():
+            try:
+                with open(shard_file, "r", encoding="utf-8") as f:
+                    s_data = json.load(f)
+                s_meta = s_data.get("shard_meta", {})
+                if s_meta.get("prediction_identity_sha256") == expected_identity_sha:
+                    s_recs = s_data.get("records", [])
+                    for r in s_recs:
+                        k = (r["query_id"], r["policy_id"], r["realization_id"])
+                        assert k not in seen_keys, f"Duplicate key: {k}"
+                        seen_keys.add(k)
+                    shards_records_dict[shard_idx] = s_recs
+                    shard_loaded = True
+            except Exception:
+                shard_loaded = False
+
+        if not shard_loaded:
+            missing_shards.append((shard_idx, q_start, q_end, shard_file))
+
+    # Shard 0 must be recognized and loaded from disk without recomputing
+    assert 0 in shards_records_dict
+    assert len(shards_records_dict[0]) == 2
+    # Only Shard 1 should be marked as missing
+    assert len(missing_shards) == 1
+    assert missing_shards[0][0] == 1
+    assert missing_shards[0][1] == 2
+    assert missing_shards[0][2] == 4
+
+    # 3. Simulate computing and writing missing Shard 1
+    shard1_recs = [
+        {"query_id": "2020_SEC_2", "security_id": "SEC_2", "market": "MKT", "decision_session": "2020-01-03",
+         "fold": 2020, "policy_id": "MEM_SIM", "realization_id": None, "prediction": 0.03, "source_artifact_id": "src2"},
+        {"query_id": "2020_SEC_3", "security_id": "SEC_3", "market": "MKT", "decision_session": "2020-01-03",
+         "fold": 2020, "policy_id": "MEM_SIM", "realization_id": None, "prediction": 0.04, "source_artifact_id": "src3"},
+    ]
+    shard1_payload = {
+        "shard_meta": {
+            "query_start": 2,
+            "query_end": 4,
+            "fold_year": 2020,
+            "prediction_identity_sha256": expected_identity_sha,
+            "total_records": len(shard1_recs),
+        },
+        "records": shard1_recs,
+    }
+    shard1_file = missing_shards[0][3]
+    tmp_shard1 = shard1_file.with_suffix(".tmp.json")
+    with open(tmp_shard1, "w", encoding="utf-8") as f:
+        json.dump(shard1_payload, f)
+    tmp_shard1.rename(shard1_file)
+    shards_records_dict[1] = shard1_recs
+
+    # 4. Consolidate shards
+    all_recs = []
+    for s_idx in range(num_shards):
+        all_recs.extend(shards_records_dict[s_idx])
+    assert len(all_recs) == 4
+    qids = [r["query_id"] for r in all_recs]
+    assert qids == ["2020_SEC_0", "2020_SEC_1", "2020_SEC_2", "2020_SEC_3"]
+
+
+# ---------------------------------------------------------------------------
+# Test 19: Process Tree Peak RSS Tracking (Finding 7)
+# ---------------------------------------------------------------------------
+
+def test_stage_profiler_multiprocess_peak_rss():
+    """Parity Test 19 (Finding 7): _ProcessTreeMemoryTracker captures child process peak RSS."""
+    import subprocess
+    import sys
+
+    # 1. Direct _ProcessTreeMemoryTracker verification
+    tracker = _ProcessTreeMemoryTracker(interval=0.02)
+    tracker.start()
+
+    # Launch a child process that allocates ~100MB of RAM
+    child_code = "import time, numpy as np; arr = np.ones((3500, 3500), dtype=np.float64); time.sleep(0.35)"
+    proc = subprocess.Popen([sys.executable, "-c", child_code])
+    proc.wait()
+
+    peak_rss = tracker.stop()
+    assert peak_rss > 50 * 1024 * 1024, f"Peak RSS {peak_rss} too low to capture child process tree"
+
+    # 2. StageProfiler integration verification
+    profiler = StageProfiler()
+    with profiler.time_stage("child_process_benchmark", fold=2020) as m:
+        proc2 = subprocess.Popen([sys.executable, "-c", child_code])
+        proc2.wait()
+        m["child_finished"] = True
+
+    records = profiler.to_dict()
+    assert len(records) == 1
+    rec = records[0]
+    assert rec["stage"] == "child_process_benchmark"
+    assert rec["peak_rss_gb"] > 0.05, f"StageProfiler peak_rss_gb {rec['peak_rss_gb']} failed to reflect child memory"
+

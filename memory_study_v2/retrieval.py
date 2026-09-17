@@ -798,35 +798,43 @@ def _random_memory_worker_chunk(
     return results
 
 
-def retrieve_mem_random_parallel(
+def retrieve_mem_random_parallel_multi_seed(
     bank: MemoryBank,
     query_security_ids: List[str],
     query_ids: List[str],
     bank_hash: str,
     fold_year: int,
-    master_seed: int,
+    seeds: List[int],
     k: int = 25,
     max_per_security: int = 3,
     min_spacing_sessions: int = 21,
-    max_workers: int = 12,
+    max_workers: Optional[int] = None,
     chunk_size: int = 128,
-) -> List[RetrievalResult]:
-    """Execute parallel random memory precedent retrieval with memmapped pool (Corrections 4 & 7)."""
+) -> Dict[int, List[RetrievalResult]]:
+    """Execute parallel random memory retrieval across multiple seeds reusing a single worker pool and memmap files (Finding 5)."""
     Q = len(query_ids)
     if Q == 0:
-        return []
+        return {s: [] for s in seeds}
 
-    if max_workers <= 1 or Q <= chunk_size:
-        return [
-            retrieve_mem_random(
-                bank, query_security_id=query_security_ids[i],
-                bank_hash=bank_hash, fold_year=fold_year,
-                query_id=query_ids[i], master_seed=master_seed,
-                k=k, max_per_security=max_per_security,
-                min_spacing_sessions=min_spacing_sessions,
-            )
-            for i in range(Q)
-        ]
+    if max_workers is None:
+        import os
+        max_workers = min(20, os.cpu_count() or 16)
+
+    # Fallback to serial for single worker or small Q
+    if max_workers <= 1 or (Q <= chunk_size and len(seeds) == 1):
+        out: Dict[int, List[RetrievalResult]] = {}
+        for s in seeds:
+            out[s] = [
+                retrieve_mem_random(
+                    bank, query_security_id=query_security_ids[i],
+                    bank_hash=bank_hash, fold_year=fold_year,
+                    query_id=query_ids[i], master_seed=s,
+                    k=k, max_per_security=max_per_security,
+                    min_spacing_sessions=min_spacing_sessions,
+                )
+                for i in range(Q)
+            ]
+        return out
 
     import tempfile
     from pathlib import Path
@@ -846,6 +854,14 @@ def retrieve_mem_random_parallel(
     items = [(i, query_ids[i], query_sec_codes[i]) for i in range(Q)]
     chunks = [items[pos:pos + chunk_size] for pos in range(0, Q, chunk_size)]
 
+    tasks = []
+    for s in seeds:
+        for chunk in chunks:
+            tasks.append((s, chunk))
+
+    effective_workers = min(max_workers, len(tasks))
+    results_by_seed: Dict[int, List[Tuple[int, RetrievalResult]]] = {s: [] for s in seeds}
+
     with tempfile.TemporaryDirectory(prefix="rnd_mem_") as tmp_dir:
         tmp_p = Path(tmp_dir)
         np.save(tmp_p / "sec_codes.npy", bank.security_codes_int32)
@@ -854,31 +870,68 @@ def retrieve_mem_random_parallel(
         np.save(tmp_p / "record_ids.npy", bank.record_ids)
 
         ctx = mp.get_context("spawn")
-        results_with_idx: List[Tuple[int, RetrievalResult]] = []
         with ProcessPoolExecutor(
-            max_workers=max_workers,
+            max_workers=effective_workers,
             mp_context=ctx,
             initializer=_init_random_memory_worker,
             initargs=(str(tmp_p), bank.N, float(bank.unconditional_mean)),
         ) as executor:
             futures = [
-                executor.submit(
-                    _random_memory_worker_chunk,
-                    chunk,
-                    bank_hash,
-                    fold_year,
-                    master_seed,
-                    k,
-                    max_per_security,
-                    min_spacing_sessions,
+                (
+                    s,
+                    executor.submit(
+                        _random_memory_worker_chunk,
+                        chunk,
+                        bank_hash,
+                        fold_year,
+                        s,
+                        k,
+                        max_per_security,
+                        min_spacing_sessions,
+                    )
                 )
-                for chunk in chunks
+                for s, chunk in tasks
             ]
-            for f in futures:
-                results_with_idx.extend(f.result())
+            for s, f in futures:
+                results_by_seed[s].extend(f.result())
 
-    results_with_idx.sort(key=lambda x: x[0])
-    return [r[1] for r in results_with_idx]
+    final_results: Dict[int, List[RetrievalResult]] = {}
+    for s in seeds:
+        res_list = results_by_seed[s]
+        res_list.sort(key=lambda x: x[0])
+        final_results[s] = [r[1] for r in res_list]
+
+    return final_results
+
+
+def retrieve_mem_random_parallel(
+    bank: MemoryBank,
+    query_security_ids: List[str],
+    query_ids: List[str],
+    bank_hash: str,
+    fold_year: int,
+    master_seed: int,
+    k: int = 25,
+    max_per_security: int = 3,
+    min_spacing_sessions: int = 21,
+    max_workers: Optional[int] = None,
+    chunk_size: int = 128,
+) -> List[RetrievalResult]:
+    """Execute parallel random memory precedent retrieval with memmapped pool (Corrections 4 & 7)."""
+    res_dict = retrieve_mem_random_parallel_multi_seed(
+        bank=bank,
+        query_security_ids=query_security_ids,
+        query_ids=query_ids,
+        bank_hash=bank_hash,
+        fold_year=fold_year,
+        seeds=[master_seed],
+        k=k,
+        max_per_security=max_per_security,
+        min_spacing_sessions=min_spacing_sessions,
+        max_workers=max_workers,
+        chunk_size=chunk_size,
+    )
+    return res_dict[master_seed]
 
 
 def retrieve_hist_prior(bank: MemoryBank) -> RetrievalResult:

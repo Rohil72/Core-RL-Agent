@@ -55,6 +55,7 @@ class SecurityFeatureCache:
     feature_valid_mask: Optional[np.ndarray] = None # 1D bool
     feature_spec_id: str = FEATURE_SPEC_ID
     target_spec_id: str = TARGET_SPEC_ID
+    segment_ids: Optional[np.ndarray] = None        # 1D int64
 
     def save(self, cache_dest: Union[str, Path]) -> None:
         """Save cache record atomically as .npy memmaps plus manifest.json, or uncompressed .npz."""
@@ -82,6 +83,7 @@ class SecurityFeatureCache:
                 validity_flags=self.validity_flags,
                 bar_status=self.bar_status,
                 feature_valid_mask=self.feature_valid_mask if self.feature_valid_mask is not None else self.validity_flags,
+                segment_ids=self.segment_ids if self.segment_ids is not None else np.zeros(len(self.sessions), dtype=np.int64),
                 file_sha256=np.array(self.file_sha256),
                 calendar_sha256=np.array(self.calendar_sha256),
                 feature_spec_id=np.array(self.feature_spec_id),
@@ -95,6 +97,7 @@ class SecurityFeatureCache:
         # Directory-based .npy memmaps + JSON manifest (Correction 1)
         dest.mkdir(parents=True, exist_ok=True)
         import json
+        seg_arr = self.segment_ids if self.segment_ids is not None else np.zeros(len(self.sessions), dtype=np.int64)
         manifest = {
             "security_id": str(self.security_id),
             "file_sha256": str(self.file_sha256),
@@ -119,12 +122,15 @@ class SecurityFeatureCache:
                 "validity_flags": {"dtype": str(self.validity_flags.dtype), "shape": list(self.validity_flags.shape)},
                 "bar_status": {"dtype": str(self.bar_status.dtype), "shape": list(self.bar_status.shape)},
                 "feature_valid_mask": {"dtype": str((self.feature_valid_mask if self.feature_valid_mask is not None else self.validity_flags).dtype), "shape": list(self.validity_flags.shape)},
+                "segment_ids": {"dtype": str(seg_arr.dtype), "shape": list(seg_arr.shape)},
             }
         }
         for name in manifest["arrays"]:
-            arr = getattr(self, name)
+            arr = getattr(self, name, None)
             if arr is None and name == "feature_valid_mask":
                 arr = self.validity_flags
+            elif arr is None and name == "segment_ids":
+                arr = seg_arr
             np.save(dest / f"{name}.npy", arr)
 
         manifest_tmp = dest / "manifest.tmp.json"
@@ -172,6 +178,7 @@ class SecurityFeatureCache:
                 feature_valid_mask=_load_arr("feature_valid_mask") if (sec_dir / "feature_valid_mask.npy").exists() else None,
                 feature_spec_id=str(manifest.get("feature_spec_id", FEATURE_SPEC_ID)),
                 target_spec_id=str(manifest.get("target_spec_id", TARGET_SPEC_ID)),
+                segment_ids=_load_arr("segment_ids") if (sec_dir / "segment_ids.npy").exists() else None,
             )
 
         # NPZ fallback
@@ -199,10 +206,12 @@ class SecurityFeatureCache:
                 feature_valid_mask=data["feature_valid_mask"].astype(bool) if "feature_valid_mask" in data else data["validity_flags"].astype(bool),
                 feature_spec_id=str(data["feature_spec_id"]),
                 target_spec_id=str(data["target_spec_id"]),
+                segment_ids=data["segment_ids"].astype(np.int64) if "segment_ids" in data else None,
             )
 
     def to_dataframes(self) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
         """Convert cache arrays into (val_df, tr_df, feats_df, labels_df) matching legacy contracts."""
+        seg_ids = self.segment_ids if self.segment_ids is not None else np.zeros(len(self.sessions), dtype=np.int64)
         val_df = pd.DataFrame({
             "session": self.sessions,
             "open": self.raw_open,
@@ -212,7 +221,7 @@ class SecurityFeatureCache:
             "volume": self.volume,
             "bar_status": self.bar_status,
             "is_valid_bar": self.validity_flags,
-            "segment_id": 0,
+            "segment_id": seg_ids,
         })
         tr_df = pd.DataFrame({
             "session": self.sessions,
@@ -232,7 +241,7 @@ class SecurityFeatureCache:
             "volume": self.volume,
             "normalized_volume": self.volume,
             "is_valid_bar": self.validity_flags,
-            "segment_id": 0,
+            "segment_id": seg_ids,
         })
         feats_dict = {"session": self.sessions}
         for idx, feat_name in enumerate(EXPECTED_FEATURES_ORDERED):
@@ -314,6 +323,17 @@ def compute_security_cache(
     validity_flags = np.array([st == "VALID" for st in bar_status], dtype=bool)
     feat_valid_mask = feats_df["valid_mask"].to_numpy(dtype=bool) if "valid_mask" in feats_df.columns else validity_flags
 
+    if "segment_id" in tr_df.columns:
+        segment_ids = tr_df["segment_id"].to_numpy(dtype=np.int64)
+    elif "segment_id" in sched_val_df.columns:
+        segment_ids = sched_val_df["segment_id"].to_numpy(dtype=np.int64)
+    elif "segment_id" in val_df.columns:
+        segment_ids = val_df["segment_id"].to_numpy(dtype=np.int64)
+    elif "segment_id" in df_aligned.columns:
+        segment_ids = df_aligned["segment_id"].to_numpy(dtype=np.int64)
+    else:
+        segment_ids = np.zeros(T, dtype=np.int64)
+
     return SecurityFeatureCache(
         security_id=sec_id,
         sessions=sessions,
@@ -335,6 +355,7 @@ def compute_security_cache(
         file_sha256=file_sha,
         calendar_sha256=cal_sha,
         feature_valid_mask=feat_valid_mask,
+        segment_ids=segment_ids,
     )
 
 

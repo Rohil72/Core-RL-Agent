@@ -64,6 +64,7 @@ class MemoryBank:
         # Precompute norms automatically
         self._bank_norms_sq = np.einsum("ij,ij->i", self.vectors_float64, self.vectors_float64)
         self.bank_norms_float64 = self._bank_norms_sq
+        self.bank_norms = self._bank_norms_sq
 
         # Unconditional historical prior mean of mature targets
         self.unconditional_mean = float(np.mean(self.targets_63))
@@ -151,6 +152,8 @@ class MemoryBank:
         """
         v_64 = self.vectors.astype(np.float64)
         self._bank_norms_sq: np.ndarray = np.einsum("ij,ij->i", v_64, v_64)  # shape (N,)
+        self.bank_norms_float64 = self._bank_norms_sq
+        self.bank_norms = self._bank_norms_sq
         return self._bank_norms_sq
 
     def compute_squared_euclidean_batched(
@@ -235,6 +238,28 @@ class MemoryBank:
                     norms = self.precompute_bank_norms()
                 self._gpu_vectors = torch.as_tensor(vecs, dtype=torch.float32, device=dev)
                 self._gpu_bank_norms = torch.as_tensor(norms, dtype=torch.float32, device=dev)
+        except Exception:
+            pass
+
+    def release_gpu_cache(self) -> None:
+        """Release cached GPU tensors and reclaim CUDA VRAM (Finding 6)."""
+        if hasattr(self, "_gpu_vectors") and self._gpu_vectors is not None:
+            del self._gpu_vectors
+            self._gpu_vectors = None
+        if hasattr(self, "_gpu_bank_norms") and self._gpu_bank_norms is not None:
+            del self._gpu_bank_norms
+            self._gpu_bank_norms = None
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:
+            pass
+
+    def __del__(self) -> None:
+        """Ensure GPU memory is reclaimed upon bank garbage collection."""
+        try:
+            self.release_gpu_cache()
         except Exception:
             pass
 

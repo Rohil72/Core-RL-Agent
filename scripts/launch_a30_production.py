@@ -45,6 +45,7 @@ import os
 from pathlib import Path
 import platform
 import sys
+import threading
 import time
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
 from contextlib import contextmanager
@@ -105,6 +106,7 @@ from memory_study_v2.retrieval import (
     retrieve_mem_sim_batch,
     retrieve_similarity_and_knn_batch,
     retrieve_mem_random_parallel,
+    retrieve_mem_random_parallel_multi_seed,
 )
 from memory_study_v2.ridge import fit_ridge_model, RidgeModel
 from memory_study_v2.sample_index import (
@@ -218,6 +220,51 @@ class StageTelemetryRecord:
         return asdict(self)
 
 
+class _ProcessTreeMemoryTracker:
+    """Active background thread sampling recursive process tree RSS to capture intermediate peaks (Finding 7)."""
+    def __init__(self, interval: float = 0.05):
+        self.interval = interval
+        self.peak_rss = 0
+        self._stop_event = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+
+    def _sample_tree_rss(self) -> int:
+        if not psutil:
+            return 0
+        try:
+            parent = psutil.Process()
+            total = parent.memory_info().rss
+            for child in parent.children(recursive=True):
+                try:
+                    total += child.memory_info().rss
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
+            return total
+        except Exception:
+            return 0
+
+    def _run(self) -> None:
+        while not self._stop_event.is_set():
+            rss = self._sample_tree_rss()
+            if rss > self.peak_rss:
+                self.peak_rss = rss
+            self._stop_event.wait(self.interval)
+
+    def start(self) -> None:
+        self.peak_rss = self._sample_tree_rss()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def stop(self) -> int:
+        self._stop_event.set()
+        if self._thread:
+            self._thread.join(timeout=0.5)
+        final_rss = self._sample_tree_rss()
+        if final_rss > self.peak_rss:
+            self.peak_rss = final_rss
+        return self.peak_rss
+
+
 class StageProfiler:
     """Micro-stage telemetry and performance profiler (Phase 1)."""
     def __init__(self):
@@ -233,7 +280,9 @@ class StageProfiler:
     ):
         start_wall = time.perf_counter()
         start_cpu = time.process_time()
-        start_rss = psutil.Process().memory_info().rss if psutil else 0
+
+        tracker = _ProcessTreeMemoryTracker(interval=0.05)
+        tracker.start()
 
         gpu_start = None
         gpu_end = None
@@ -259,8 +308,8 @@ class StageProfiler:
         finally:
             elapsed_wall = time.perf_counter() - start_wall
             elapsed_cpu = time.process_time() - start_cpu
-            end_rss = psutil.Process().memory_info().rss if psutil else 0
-            peak_rss_gb = max(start_rss, end_rss) / (1024 ** 3)
+            peak_rss_bytes = tracker.stop()
+            peak_rss_gb = peak_rss_bytes / (1024 ** 3)
 
             gpu_sec = 0.0
             if has_cuda and gpu_start is not None and gpu_end is not None:
@@ -547,6 +596,13 @@ def compute_training_job_identity(
     job_ident["job_identity_sha256"] = hashlib.sha256(to_canonical_json(job_ident).encode("utf-8")).hexdigest()
     return job_ident
 
+_PREPARED_SECURITY_CACHE: Dict[Tuple[str, str], Tuple[Any, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, Dict[str, int]]] = {}
+
+def clear_prepared_security_cache() -> None:
+    """Clear in-memory prepared security DataFrames cache."""
+    global _PREPARED_SECURITY_CACHE
+    _PREPARED_SECURITY_CACHE.clear()
+
 def prepare_fold_data(
     fold_year: int,
     data_dir: Path,
@@ -607,11 +663,17 @@ def prepare_fold_data(
         market_calendars[mkt_code] = sec_cal
         venue_sessions = sec_cal.sessions_in_range("2010-01-01", f"{fold_year}-12-31")
 
-        cache_dir = data_dir.parent / "security" if data_dir.name == "ohlcv" else data_dir / "security_cache"
-        sec_cache = get_or_build_security_cache(p, sec_cal, cache_dir=cache_dir)
-        sched_val_df, tr_df, feats_df, labels_df = sec_cache.to_dataframes()
+        cache_key = (sec_id, str(p))
+        if cache_key in _PREPARED_SECURITY_CACHE:
+            sec_cache, sched_val_df, tr_df, feats_df, labels_df, sess_to_row = _PREPARED_SECURITY_CACHE[cache_key]
+        else:
+            cache_dir = data_dir.parent / "security" if data_dir.name == "ohlcv" else data_dir / "security_cache"
+            sec_cache = get_or_build_security_cache(p, sec_cal, cache_dir=cache_dir)
+            sched_val_df, tr_df, feats_df, labels_df = sec_cache.to_dataframes()
+            sess_to_row = {str(s): i for i, s in enumerate(feats_df["session"].tolist())}
+            _PREPARED_SECURITY_CACHE[cache_key] = (sec_cache, sched_val_df, tr_df, feats_df, labels_df, sess_to_row)
+
         recs = build_security_sample_index(sec_id, sched_val_df, venue_calendar=sec_cal, evaluation_year=fold_year)
-        sess_to_row = {str(s): i for i, s in enumerate(feats_df["session"].tolist())}
 
         adm_train = filter_admitted_sample_ids(recs, train_start, train_end, require_target=True, max_target_maturity=train_end)
         adm_val = filter_admitted_sample_ids(recs, val_start, val_end, require_target=True, max_target_maturity=val_end)
@@ -908,245 +970,24 @@ def generate_and_seal_policy_predictions(
     bank = fold_data["bank"]
     sec_info = fold_data["sec_info"]
 
-    # Precompute base model evaluation predictions
-    eval_mlp_by_seed: Dict[int, np.ndarray] = {}
-    eval_trans_by_seed: Dict[int, np.ndarray] = {}
-    dev_mlp_by_seed: Dict[int, np.ndarray] = {}
-    dev_trans_by_seed: Dict[int, np.ndarray] = {}
-
     eval_secs = [r.security_id for r in eval_recs]
     dev_secs = [r.security_id for r in dev_recs]
     eval_markets = fold_data["eval_markets"]
-
-    eval_x_mlp_t = torch.tensor(eval_x_mlp, dtype=torch.float32, device=device)
-    eval_x_trans_t = torch.tensor(eval_x_trans, dtype=torch.float32, device=device)
-    dev_x_mlp_t = torch.tensor(dev_x_mlp, dtype=torch.float32, device=device)
-    dev_x_trans_t = torch.tensor(dev_x_trans, dtype=torch.float32, device=device)
-
-    for s in seeds:
-        m_mlp_key = f"MLP_ANNUAL_966_64_128_1_seed{s}"
-        if m_mlp_key in trained_models:
-            m = trained_models[m_mlp_key].to(device)
-            m.eval()
-            with torch.no_grad():
-                eval_mlp_by_seed[s] = m(eval_x_mlp_t).squeeze(-1).cpu().numpy().astype(np.float64)
-                if len(dev_x_mlp) > 0:
-                    dev_mlp_by_seed[s] = m(dev_x_mlp_t).squeeze(-1).cpu().numpy().astype(np.float64)
-
-        m_trans_key = f"TRANSFORMER_42x23_WIDTH64_HEADS4_LAYERS2_FF128_LATENT128_seed{s}"
-        if m_trans_key in trained_models:
-            m = trained_models[m_trans_key].to(device)
-            m.eval()
-            with torch.no_grad():
-                eval_trans_by_seed[s] = m(eval_x_trans_t).squeeze(-1).cpu().numpy().astype(np.float64)
-                if len(dev_x_trans) > 0:
-                    dev_trans_by_seed[s] = m(dev_x_trans_t).squeeze(-1).cpu().numpy().astype(np.float64)
-
-    # Precompute memory retrievals
+    eval_qids = [r.query_id for r in eval_recs]
     k_val = int((config or {}).get("memory", {}).get("k", 25))
     bank_hash = hashlib.sha256(bank.vectors.tobytes()).hexdigest()
-
-    eval_mem_res, eval_knn_res = retrieve_similarity_and_knn_batch(
-        bank, eval_x_mlp, eval_secs, k=k_val, use_gpu=(device.type == "cuda")
-    )
-    eval_mem_preds = np.array([res.prediction for res in eval_mem_res], dtype=np.float64)
-    knn_preds = np.array([res.prediction for res in eval_knn_res], dtype=np.float64)
-
-    if len(dev_recs) > 0:
-        dev_mem_res, _ = retrieve_similarity_and_knn_batch(
-            bank, dev_x_mlp, dev_secs, k=k_val, use_gpu=(device.type == "cuda")
-        )
-        dev_mem_preds = np.array([res.prediction for res in dev_mem_res], dtype=np.float64)
-    else:
-        dev_mem_preds = np.zeros((0,), dtype=np.float64)
-
-    rand_preds_by_seed: Dict[int, np.ndarray] = {}
-    eval_qids = [r.query_id for r in eval_recs]
-    for s in seeds:
-        rand_res = retrieve_mem_random_parallel(
-            bank, query_security_ids=eval_secs, query_ids=eval_qids,
-            bank_hash=bank_hash, fold_year=fold_year, master_seed=s, k=k_val
-        )
-        rand_preds_by_seed[s] = np.array([res.prediction for res in rand_res], dtype=np.float64)
-
-    # Precompute HIST_PRIOR and RIDGE_ANNUAL
     hist_val = float(bank.unconditional_mean)
-    ridge_eval_preds = ridge_model.predict(eval_x_mlp)
 
-    # Precompute Gates and Mixtures with actual development portfolio Sharpe scoring (A21 / R07)
-    gate_mlp_by_seed: Dict[int, np.ndarray] = {}
-    gate_trans_by_seed: Dict[int, np.ndarray] = {}
-    mix_mse_mlp_by_seed: Dict[int, np.ndarray] = {}
-    mix_mse_trans_by_seed: Dict[int, np.ndarray] = {}
-    mix_sr_mlp_by_seed: Dict[int, np.ndarray] = {}
-    mix_sr_trans_by_seed: Dict[int, np.ndarray] = {}
-
-    def _build_dev_eval_fn(base_by_seed: Dict[int, np.ndarray]):
-        initial_cap = float(exec_cfg.get("initial_capital_account_units", 100000.0))
-        comm = float(exec_cfg.get("commission_per_side", 0.001))
-        slip = float(exec_cfg.get("slippage_per_side", 0.0005))
-        cash_frac = float(exec_cfg.get("cash_budget_fraction", 0.95))
-        atr_mult = float(exec_cfg.get("atr_stop_multiplier", 2.5))
-        min_stop = float(exec_cfg.get("minimum_stop_fraction", 0.10))
-        max_hold = int(exec_cfg.get("maximum_holding_sessions", 63))
-        max_pos = int(exec_cfg.get("max_positions", 3))
-
-        # Prebuild MarketPanels for all markets in dev_mkts (Phase 4)
-        market_panels: Dict[str, MarketPanel] = {}
-        for mkt in np.unique(dev_mkts):
-            mkt_str = str(mkt)
-            m_sessions = sorted(list(set(
-                dev_recs[i].session for i in range(len(dev_recs)) if str(dev_mkts[i]) == mkt_str
-            )))
-            if m_sessions:
-                market_panels[mkt_str] = MarketPanel.build_from_sec_info(mkt_str, sec_info, m_sessions)
-
-        eval_cache: Dict[Tuple[float, int, str], float] = {}
-
-        def _evaluate_market_seed(seed: int, market: str) -> None:
-            """Evaluate all mixture lambdas in a single pass through the market panel (Correction 5)."""
-            panel = market_panels.get(str(market))
-            if panel is None or len(panel.sessions) == 0:
-                for lam in lambda_grid:
-                    eval_cache[(round(float(lam), 6), int(seed), str(market))] = 0.0
-                return
-
-            m_indices = [i for i, r in enumerate(dev_recs) if str(dev_mkts[i]) == market]
-            if not m_indices:
-                for lam in lambda_grid:
-                    eval_cache[(round(float(lam), 6), int(seed), str(market))] = 0.0
-                return
-
-            accounts = {
-                lam: PortfolioAccount(
-                    initial_capital=initial_cap,
-                    commission=comm,
-                    slippage=slip,
-                    max_positions=max_pos,
-                    cash_budget_fraction=cash_frac,
-                    atr_multiplier=atr_mult,
-                    min_stop_fraction=min_stop,
-                    max_holding_sessions=max_hold,
-                )
-                for lam in lambda_grid
-            }
-
-            pred_by_lam: Dict[float, Dict[Tuple[str, str], float]] = {}
-            for lam in lambda_grid:
-                mix_preds = (1.0 - lam) * base_by_seed[seed][m_indices] + lam * dev_mem_preds[m_indices]
-                p_map: Dict[Tuple[str, str], float] = {}
-                for sub_idx, orig_idx in enumerate(m_indices):
-                    r = dev_recs[orig_idx]
-                    p_map[(r.security_id, r.session)] = float(mix_preds[sub_idx])
-                pred_by_lam[lam] = p_map
-
-            T = len(panel.sessions)
-            for t_idx in range(T):
-                t = str(panel.sessions[t_idx])
-                is_terminal = (t_idx == T - 1)
-
-                open_prices = {
-                    s: float(panel.raw_open[t_idx, s_idx])
-                    for s_idx, s in enumerate(panel.securities)
-                    if panel.tradable[t_idx, s_idx]
-                }
-                close_prices = {
-                    s: float(panel.raw_close[t_idx, s_idx])
-                    for s_idx, s in enumerate(panel.securities)
-                    if np.isfinite(panel.raw_close[t_idx, s_idx])
-                }
-                tradable_flags = {
-                    s: bool(panel.tradable[t_idx, s_idx])
-                    for s_idx, s in enumerate(panel.securities)
-                }
-                atr_ratios = {
-                    s: float(panel.atr_ratio_14[t_idx, s_idx])
-                    for s_idx, s in enumerate(panel.securities)
-                }
-                vol_map = {
-                    s: float(panel.volatility_21[t_idx, s_idx])
-                    for s_idx, s in enumerate(panel.securities)
-                }
-
-                for lam, dev_acct in accounts.items():
-                    dev_acct.handle_corporate_actions_before_open(t, {})
-                    dev_acct.process_open_fills(t, open_prices, tradable_flags)
-                    dev_acct.evaluate_close_stops_and_update_state(t, close_prices, atr_ratios)
-
-                    if not is_terminal:
-                        cand_scores = {}
-                        p_map = pred_by_lam[lam]
-                        for s in panel.securities:
-                            if s in dev_acct.positions:
-                                continue
-                            p_val = p_map.get((s, t))
-                            if p_val is not None and p_val > 0.0 and np.isfinite(p_val):
-                                v = vol_map.get(s, 0.0)
-                                cand_scores[s] = p_val / (v + 1e-4)
-
-                        sorted_cands = sorted(cand_scores.keys(), key=lambda sec: (-cand_scores[sec], sec))
-                        dev_acct.plan_entries_at_close(sorted_cands)
-                    else:
-                        dev_term_close_prices = dict(close_prices)
-                        for sec_id, pos in dev_acct.positions.items():
-                            if sec_id not in dev_term_close_prices or not np.isfinite(dev_term_close_prices[sec_id]) or dev_term_close_prices[sec_id] <= 0.0:
-                                fallback_p = pos.last_valid_price if (pos.last_valid_price > 0.0 and np.isfinite(pos.last_valid_price)) else pos.cost_basis
-                                dev_term_close_prices[sec_id] = float(fallback_p)
-                        dev_acct.execute_terminal_liquidation(t, dev_term_close_prices)
-
-            for lam, dev_acct in accounts.items():
-                rets = [st.daily_return for st in dev_acct.daily_history]
-                if not rets:
-                    sr = 0.0
-                else:
-                    r_mean = float(np.mean(rets))
-                    r_std = float(np.std(rets, ddof=0))
-                    sr = float((r_mean / r_std) * math.sqrt(252.0)) if r_std > 1e-8 else 0.0
-                eval_cache[(round(float(lam), 6), int(seed), str(market))] = sr
-
-        def dev_eval_fn(lam: float, seed: int, market: str) -> float:
-            cache_key = (round(float(lam), 6), int(seed), str(market))
-            if cache_key not in eval_cache:
-                _evaluate_market_seed(seed, market)
-            return eval_cache.get(cache_key, 0.0)
-
-        return dev_eval_fn
-
-    if dev_mlp_by_seed:
-        for s, d_mlp in dev_mlp_by_seed.items():
-            fg_mlp = fit_trust_gate(d_mlp, dev_mem_preds, dev_y, dev_mkts, steps=50)
-            p_mlp, _ = fg_mlp.predict(eval_mlp_by_seed[s], eval_mem_preds)
-            gate_mlp_by_seed[s] = p_mlp
-
-        sel_mse_mlp = select_mixture_mse(dev_mlp_by_seed, dev_mem_preds, dev_y, dev_mkts, lambda_grid=lambda_grid)
-        dev_eval_fn_mlp = _build_dev_eval_fn(dev_mlp_by_seed)
-        sel_sr_mlp = select_mixture_sr(dev_mlp_by_seed, dev_mem_preds, dev_y, dev_mkts, lambda_grid=lambda_grid, dev_eval_fn=dev_eval_fn_mlp)
-        for s in dev_mlp_by_seed:
-            mix_mse_mlp_by_seed[s] = (1.0 - sel_mse_mlp.selected_lambda) * eval_mlp_by_seed[s] + sel_mse_mlp.selected_lambda * eval_mem_preds
-            mix_sr_mlp_by_seed[s] = (1.0 - sel_sr_mlp.selected_lambda) * eval_mlp_by_seed[s] + sel_sr_mlp.selected_lambda * eval_mem_preds
-
-    if dev_trans_by_seed:
-        for s, d_trans in dev_trans_by_seed.items():
-            fg_trans = fit_trust_gate(d_trans, dev_mem_preds, dev_y, dev_mkts, steps=50)
-            p_trans, _ = fg_trans.predict(eval_trans_by_seed[s], eval_mem_preds)
-            gate_trans_by_seed[s] = p_trans
-
-        sel_mse_trans = select_mixture_mse(dev_trans_by_seed, dev_mem_preds, dev_y, dev_mkts, lambda_grid=lambda_grid)
-        dev_eval_fn_trans = _build_dev_eval_fn(dev_trans_by_seed)
-        sel_sr_trans = select_mixture_sr(dev_trans_by_seed, dev_mem_preds, dev_y, dev_mkts, lambda_grid=lambda_grid, dev_eval_fn=dev_eval_fn_trans)
-        for s in dev_trans_by_seed:
-            mix_mse_trans_by_seed[s] = (1.0 - sel_mse_trans.selected_lambda) * eval_trans_by_seed[s] + sel_mse_trans.selected_lambda * eval_mem_preds
-            mix_sr_trans_by_seed[s] = (1.0 - sel_sr_trans.selected_lambda) * eval_trans_by_seed[s] + sel_sr_trans.selected_lambda * eval_mem_preds
-
-    # Generate records with deterministic sharding (Phase 8)
+    # Shards directory and planning (Phase 8 / Findings 4 & 5)
     shards_dir = fold_dir / "shards"
     shards_dir.mkdir(parents=True, exist_ok=True)
     shard_size = 256
     num_eval = len(eval_recs)
     num_shards = max(1, math.ceil(num_eval / shard_size)) if num_eval > 0 else 0
 
-    all_shard_records: List[PolicyPredictionRecord] = []
     seen_keys: Set[Tuple[str, str, Optional[int]]] = set()
+    shards_records_dict: Dict[int, List[PolicyPredictionRecord]] = {}
+    missing_shards: List[Tuple[int, int, int, Path]] = []
 
     for shard_idx in range(num_shards):
         q_start = shard_idx * shard_size
@@ -1166,135 +1007,392 @@ def generate_and_seal_policy_predictions(
                         if k in seen_keys:
                             raise ValueError(f"Duplicate prediction key in shard: {k}")
                         seen_keys.add(k)
-                        all_shard_records.append(r)
+                    shards_records_dict[shard_idx] = s_recs
                     shard_loaded = True
             except Exception:
                 shard_loaded = False
 
         if not shard_loaded:
-            chunk_records: List[PolicyPredictionRecord] = []
-            for i in range(q_start, q_end):
-                r = eval_recs[i]
-                qid = r.query_id
-                sec = r.security_id
-                mkt = str(eval_markets[i])
-                sess = r.session
+            missing_shards.append((shard_idx, q_start, q_end, shard_file))
 
-                def _add_shard_rec(pol: str, real: Optional[int], pred: float, art: str):
-                    k = (qid, pol, real)
-                    if k in seen_keys:
-                        raise ValueError(f"Duplicate prediction key generated: {k}")
-                    if qid not in admitted_query_ids:
-                        raise ValueError(f"Prediction query {qid} does not belong to admitted queries")
-                    if not math.isfinite(pred):
-                        raise ValueError(f"Non-finite prediction encountered for {k}: {pred}")
-                    if custom_predictions is not None:
-                        if qid in custom_predictions:
-                            pred = float(custom_predictions[qid])
-                        elif sec in custom_predictions:
-                            pred = float(custom_predictions[sec])
-                        elif "default" in custom_predictions:
-                            pred = float(custom_predictions["default"])
-                    rec = PolicyPredictionRecord(
-                        query_id=qid,
-                        security_id=sec,
-                        market=mkt,
-                        decision_session=sess,
-                        fold=fold_year,
-                        policy_id=pol,
-                        realization_id=real,
-                        prediction=float(pred),
-                        source_artifact_id=art,
-                    )
-                    seen_keys.add(k)
-                    chunk_records.append(rec)
+    try:
+        if missing_shards:
+            def _build_dev_eval_fn(base_by_seed: Dict[int, np.ndarray]):
+                initial_cap = float(exec_cfg.get("initial_capital_account_units", 100000.0))
+                comm = float(exec_cfg.get("commission_per_side", 0.001))
+                slip = float(exec_cfg.get("slippage_per_side", 0.0005))
+                cash_frac = float(exec_cfg.get("cash_budget_fraction", 0.95))
+                atr_mult = float(exec_cfg.get("atr_stop_multiplier", 2.5))
+                min_stop = float(exec_cfg.get("minimum_stop_fraction", 0.10))
+                max_hold = int(exec_cfg.get("maximum_holding_sessions", 63))
+                max_pos = int(exec_cfg.get("max_positions", 3))
 
-                # 1. MEM_SIM
-                if configured_policies is None or "MEM_SIM" in configured_policies:
-                    _add_shard_rec("MEM_SIM", None, eval_mem_preds[i], f"bank_{fold_year}")
-                # 2. KNN_PLAIN
-                if configured_policies is None or "KNN_PLAIN" in configured_policies:
-                    _add_shard_rec("KNN_PLAIN", None, knn_preds[i], f"bank_{fold_year}")
-                # 3. MEM_RANDOM
-                if configured_policies is None or "MEM_RANDOM" in configured_policies:
-                    for s in seeds:
-                        _add_shard_rec("MEM_RANDOM", s, rand_preds_by_seed[s][i], f"bank_{fold_year}")
-                # 4. HIST_PRIOR
-                if configured_policies is None or "HIST_PRIOR" in configured_policies:
-                    _add_shard_rec("HIST_PRIOR", None, hist_val, f"bank_{fold_year}")
-                # 5. RIDGE_ANNUAL
-                if configured_policies is None or "RIDGE_ANNUAL" in configured_policies:
-                    _add_shard_rec("RIDGE_ANNUAL", None, ridge_eval_preds[i], f"ridge_{fold_year}")
-                # 6. MLP_BASE
-                if configured_policies is None or "MLP_BASE" in configured_policies:
-                    for s in seeds:
-                        if s in eval_mlp_by_seed:
-                            _add_shard_rec("MLP_BASE", s, eval_mlp_by_seed[s][i], f"mlp_{fold_year}_seed{s}")
-                # 7. TRANS_BASE
-                if configured_policies is None or "TRANS_BASE" in configured_policies:
-                    for s in seeds:
-                        if s in eval_trans_by_seed:
-                            _add_shard_rec("TRANS_BASE", s, eval_trans_by_seed[s][i], f"trans_{fold_year}_seed{s}")
-                # 8. MLP_MIX_MSE
-                if configured_policies is None or "MLP_MIX_MSE" in configured_policies:
-                    for s in seeds:
-                        if s in mix_mse_mlp_by_seed:
-                            _add_shard_rec("MLP_MIX_MSE", s, mix_mse_mlp_by_seed[s][i], f"mlp_mix_mse_{fold_year}_seed{s}")
-                # 9. TRANS_MIX_MSE
-                if configured_policies is None or "TRANS_MIX_MSE" in configured_policies:
-                    for s in seeds:
-                        if s in mix_mse_trans_by_seed:
-                            _add_shard_rec("TRANS_MIX_MSE", s, mix_mse_trans_by_seed[s][i], f"trans_mix_mse_{fold_year}_seed{s}")
-                # 10. MLP_MIX_SR
-                if configured_policies is None or "MLP_MIX_SR" in configured_policies:
-                    for s in seeds:
-                        if s in mix_sr_mlp_by_seed:
-                            _add_shard_rec("MLP_MIX_SR", s, mix_sr_mlp_by_seed[s][i], f"mlp_mix_sr_{fold_year}_seed{s}")
-                # 11. TRANS_MIX_SR
-                if configured_policies is None or "TRANS_MIX_SR" in configured_policies:
-                    for s in seeds:
-                        if s in mix_sr_trans_by_seed:
-                            _add_shard_rec("TRANS_MIX_SR", s, mix_sr_trans_by_seed[s][i], f"trans_mix_sr_{fold_year}_seed{s}")
-                # 12. MLP_GATE
-                if configured_policies is None or "MLP_GATE" in configured_policies:
-                    for s in seeds:
-                        if s in gate_mlp_by_seed:
-                            _add_shard_rec("MLP_GATE", s, gate_mlp_by_seed[s][i], f"mlp_gate_{fold_year}_seed{s}")
-                # 13. TRANS_GATE
-                if configured_policies is None or "TRANS_GATE" in configured_policies:
-                    for s in seeds:
-                        if s in gate_trans_by_seed:
-                            _add_shard_rec("TRANS_GATE", s, gate_trans_by_seed[s][i], f"trans_gate_{fold_year}_seed{s}")
-                # 14. MOMENTUM_21
-                if configured_policies is None or "MOMENTUM_21" in configured_policies:
-                    _add_shard_rec("MOMENTUM_21", None, 1.0, f"mom_{fold_year}")
-                # 15. VOL_MOMENTUM_21
-                if configured_policies is None or "VOL_MOMENTUM_21" in configured_policies:
-                    _add_shard_rec("VOL_MOMENTUM_21", None, 1.0, f"vol_mom_{fold_year}")
-                # 16. PASSIVE_EQUAL_WEIGHT
-                if configured_policies is None or "PASSIVE_EQUAL_WEIGHT" in configured_policies:
-                    _add_shard_rec("PASSIVE_EQUAL_WEIGHT", None, 1.0, f"passive_{fold_year}")
+                market_panels: Dict[str, MarketPanel] = {}
+                for mkt in np.unique(dev_mkts):
+                    mkt_str = str(mkt)
+                    m_sessions = sorted(list(set(
+                        dev_recs[i].session for i in range(len(dev_recs)) if str(dev_mkts[i]) == mkt_str
+                    )))
+                    if m_sessions:
+                        market_panels[mkt_str] = MarketPanel.build_from_sec_info(mkt_str, sec_info, m_sessions)
 
-            # Save shard atomically
-            shard_payload = {
-                "shard_meta": {
-                    "query_start": q_start,
-                    "query_end": q_end,
-                    "fold_year": fold_year,
-                    "prediction_identity_sha256": current_prediction_identity["prediction_identity_sha256"],
-                    "code_revision": actual_code_rev,
-                    "total_records": len(chunk_records),
-                },
-                "records": [asdict(rec) for rec in chunk_records],
-            }
-            tmp_shard = shard_file.with_suffix(".tmp.json")
-            with open(tmp_shard, "w", encoding="utf-8") as f:
-                json.dump(shard_payload, f)
-            if os.name == "nt" and shard_file.exists():
-                shard_file.unlink()
-            tmp_shard.rename(shard_file)
-            all_shard_records.extend(chunk_records)
+                eval_cache: Dict[Tuple[float, int, str], float] = {}
 
+                def _evaluate_market_seed(seed: int, market: str) -> None:
+                    panel = market_panels.get(str(market))
+                    if panel is None or len(panel.sessions) == 0:
+                        for lam in lambda_grid:
+                            eval_cache[(round(float(lam), 6), int(seed), str(market))] = 0.0
+                        return
+
+                    m_indices = [i for i, r in enumerate(dev_recs) if str(dev_mkts[i]) == market]
+                    if not m_indices:
+                        for lam in lambda_grid:
+                            eval_cache[(round(float(lam), 6), int(seed), str(market))] = 0.0
+                        return
+
+                    accounts = {
+                        lam: PortfolioAccount(
+                            initial_capital=initial_cap,
+                            commission=comm,
+                            slippage=slip,
+                            max_positions=max_pos,
+                            cash_budget_fraction=cash_frac,
+                            atr_multiplier=atr_mult,
+                            min_stop_fraction=min_stop,
+                            max_holding_sessions=max_hold,
+                        )
+                        for lam in lambda_grid
+                    }
+
+                    pred_by_lam: Dict[float, Dict[Tuple[str, str], float]] = {}
+                    for lam in lambda_grid:
+                        mix_preds = (1.0 - lam) * base_by_seed[seed][m_indices] + lam * dev_mem_preds[m_indices]
+                        p_map: Dict[Tuple[str, str], float] = {}
+                        for sub_idx, orig_idx in enumerate(m_indices):
+                            r = dev_recs[orig_idx]
+                            p_map[(r.security_id, r.session)] = float(mix_preds[sub_idx])
+                        pred_by_lam[lam] = p_map
+
+                    T = len(panel.sessions)
+                    for t_idx in range(T):
+                        t = str(panel.sessions[t_idx])
+                        is_terminal = (t_idx == T - 1)
+
+                        open_prices = {
+                            s: float(panel.raw_open[t_idx, s_idx])
+                            for s_idx, s in enumerate(panel.securities)
+                            if panel.tradable[t_idx, s_idx]
+                        }
+                        close_prices = {
+                            s: float(panel.raw_close[t_idx, s_idx])
+                            for s_idx, s in enumerate(panel.securities)
+                            if np.isfinite(panel.raw_close[t_idx, s_idx])
+                        }
+                        tradable_flags = {
+                            s: bool(panel.tradable[t_idx, s_idx])
+                            for s_idx, s in enumerate(panel.securities)
+                        }
+                        atr_ratios = {
+                            s: float(panel.atr_ratio_14[t_idx, s_idx])
+                            for s_idx, s in enumerate(panel.securities)
+                        }
+                        vol_map = {
+                            s: float(panel.volatility_21[t_idx, s_idx])
+                            for s_idx, s in enumerate(panel.securities)
+                        }
+
+                        for lam, dev_acct in accounts.items():
+                            dev_acct.handle_corporate_actions_before_open(t, {})
+                            dev_acct.process_open_fills(t, open_prices, tradable_flags)
+                            dev_acct.evaluate_close_stops_and_update_state(t, close_prices, atr_ratios)
+
+                            if not is_terminal:
+                                cand_scores = {}
+                                p_map = pred_by_lam[lam]
+                                for s in panel.securities:
+                                    if s in dev_acct.positions:
+                                        continue
+                                    p_val = p_map.get((s, t))
+                                    if p_val is not None and p_val > 0.0 and np.isfinite(p_val):
+                                        v = vol_map.get(s, 0.0)
+                                        cand_scores[s] = p_val / (v + 1e-4)
+
+                                sorted_cands = sorted(cand_scores.keys(), key=lambda sec: (-cand_scores[sec], sec))
+                                dev_acct.plan_entries_at_close(sorted_cands)
+                            else:
+                                dev_term_close_prices = dict(close_prices)
+                                for sec_id, pos in dev_acct.positions.items():
+                                    if sec_id not in dev_term_close_prices or not np.isfinite(dev_term_close_prices[sec_id]) or dev_term_close_prices[sec_id] <= 0.0:
+                                        fallback_p = pos.last_valid_price if (pos.last_valid_price > 0.0 and np.isfinite(pos.last_valid_price)) else pos.cost_basis
+                                        dev_term_close_prices[sec_id] = float(fallback_p)
+                                dev_acct.execute_terminal_liquidation(t, dev_term_close_prices)
+
+                    for lam, dev_acct in accounts.items():
+                        rets = [st.daily_return for st in dev_acct.daily_history]
+                        if not rets:
+                            sr = 0.0
+                        else:
+                            r_mean = float(np.mean(rets))
+                            r_std = float(np.std(rets, ddof=0))
+                            sr = float((r_mean / r_std) * math.sqrt(252.0)) if r_std > 1e-8 else 0.0
+                        eval_cache[(round(float(lam), 6), int(seed), str(market))] = sr
+
+                def dev_eval_fn(lam: float, seed: int, market: str) -> float:
+                    cache_key = (round(float(lam), 6), int(seed), str(market))
+                    if cache_key not in eval_cache:
+                        _evaluate_market_seed(seed, market)
+                    return eval_cache.get(cache_key, 0.0)
+
+                return dev_eval_fn
+
+            # Precompute dev base predictions and fit gates/mixtures once
+            dev_mlp_by_seed: Dict[int, np.ndarray] = {}
+            dev_trans_by_seed: Dict[int, np.ndarray] = {}
+            dev_x_mlp_t = torch.tensor(dev_x_mlp, dtype=torch.float32, device=device) if len(dev_x_mlp) > 0 else None
+            dev_x_trans_t = torch.tensor(dev_x_trans, dtype=torch.float32, device=device) if len(dev_x_trans) > 0 else None
+
+            for s in seeds:
+                m_mlp_key = f"MLP_ANNUAL_966_64_128_1_seed{s}"
+                if m_mlp_key in trained_models and dev_x_mlp_t is not None:
+                    m = trained_models[m_mlp_key].to(device)
+                    m.eval()
+                    with torch.no_grad():
+                        dev_mlp_by_seed[s] = m(dev_x_mlp_t).squeeze(-1).cpu().numpy().astype(np.float64)
+
+                m_trans_key = f"TRANSFORMER_42x23_WIDTH64_HEADS4_LAYERS2_FF128_LATENT128_seed{s}"
+                if m_trans_key in trained_models and dev_x_trans_t is not None:
+                    m = trained_models[m_trans_key].to(device)
+                    m.eval()
+                    with torch.no_grad():
+                        dev_trans_by_seed[s] = m(dev_x_trans_t).squeeze(-1).cpu().numpy().astype(np.float64)
+
+            if len(dev_recs) > 0:
+                dev_mem_res, _ = retrieve_similarity_and_knn_batch(
+                    bank, dev_x_mlp, dev_secs, k=k_val, use_gpu=(device.type == "cuda")
+                )
+                dev_mem_preds = np.array([res.prediction for res in dev_mem_res], dtype=np.float64)
+            else:
+                dev_mem_preds = np.zeros((0,), dtype=np.float64)
+
+            fitted_gates_mlp: Dict[int, Any] = {}
+            sel_mse_mlp = None
+            sel_sr_mlp = None
+            if dev_mlp_by_seed:
+                for s, d_mlp in dev_mlp_by_seed.items():
+                    fg_mlp = fit_trust_gate(d_mlp, dev_mem_preds, dev_y, dev_mkts, steps=50)
+                    fitted_gates_mlp[s] = fg_mlp
+
+                sel_mse_mlp = select_mixture_mse(dev_mlp_by_seed, dev_mem_preds, dev_y, dev_mkts, lambda_grid=lambda_grid)
+                dev_eval_fn_mlp = _build_dev_eval_fn(dev_mlp_by_seed)
+                sel_sr_mlp = select_mixture_sr(dev_mlp_by_seed, dev_mem_preds, dev_y, dev_mkts, lambda_grid=lambda_grid, dev_eval_fn=dev_eval_fn_mlp)
+
+            fitted_gates_trans: Dict[int, Any] = {}
+            sel_mse_trans = None
+            sel_sr_trans = None
+            if dev_trans_by_seed:
+                for s, d_trans in dev_trans_by_seed.items():
+                    fg_trans = fit_trust_gate(d_trans, dev_mem_preds, dev_y, dev_mkts, steps=50)
+                    fitted_gates_trans[s] = fg_trans
+
+                sel_mse_trans = select_mixture_mse(dev_trans_by_seed, dev_mem_preds, dev_y, dev_mkts, lambda_grid=lambda_grid)
+                dev_eval_fn_trans = _build_dev_eval_fn(dev_trans_by_seed)
+                sel_sr_trans = select_mixture_sr(dev_trans_by_seed, dev_mem_preds, dev_y, dev_mkts, lambda_grid=lambda_grid, dev_eval_fn=dev_eval_fn_trans)
+
+            # Process missing shards incrementally (Phase 8 / Findings 4 & 5)
+            for shard_idx, q_start, q_end, shard_file in missing_shards:
+                chunk_x_mlp = eval_x_mlp[q_start:q_end]
+                chunk_x_trans = eval_x_trans[q_start:q_end]
+                chunk_secs = eval_secs[q_start:q_end]
+                chunk_qids = eval_qids[q_start:q_end]
+                chunk_size_actual = len(chunk_secs)
+
+                chunk_x_mlp_t = torch.tensor(chunk_x_mlp, dtype=torch.float32, device=device)
+                chunk_x_trans_t = torch.tensor(chunk_x_trans, dtype=torch.float32, device=device)
+
+                chunk_mlp: Dict[int, np.ndarray] = {}
+                chunk_trans: Dict[int, np.ndarray] = {}
+                for s in seeds:
+                    m_mlp_key = f"MLP_ANNUAL_966_64_128_1_seed{s}"
+                    if m_mlp_key in trained_models:
+                        m = trained_models[m_mlp_key].to(device)
+                        m.eval()
+                        with torch.no_grad():
+                            chunk_mlp[s] = m(chunk_x_mlp_t).squeeze(-1).cpu().numpy().astype(np.float64)
+
+                    m_trans_key = f"TRANSFORMER_42x23_WIDTH64_HEADS4_LAYERS2_FF128_LATENT128_seed{s}"
+                    if m_trans_key in trained_models:
+                        m = trained_models[m_trans_key].to(device)
+                        m.eval()
+                        with torch.no_grad():
+                            chunk_trans[s] = m(chunk_x_trans_t).squeeze(-1).cpu().numpy().astype(np.float64)
+
+                chunk_mem_res, chunk_knn_res = retrieve_similarity_and_knn_batch(
+                    bank, chunk_x_mlp, chunk_secs, k=k_val, use_gpu=(device.type == "cuda")
+                )
+                chunk_mem_preds = np.array([res.prediction for res in chunk_mem_res], dtype=np.float64)
+                chunk_knn_preds = np.array([res.prediction for res in chunk_knn_res], dtype=np.float64)
+
+                chunk_rand_preds_by_seed = retrieve_mem_random_parallel_multi_seed(
+                    bank, query_security_ids=chunk_secs, query_ids=chunk_qids,
+                    bank_hash=bank_hash, fold_year=fold_year, seeds=seeds, k=k_val
+                )
+                chunk_rand_preds: Dict[int, np.ndarray] = {
+                    s: np.array([res.prediction for res in chunk_rand_preds_by_seed[s]], dtype=np.float64)
+                    for s in seeds
+                }
+
+                chunk_ridge_preds = ridge_model.predict(chunk_x_mlp)
+
+                chunk_gate_mlp: Dict[int, np.ndarray] = {}
+                chunk_mix_mse_mlp: Dict[int, np.ndarray] = {}
+                chunk_mix_sr_mlp: Dict[int, np.ndarray] = {}
+                if fitted_gates_mlp and sel_mse_mlp and sel_sr_mlp:
+                    for s in chunk_mlp:
+                        p_m, _ = fitted_gates_mlp[s].predict(chunk_mlp[s], chunk_mem_preds)
+                        chunk_gate_mlp[s] = p_m
+                        chunk_mix_mse_mlp[s] = (1.0 - sel_mse_mlp.selected_lambda) * chunk_mlp[s] + sel_mse_mlp.selected_lambda * chunk_mem_preds
+                        chunk_mix_sr_mlp[s] = (1.0 - sel_sr_mlp.selected_lambda) * chunk_mlp[s] + sel_sr_mlp.selected_lambda * chunk_mem_preds
+
+                chunk_gate_trans: Dict[int, np.ndarray] = {}
+                chunk_mix_mse_trans: Dict[int, np.ndarray] = {}
+                chunk_mix_sr_trans: Dict[int, np.ndarray] = {}
+                if fitted_gates_trans and sel_mse_trans and sel_sr_trans:
+                    for s in chunk_trans:
+                        p_t, _ = fitted_gates_trans[s].predict(chunk_trans[s], chunk_mem_preds)
+                        chunk_gate_trans[s] = p_t
+                        chunk_mix_mse_trans[s] = (1.0 - sel_mse_trans.selected_lambda) * chunk_trans[s] + sel_mse_trans.selected_lambda * chunk_mem_preds
+                        chunk_mix_sr_trans[s] = (1.0 - sel_sr_trans.selected_lambda) * chunk_trans[s] + sel_sr_trans.selected_lambda * chunk_mem_preds
+
+                chunk_records: List[PolicyPredictionRecord] = []
+                for local_i in range(chunk_size_actual):
+                    i = q_start + local_i
+                    r = eval_recs[i]
+                    qid = r.query_id
+                    sec = r.security_id
+                    mkt = str(eval_markets[i])
+                    sess = r.session
+
+                    def _add_shard_rec(pol: str, real: Optional[int], pred: float, art: str):
+                        k = (qid, pol, real)
+                        if k in seen_keys:
+                            raise ValueError(f"Duplicate prediction key generated: {k}")
+                        if qid not in admitted_query_ids:
+                            raise ValueError(f"Prediction query {qid} does not belong to admitted queries")
+                        if not math.isfinite(pred):
+                            raise ValueError(f"Non-finite prediction encountered for {k}: {pred}")
+                        if custom_predictions is not None:
+                            if qid in custom_predictions:
+                                pred = float(custom_predictions[qid])
+                            elif sec in custom_predictions:
+                                pred = float(custom_predictions[sec])
+                            elif "default" in custom_predictions:
+                                pred = float(custom_predictions["default"])
+                        rec = PolicyPredictionRecord(
+                            query_id=qid,
+                            security_id=sec,
+                            market=mkt,
+                            decision_session=sess,
+                            fold=fold_year,
+                            policy_id=pol,
+                            realization_id=real,
+                            prediction=float(pred),
+                            source_artifact_id=art,
+                        )
+                        seen_keys.add(k)
+                        chunk_records.append(rec)
+
+                    # 1. MEM_SIM
+                    if configured_policies is None or "MEM_SIM" in configured_policies:
+                        _add_shard_rec("MEM_SIM", None, chunk_mem_preds[local_i], f"bank_{fold_year}")
+                    # 2. KNN_PLAIN
+                    if configured_policies is None or "KNN_PLAIN" in configured_policies:
+                        _add_shard_rec("KNN_PLAIN", None, chunk_knn_preds[local_i], f"bank_{fold_year}")
+                    # 3. MEM_RANDOM
+                    if configured_policies is None or "MEM_RANDOM" in configured_policies:
+                        for s in seeds:
+                            _add_shard_rec("MEM_RANDOM", s, chunk_rand_preds[s][local_i], f"bank_{fold_year}")
+                    # 4. HIST_PRIOR
+                    if configured_policies is None or "HIST_PRIOR" in configured_policies:
+                        _add_shard_rec("HIST_PRIOR", None, hist_val, f"bank_{fold_year}")
+                    # 5. RIDGE_ANNUAL
+                    if configured_policies is None or "RIDGE_ANNUAL" in configured_policies:
+                        _add_shard_rec("RIDGE_ANNUAL", None, chunk_ridge_preds[local_i], f"ridge_{fold_year}")
+                    # 6. MLP_BASE
+                    if configured_policies is None or "MLP_BASE" in configured_policies:
+                        for s in seeds:
+                            if s in chunk_mlp:
+                                _add_shard_rec("MLP_BASE", s, chunk_mlp[s][local_i], f"mlp_{fold_year}_seed{s}")
+                    # 7. TRANS_BASE
+                    if configured_policies is None or "TRANS_BASE" in configured_policies:
+                        for s in seeds:
+                            if s in chunk_trans:
+                                _add_shard_rec("TRANS_BASE", s, chunk_trans[s][local_i], f"trans_{fold_year}_seed{s}")
+                    # 8. MLP_MIX_MSE
+                    if configured_policies is None or "MLP_MIX_MSE" in configured_policies:
+                        for s in seeds:
+                            if s in chunk_mix_mse_mlp:
+                                _add_shard_rec("MLP_MIX_MSE", s, chunk_mix_mse_mlp[s][local_i], f"mlp_mix_mse_{fold_year}_seed{s}")
+                    # 9. TRANS_MIX_MSE
+                    if configured_policies is None or "TRANS_MIX_MSE" in configured_policies:
+                        for s in seeds:
+                            if s in chunk_mix_mse_trans:
+                                _add_shard_rec("TRANS_MIX_MSE", s, chunk_mix_mse_trans[s][local_i], f"trans_mix_mse_{fold_year}_seed{s}")
+                    # 10. MLP_MIX_SR
+                    if configured_policies is None or "MLP_MIX_SR" in configured_policies:
+                        for s in seeds:
+                            if s in chunk_mix_sr_mlp:
+                                _add_shard_rec("MLP_MIX_SR", s, chunk_mix_sr_mlp[s][local_i], f"mlp_mix_sr_{fold_year}_seed{s}")
+                    # 11. TRANS_MIX_SR
+                    if configured_policies is None or "TRANS_MIX_SR" in configured_policies:
+                        for s in seeds:
+                            if s in chunk_mix_sr_trans:
+                                _add_shard_rec("TRANS_MIX_SR", s, chunk_mix_sr_trans[s][local_i], f"trans_mix_sr_{fold_year}_seed{s}")
+                    # 12. MLP_GATE
+                    if configured_policies is None or "MLP_GATE" in configured_policies:
+                        for s in seeds:
+                            if s in chunk_gate_mlp:
+                                _add_shard_rec("MLP_GATE", s, chunk_gate_mlp[s][local_i], f"mlp_gate_{fold_year}_seed{s}")
+                    # 13. TRANS_GATE
+                    if configured_policies is None or "TRANS_GATE" in configured_policies:
+                        for s in seeds:
+                            if s in chunk_gate_trans:
+                                _add_shard_rec("TRANS_GATE", s, chunk_gate_trans[s][local_i], f"trans_gate_{fold_year}_seed{s}")
+                    # 14. MOMENTUM_21
+                    if configured_policies is None or "MOMENTUM_21" in configured_policies:
+                        _add_shard_rec("MOMENTUM_21", None, 1.0, f"mom_{fold_year}")
+                    # 15. VOL_MOMENTUM_21
+                    if configured_policies is None or "VOL_MOMENTUM_21" in configured_policies:
+                        _add_shard_rec("VOL_MOMENTUM_21", None, 1.0, f"vol_mom_{fold_year}")
+                    # 16. PASSIVE_EQUAL_WEIGHT
+                    if configured_policies is None or "PASSIVE_EQUAL_WEIGHT" in configured_policies:
+                        _add_shard_rec("PASSIVE_EQUAL_WEIGHT", None, 1.0, f"passive_{fold_year}")
+
+                shard_payload = {
+                    "shard_meta": {
+                        "query_start": q_start,
+                        "query_end": q_end,
+                        "fold_year": fold_year,
+                        "prediction_identity_sha256": current_prediction_identity["prediction_identity_sha256"],
+                        "code_revision": actual_code_rev,
+                        "total_records": len(chunk_records),
+                    },
+                    "records": [asdict(rec) for rec in chunk_records],
+                }
+                tmp_shard = shard_file.with_suffix(".tmp.json")
+                with open(tmp_shard, "w", encoding="utf-8") as f:
+                    json.dump(shard_payload, f)
+                if os.name == "nt" and shard_file.exists():
+                    shard_file.unlink()
+                tmp_shard.rename(shard_file)
+                shards_records_dict[shard_idx] = chunk_records
+    finally:
+        if bank is not None and hasattr(bank, "release_gpu_cache"):
+            bank.release_gpu_cache()
+
+    all_shard_records: List[PolicyPredictionRecord] = []
+    for shard_idx in range(num_shards):
+        all_shard_records.extend(shards_records_dict.get(shard_idx, []))
     records = all_shard_records
 
     # Atomically seal predictions artifact
