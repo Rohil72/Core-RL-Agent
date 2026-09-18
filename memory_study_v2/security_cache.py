@@ -56,9 +56,39 @@ class SecurityFeatureCache:
     feature_spec_id: str = FEATURE_SPEC_ID
     target_spec_id: str = TARGET_SPEC_ID
     segment_ids: Optional[np.ndarray] = None        # 1D int64
+    code_revision: Optional[str] = None             # Git commit hash (Finding 5)
+
+    def __post_init__(self):
+        """Assert equal session ordering and array lengths across all cache arrays (Checklist 2.2)."""
+        T = len(self.sessions)
+        arrays = [
+            ("raw_open", self.raw_open),
+            ("raw_high", self.raw_high),
+            ("raw_low", self.raw_low),
+            ("raw_close", self.raw_close),
+            ("model_open", self.model_open),
+            ("model_high", self.model_high),
+            ("model_low", self.model_low),
+            ("model_close", self.model_close),
+            ("volume", self.volume),
+            ("raw_features", self.raw_features),
+            ("target_63_legacy", self.target_63_legacy),
+            ("target_executable", self.target_executable),
+            ("session_ordinals", self.session_ordinals),
+            ("validity_flags", self.validity_flags),
+            ("bar_status", self.bar_status),
+        ]
+        if self.feature_valid_mask is not None:
+            arrays.append(("feature_valid_mask", self.feature_valid_mask))
+        if self.segment_ids is not None:
+            arrays.append(("segment_ids", self.segment_ids))
+        for name, arr in arrays:
+            assert len(arr) == T, f"Array length mismatch for {name}: {len(arr)} != {T}"
 
     def save(self, cache_dest: Union[str, Path]) -> None:
         """Save cache record atomically as .npy memmaps plus manifest.json, or uncompressed .npz."""
+        import json
+        import shutil
         dest = Path(cache_dest)
         if dest.suffix == ".npz":
             dest.parent.mkdir(parents=True, exist_ok=True)
@@ -88,57 +118,82 @@ class SecurityFeatureCache:
                 calendar_sha256=np.array(self.calendar_sha256),
                 feature_spec_id=np.array(self.feature_spec_id),
                 target_spec_id=np.array(self.target_spec_id),
+                code_revision=np.array(self.code_revision or ""),
             )
             if os.name == "nt" and dest.exists():
                 dest.unlink()
             tmp_file.rename(dest)
             return
 
-        # Directory-based .npy memmaps + JSON manifest (Correction 1)
-        dest.mkdir(parents=True, exist_ok=True)
-        import json
+        # Directory-based .npy memmaps + JSON manifest staged in temporary directory (Checklist 2.3)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        staging_dir = dest.parent / f".tmp_{dest.name}_{os.getpid()}"
+        if staging_dir.exists():
+            shutil.rmtree(staging_dir, ignore_errors=True)
+        staging_dir.mkdir(parents=True, exist_ok=True)
+
         seg_arr = self.segment_ids if self.segment_ids is not None else np.zeros(len(self.sessions), dtype=np.int64)
         manifest = {
             "security_id": str(self.security_id),
             "file_sha256": str(self.file_sha256),
             "calendar_sha256": str(self.calendar_sha256),
+            "code_revision": str(self.code_revision or ""),
             "feature_spec_id": str(self.feature_spec_id),
             "target_spec_id": str(self.target_spec_id),
-            "arrays": {
-                "sessions": {"dtype": str(self.sessions.dtype), "shape": list(self.sessions.shape)},
-                "raw_open": {"dtype": str(self.raw_open.dtype), "shape": list(self.raw_open.shape)},
-                "raw_high": {"dtype": str(self.raw_high.dtype), "shape": list(self.raw_high.shape)},
-                "raw_low": {"dtype": str(self.raw_low.dtype), "shape": list(self.raw_low.shape)},
-                "raw_close": {"dtype": str(self.raw_close.dtype), "shape": list(self.raw_close.shape)},
-                "model_open": {"dtype": str(self.model_open.dtype), "shape": list(self.model_open.shape)},
-                "model_high": {"dtype": str(self.model_high.dtype), "shape": list(self.model_high.shape)},
-                "model_low": {"dtype": str(self.model_low.dtype), "shape": list(self.model_low.shape)},
-                "model_close": {"dtype": str(self.model_close.dtype), "shape": list(self.model_close.shape)},
-                "volume": {"dtype": str(self.volume.dtype), "shape": list(self.volume.shape)},
-                "raw_features": {"dtype": str(self.raw_features.dtype), "shape": list(self.raw_features.shape)},
-                "target_63_legacy": {"dtype": str(self.target_63_legacy.dtype), "shape": list(self.target_63_legacy.shape)},
-                "target_executable": {"dtype": str(self.target_executable.dtype), "shape": list(self.target_executable.shape)},
-                "session_ordinals": {"dtype": str(self.session_ordinals.dtype), "shape": list(self.session_ordinals.shape)},
-                "validity_flags": {"dtype": str(self.validity_flags.dtype), "shape": list(self.validity_flags.shape)},
-                "bar_status": {"dtype": str(self.bar_status.dtype), "shape": list(self.bar_status.shape)},
-                "feature_valid_mask": {"dtype": str((self.feature_valid_mask if self.feature_valid_mask is not None else self.validity_flags).dtype), "shape": list(self.validity_flags.shape)},
-                "segment_ids": {"dtype": str(seg_arr.dtype), "shape": list(seg_arr.shape)},
-            }
+            "arrays": {},
         }
-        for name in manifest["arrays"]:
+
+        array_spec_map = {
+            "sessions": "VENUE_CALENDAR_SESSIONS",
+            "raw_open": "RAW_EXECUTION_OHLCV",
+            "raw_high": "RAW_EXECUTION_OHLCV",
+            "raw_low": "RAW_EXECUTION_OHLCV",
+            "raw_close": "RAW_EXECUTION_OHLCV",
+            "model_open": "MODEL_PRICE_OHLCV",
+            "model_high": "MODEL_PRICE_OHLCV",
+            "model_low": "MODEL_PRICE_OHLCV",
+            "model_close": "MODEL_PRICE_OHLCV",
+            "volume": "RAW_EXECUTION_OHLCV",
+            "raw_features": str(self.feature_spec_id),
+            "target_63_legacy": str(self.target_spec_id),
+            "target_executable": "TARGET_EXECUTABLE_UNALIGNED",
+            "session_ordinals": "VENUE_CALENDAR_ORDINALS",
+            "validity_flags": "VALIDITY_FLAGS",
+            "bar_status": "BAR_STATUS",
+            "feature_valid_mask": "FEATURE_VALID_MASK",
+            "segment_ids": "SEGMENT_DISCONTINUITY_IDS",
+        }
+
+        for name, spec_id in array_spec_map.items():
             arr = getattr(self, name, None)
             if arr is None and name == "feature_valid_mask":
                 arr = self.validity_flags
             elif arr is None and name == "segment_ids":
                 arr = seg_arr
-            np.save(dest / f"{name}.npy", arr)
+            npy_path = staging_dir / f"{name}.npy"
+            np.save(npy_path, arr)
+            arr_bytes = np.ascontiguousarray(arr).tobytes()
+            arr_sha = hashlib.sha256(arr_bytes).hexdigest()
+            manifest["arrays"][name] = {
+                "dtype": str(arr.dtype),
+                "shape": list(arr.shape),
+                "sha256": arr_sha,
+                "specification_id": spec_id,
+            }
 
-        manifest_tmp = dest / "manifest.tmp.json"
-        with open(manifest_tmp, "w", encoding="utf-8") as f:
+        manifest_file = staging_dir / "manifest.json"
+        with open(manifest_file, "w", encoding="utf-8") as f:
             json.dump(manifest, f, indent=2)
-        if os.name == "nt" and (dest / "manifest.json").exists():
-            (dest / "manifest.json").unlink()
-        manifest_tmp.rename(dest / "manifest.json")
+
+        # Validate staging directory before atomic rename
+        assert manifest_file.exists()
+        for name in manifest["arrays"]:
+            arr_file = staging_dir / f"{name}.npy"
+            assert arr_file.exists() and arr_file.stat().st_size > 0, f"Incomplete array file: {arr_file}"
+
+        if dest.exists():
+            shutil.rmtree(dest, ignore_errors=True)
+        os.replace(staging_dir, dest)
 
     @classmethod
     def load(cls, cache_path: Union[str, Path], mmap_mode: Optional[str] = "r") -> SecurityFeatureCache:
@@ -179,6 +234,7 @@ class SecurityFeatureCache:
                 feature_spec_id=str(manifest.get("feature_spec_id", FEATURE_SPEC_ID)),
                 target_spec_id=str(manifest.get("target_spec_id", TARGET_SPEC_ID)),
                 segment_ids=_load_arr("segment_ids") if (sec_dir / "segment_ids.npy").exists() else None,
+                code_revision=str(manifest.get("code_revision", "")),
             )
 
         # NPZ fallback
@@ -207,6 +263,7 @@ class SecurityFeatureCache:
                 feature_spec_id=str(data["feature_spec_id"]),
                 target_spec_id=str(data["target_spec_id"]),
                 segment_ids=data["segment_ids"].astype(np.int64) if "segment_ids" in data else None,
+                code_revision=str(data["code_revision"]) if "code_revision" in data else None,
             )
 
     def to_dataframes(self) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
@@ -261,6 +318,7 @@ def compute_security_cache(
     parquet_path: Union[str, Path],
     sec_cal: VenueCalendar,
     end_year: int = 2026,
+    code_revision: Optional[str] = None,
 ) -> SecurityFeatureCache:
     """Compute full-history feature and label cache for a single security."""
     parquet_path = Path(parquet_path)
@@ -268,6 +326,13 @@ def compute_security_cache(
     file_bytes = parquet_path.read_bytes()
     file_sha = hashlib.sha256(file_bytes).hexdigest()
     cal_sha = getattr(sec_cal, "schedule_hash", None) or hashlib.sha256("".join(sec_cal.sessions).encode()).hexdigest()
+
+    if code_revision is None:
+        try:
+            import subprocess
+            code_revision = subprocess.check_output(["git", "rev-parse", "HEAD"]).decode().strip()
+        except Exception:
+            code_revision = "UNTRACKED_OR_DEV"
 
     venue_sessions = sec_cal.sessions_in_range("2010-01-01", f"{end_year}-12-31")
 
@@ -285,6 +350,9 @@ def compute_security_cache(
     df_aligned = align_to_venue_calendar(df_raw, venue_sessions)
     val_df = validate_raw_bars(df_aligned, sec_id, quote_unit=1.0, reject_material=True)
     tr_df = build_total_return_bars(val_df, actions=[], quote_unit=1.0)
+    if "segment_id" in val_df.columns:
+        tr_df["segment_id"] = val_df["segment_id"].to_numpy()
+
     s_min = val_df["session"].min()
     s_max = val_df["session"].max()
     sched_val_df = sec_cal.reindex_to_schedule(val_df, (s_min, s_max))
@@ -319,20 +387,36 @@ def compute_security_cache(
     target_63_legacy = labels_df["target_value"].to_numpy(dtype=np.float64)
     target_executable = np.full(T, np.nan, dtype=np.float64)
 
-    bar_status = sched_val_df["bar_status"].to_numpy(dtype=str) if "bar_status" in sched_val_df.columns else np.array(["VALID"] * T)
+    sched_map = dict(zip(sched_val_df["session"].astype(str), sched_val_df["bar_status"].astype(str))) if "bar_status" in sched_val_df.columns else {}
+    bar_status = np.array([sched_map.get(s, "VALID") for s in sessions], dtype=str)
     validity_flags = np.array([st == "VALID" for st in bar_status], dtype=bool)
     feat_valid_mask = feats_df["valid_mask"].to_numpy(dtype=bool) if "valid_mask" in feats_df.columns else validity_flags
 
     if "segment_id" in tr_df.columns:
-        segment_ids = tr_df["segment_id"].to_numpy(dtype=np.int64)
+        raw_seg = tr_df["segment_id"].to_numpy(dtype=np.int64)
     elif "segment_id" in sched_val_df.columns:
-        segment_ids = sched_val_df["segment_id"].to_numpy(dtype=np.int64)
+        raw_seg = sched_val_df["segment_id"].to_numpy(dtype=np.int64)
     elif "segment_id" in val_df.columns:
-        segment_ids = val_df["segment_id"].to_numpy(dtype=np.int64)
+        raw_seg = val_df["segment_id"].to_numpy(dtype=np.int64)
     elif "segment_id" in df_aligned.columns:
-        segment_ids = df_aligned["segment_id"].to_numpy(dtype=np.int64)
+        raw_seg = df_aligned["segment_id"].to_numpy(dtype=np.int64)
     else:
-        segment_ids = np.zeros(T, dtype=np.int64)
+        raw_seg = np.zeros(len(tr_df), dtype=np.int64)
+
+    if len(raw_seg) == T:
+        segment_ids = raw_seg
+    else:
+        seg_map = dict(zip(tr_df["session"].astype(str), raw_seg))
+        segment_ids = np.array([seg_map.get(s, 0) for s in sessions], dtype=np.int64)
+
+    assert len(sessions) == len(raw_open) == len(raw_high) == len(raw_low) == len(raw_close) == \
+           len(model_open) == len(model_high) == len(model_low) == len(model_close) == \
+           len(volume) == len(raw_features) == len(target_63_legacy) == len(session_ordinals) == \
+           len(validity_flags) == len(bar_status) == len(segment_ids) == T, (
+        f"Array length mismatch in security cache for {sec_id}"
+    )
+    if T > 1:
+        assert np.all(sessions[:-1] < sessions[1:]), f"Sessions must be strictly increasing for {sec_id}"
 
     return SecurityFeatureCache(
         security_id=sec_id,
@@ -356,6 +440,7 @@ def compute_security_cache(
         calendar_sha256=cal_sha,
         feature_valid_mask=feat_valid_mask,
         segment_ids=segment_ids,
+        code_revision=code_revision,
     )
 
 
@@ -365,6 +450,7 @@ def get_or_build_security_cache(
     cache_dir: Union[str, Path],
     force_recompute: bool = False,
     mmap_mode: Optional[str] = "r",
+    code_revision: Optional[str] = None,
 ) -> SecurityFeatureCache:
     """Retrieve existing cached security features (.npy + manifest) if valid, or compute and persist."""
     parquet_path = Path(parquet_path)
@@ -375,6 +461,15 @@ def get_or_build_security_cache(
     file_bytes = None
     current_file_sha = None
     current_cal_sha = None
+
+    if code_revision is None:
+        try:
+            import subprocess
+            current_code_revision = subprocess.check_output(["git", "rev-parse", "HEAD"]).decode().strip()
+        except Exception:
+            current_code_revision = "UNTRACKED_OR_DEV"
+    else:
+        current_code_revision = code_revision
 
     def _get_hashes():
         nonlocal file_bytes, current_file_sha, current_cal_sha
@@ -391,7 +486,8 @@ def get_or_build_security_cache(
             if (cache.file_sha256 == f_sha and
                 cache.calendar_sha256 == c_sha and
                 cache.feature_spec_id == FEATURE_SPEC_ID and
-                cache.target_spec_id == TARGET_SPEC_ID):
+                cache.target_spec_id == TARGET_SPEC_ID and
+                (not current_code_revision or not getattr(cache, "code_revision", None) or cache.code_revision == current_code_revision)):
                 return cache
         except Exception:
             pass  # Corrupted cache directory; recompute
@@ -404,11 +500,12 @@ def get_or_build_security_cache(
             if (cache.file_sha256 == f_sha and
                 cache.calendar_sha256 == c_sha and
                 cache.feature_spec_id == FEATURE_SPEC_ID and
-                cache.target_spec_id == TARGET_SPEC_ID):
+                cache.target_spec_id == TARGET_SPEC_ID and
+                (not current_code_revision or not getattr(cache, "code_revision", None) or cache.code_revision == current_code_revision)):
                 return cache
         except Exception:
             pass  # Corrupted cache file; recompute
 
-    cache = compute_security_cache(parquet_path, sec_cal)
+    cache = compute_security_cache(parquet_path, sec_cal, code_revision=current_code_revision)
     cache.save(sec_dir)
     return cache

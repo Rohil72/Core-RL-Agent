@@ -37,12 +37,14 @@ import argparse
 import collections
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
+import gc
 import glob
 import hashlib
 import json
 import math
 import os
 from pathlib import Path
+import shutil
 import platform
 import sys
 import threading
@@ -50,11 +52,9 @@ import time
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
 from contextlib import contextmanager
 
-# Phase 2: Control Thread Oversubscription
-os.environ.setdefault("OMP_NUM_THREADS", "1")
-os.environ.setdefault("MKL_NUM_THREADS", "1")
-os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
-os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
+# Phase 2: Control Thread Oversubscription (Checklist 1)
+for _t_var in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
+    os.environ[_t_var] = "1"
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
@@ -187,12 +187,25 @@ class DecisionRecord:
 
 
 def get_system_telemetry() -> Dict[str, Any]:
-    """Capture comprehensive host and process telemetry."""
+    """Capture comprehensive host and process telemetry (Checklist 1)."""
+    import socket
+    cpu_model = platform.processor() or platform.machine()
+    if Path("/proc/cpuinfo").exists():
+        try:
+            for line in Path("/proc/cpuinfo").read_text().splitlines():
+                if line.startswith("model name"):
+                    cpu_model = line.split(":", 1)[1].strip()
+                    break
+        except Exception:
+            pass
+
     res: Dict[str, Any] = {
+        "hostname": socket.gethostname(),
         "platform": platform.platform(),
         "python_version": sys.version.split()[0],
         "machine": platform.machine(),
         "processor": platform.processor(),
+        "cpu_model": cpu_model,
     }
     if psutil is not None:
         vm = psutil.virtual_memory()
@@ -200,6 +213,17 @@ def get_system_telemetry() -> Dict[str, Any]:
         res["ram_available_gb"] = round(vm.available / (1024 ** 3), 2)
         res["cpu_count_logical"] = psutil.cpu_count(logical=True)
         res["cpu_count_physical"] = psutil.cpu_count(logical=False)
+    res["numpy_version"] = np.__version__ if np is not None else "UNKNOWN"
+    res["torch_version"] = torch.__version__ if torch is not None else "UNKNOWN"
+    try:
+        res["git_commit"] = subprocess.check_output(["git", "rev-parse", "HEAD"]).decode().strip()
+    except Exception:
+        res["git_commit"] = "UNKNOWN"
+    try:
+        dirty_out = subprocess.check_output(["git", "status", "--porcelain"]).decode().strip()
+        res["git_dirty"] = bool(dirty_out)
+    except Exception:
+        res["git_dirty"] = False
     return res
 
 
@@ -603,6 +627,47 @@ def clear_prepared_security_cache() -> None:
     global _PREPARED_SECURITY_CACHE
     _PREPARED_SECURITY_CACHE.clear()
 
+def precompute_all_security_caches_parallel(
+    parquet_files: List[Path],
+    data_dir: Path,
+    custom_calendars: Optional[Dict[str, Any]] = None,
+    execution_mode: str = "production",
+    max_workers: int = 16,
+    code_revision: Optional[str] = None,
+) -> None:
+    """Precompute and cache full-history security features concurrently (Checklist 2.6)."""
+    from concurrent.futures import ThreadPoolExecutor
+    cache_dir = data_dir.parent / "security" if data_dir.name == "ohlcv" else data_dir / "security_cache"
+
+    def _worker_fn(p: Path):
+        sec_id = p.stem
+        cache_key = (sec_id, str(p))
+        if cache_key in _PREPARED_SECURITY_CACHE:
+            return
+        mkt_code = sec_id.split("_")[0] if "_" in sec_id else (sec_id.split(":")[0] if ":" in sec_id else "US")
+        sec_cal = get_market_venue_calendar(
+            mkt_code,
+            custom_calendars=custom_calendars,
+            data_cache_dir=data_dir,
+            execution_mode=execution_mode,
+        )
+        sec_cache = get_or_build_security_cache(p, sec_cal, cache_dir=cache_dir, code_revision=code_revision)
+        sched_val_df, tr_df, feats_df, labels_df = sec_cache.to_dataframes()
+        s_min = sched_val_df["session"].min()
+        s_max = sched_val_df["session"].max()
+        sched_val_df = sec_cal.reindex_to_schedule(sched_val_df, (s_min, s_max))
+        sess_to_row = {str(s): i for i, s in enumerate(feats_df["session"].tolist())}
+        _PREPARED_SECURITY_CACHE[cache_key] = (sec_cache, sched_val_df, tr_df, feats_df, labels_df, sess_to_row)
+
+    eff_workers = min(max_workers, len(parquet_files))
+    if eff_workers > 1:
+        with ThreadPoolExecutor(max_workers=eff_workers) as pool:
+            list(pool.map(_worker_fn, parquet_files))
+    else:
+        for p in parquet_files:
+            _worker_fn(p)
+
+
 def prepare_fold_data(
     fold_year: int,
     data_dir: Path,
@@ -612,6 +677,8 @@ def prepare_fold_data(
     selected_securities: Optional[List[str]] = None,
     custom_calendars: Optional[Dict[str, Any]] = None,
     execution_mode: str = "production",
+    workers: int = 16,
+    code_revision: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Load admitted samples, features, representations, and tensors for a fold across native market calendars."""
     if config is None:
@@ -647,9 +714,35 @@ def prepare_fold_data(
         if not parquet_files:
             raise FileNotFoundError(f"None of the selected securities {selected_securities} found in {data_dir}")
 
+    # Build initial security caches concurrently across configured workers (Checklist 2.6)
+    precompute_all_security_caches_parallel(
+        parquet_files=parquet_files,
+        data_dir=data_dir,
+        custom_calendars=custom_calendars,
+        execution_mode=execution_mode,
+        max_workers=workers,
+        code_revision=code_revision,
+    )
+
     sec_info: Dict[str, Any] = {}
     train_feats_dfs: List[pd.DataFrame] = []
     market_calendars: Dict[str, Any] = {}
+
+    manifest_sample_ids = None
+    if sample_ids_dir is not None:
+        sm_path = Path(sample_ids_dir) / f"fold_{fold_year}_sample_ids.json"
+        if sm_path.exists():
+            try:
+                with open(sm_path, "r", encoding="utf-8") as f:
+                    manifest_sample_ids = json.load(f)
+            except Exception:
+                manifest_sample_ids = None
+
+    allowed_train = set(manifest_sample_ids.get("train_query_ids", [])) if manifest_sample_ids and manifest_sample_ids.get("train_query_ids") else None
+    allowed_val = set(manifest_sample_ids.get("val_query_ids", [])) if manifest_sample_ids and manifest_sample_ids.get("val_query_ids") else None
+    allowed_dev = set(manifest_sample_ids.get("dev_query_ids", [])) if manifest_sample_ids and manifest_sample_ids.get("dev_query_ids") else None
+    allowed_eval = set(manifest_sample_ids.get("eval_query_ids", [])) if manifest_sample_ids and manifest_sample_ids.get("eval_query_ids") else None
+    allowed_bank = set(manifest_sample_ids.get("bank_query_ids", [])) if manifest_sample_ids and manifest_sample_ids.get("bank_query_ids") else None
 
     for p in parquet_files:
         sec_id = p.stem
@@ -668,8 +761,11 @@ def prepare_fold_data(
             sec_cache, sched_val_df, tr_df, feats_df, labels_df, sess_to_row = _PREPARED_SECURITY_CACHE[cache_key]
         else:
             cache_dir = data_dir.parent / "security" if data_dir.name == "ohlcv" else data_dir / "security_cache"
-            sec_cache = get_or_build_security_cache(p, sec_cal, cache_dir=cache_dir)
+            sec_cache = get_or_build_security_cache(p, sec_cal, cache_dir=cache_dir, code_revision=code_revision)
             sched_val_df, tr_df, feats_df, labels_df = sec_cache.to_dataframes()
+            s_min = sched_val_df["session"].min()
+            s_max = sched_val_df["session"].max()
+            sched_val_df = sec_cal.reindex_to_schedule(sched_val_df, (s_min, s_max))
             sess_to_row = {str(s): i for i, s in enumerate(feats_df["session"].tolist())}
             _PREPARED_SECURITY_CACHE[cache_key] = (sec_cache, sched_val_df, tr_df, feats_df, labels_df, sess_to_row)
 
@@ -680,6 +776,29 @@ def prepare_fold_data(
         adm_dev = filter_admitted_sample_ids(recs, dev_start, dev_end, require_target=True, max_target_maturity=dev_end)
         adm_eval = filter_admitted_sample_ids(recs, eval_start, eval_end, require_target=False)
         adm_bank = filter_admitted_sample_ids(recs, train_start, train_end, max_bank_maturity=train_end)
+
+        if allowed_train is not None:
+            adm_train = [r for r in adm_train if r.query_id in allowed_train]
+        else:
+            adm_train = [r for r in adm_train if r.session in sess_to_row and np.isfinite(float(labels_df["target_value"].iloc[sess_to_row[r.session]]))]
+
+        if allowed_val is not None:
+            adm_val = [r for r in adm_val if r.query_id in allowed_val]
+        else:
+            adm_val = [r for r in adm_val if r.session in sess_to_row and np.isfinite(float(labels_df["target_value"].iloc[sess_to_row[r.session]]))]
+
+        if allowed_dev is not None:
+            adm_dev = [r for r in adm_dev if r.query_id in allowed_dev]
+        else:
+            adm_dev = [r for r in adm_dev if r.session in sess_to_row and np.isfinite(float(labels_df["target_value"].iloc[sess_to_row[r.session]]))]
+
+        if allowed_eval is not None:
+            adm_eval = [r for r in adm_eval if r.query_id in allowed_eval]
+
+        if allowed_bank is not None:
+            adm_bank = [r for r in adm_bank if r.query_id in allowed_bank]
+        else:
+            adm_bank = [r for r in adm_bank if r.session in sess_to_row and np.isfinite(float(labels_df["target_value"].iloc[sess_to_row[r.session]]))]
 
         sec_info[sec_id] = {
             "market": mkt_code,
@@ -857,6 +976,7 @@ def generate_and_seal_policy_predictions(
     fail_on_corrupted_predictions: bool = False,
     checkpoint_hashes: Optional[Dict[str, str]] = None,
     code_revision: Optional[str] = None,
+    max_workers: Optional[int] = None,
 ) -> List[PolicyPredictionRecord]:
     """Generate, validate, and atomically seal common prediction records for all configured arms."""
     pred_manifest_path = fold_dir / "predictions_manifest.json"
@@ -1235,7 +1355,8 @@ def generate_and_seal_policy_predictions(
 
                 chunk_rand_preds_by_seed = retrieve_mem_random_parallel_multi_seed(
                     bank, query_security_ids=chunk_secs, query_ids=chunk_qids,
-                    bank_hash=bank_hash, fold_year=fold_year, seeds=seeds, k=k_val
+                    bank_hash=bank_hash, fold_year=fold_year, seeds=seeds, k=k_val,
+                    max_workers=max_workers,
                 )
                 chunk_rand_preds: Dict[int, np.ndarray] = {
                     s: np.array([res.prediction for res in chunk_rand_preds_by_seed[s]], dtype=np.float64)
@@ -2383,6 +2504,8 @@ def run_production_experiment_driver(context: Dict[str, Any]) -> Dict[str, Any]:
                 selected_securities=context.get("selected_securities"),
                 custom_calendars=context.get("custom_calendars"),
                 execution_mode=execution_mode,
+                workers=context.get("workers", 16),
+                code_revision=current_run_identity["code_revision"],
             )
         fold_data_by_year[fold_year] = fold_data
         print(f"  [Fold {fold_year}] Samples: Train={len(fold_data['train_y'])}, Val={len(fold_data['val_y'])}, Eval={len(fold_data['eval_records'])}, Bank={len(fold_data['bank_records'])}")
@@ -2426,6 +2549,25 @@ def run_production_experiment_driver(context: Dict[str, Any]) -> Dict[str, Any]:
                     code_revision=current_run_identity["code_revision"],
                 )
 
+                checkpoints_dir = context.get("checkpoints_dir")
+                if not best_pt.exists():
+                    if execution_mode == "production":
+                        src_chk_dir = Path(checkpoints_dir) if checkpoints_dir else (REPO_ROOT / "outputs" / "a30-final-recovery")
+                        candidate_src = src_chk_dir / f"fold_{fold_year}" / f"checkpoints_{arch}_seed{seed}" / "best_checkpoint.pt"
+                        if candidate_src.exists():
+                            print(f"  [CHECKPOINT REUSE] Copying approved checkpoint {candidate_src} -> {best_pt}...")
+                            shutil.copy2(candidate_src, best_pt)
+                        else:
+                            raise RuntimeError(
+                                f"PRODUCTION CONTRACT VIOLATION: Zero neural retraining enforced in production mode. "
+                                f"Approved checkpoint for {job_id} was not found at {best_pt} or {candidate_src}."
+                            )
+                    elif checkpoints_dir is not None:
+                        candidate_src = Path(checkpoints_dir) / f"fold_{fold_year}" / f"checkpoints_{arch}_seed{seed}" / "best_checkpoint.pt"
+                        if candidate_src.exists():
+                            print(f"  [CHECKPOINT REUSE] Copying checkpoint {candidate_src} -> {best_pt}...")
+                            shutil.copy2(candidate_src, best_pt)
+
                 if completion_marker.exists() and best_pt.exists() and preds_json.exists():
                     try:
                         with open(completion_marker, "r", encoding="utf-8") as f:
@@ -2433,11 +2575,13 @@ def run_production_experiment_driver(context: Dict[str, Any]) -> Dict[str, Any]:
                         stored_job_ident = c_rec.get("training_identity", {})
                         curr_best_sha = hashlib.sha256(best_pt.read_bytes()).hexdigest()
                         expected_best_sha = c_rec.get("artifacts", {}).get("best_checkpoint", {}).get("sha256")
-                        if (
-                            stored_job_ident.get("job_identity_sha256") == current_job_training_identity["job_identity_sha256"]
-                            and curr_best_sha == expected_best_sha
-                        ):
-                            print(f"  [COMPLETED] Job {job_id} already finished and verified for identical training identity.")
+                        ident_matches = (stored_job_ident.get("job_identity_sha256") == current_job_training_identity["job_identity_sha256"])
+                        sha_matches = (curr_best_sha == expected_best_sha)
+
+                        if execution_mode == "production":
+                            if not sha_matches:
+                                raise RuntimeError(f"Corrupted checkpoint detected for {job_id}: {curr_best_sha} != {expected_best_sha}")
+                            print(f"  [COMPLETED] Job {job_id} already finished and verified on disk.")
                             jobs_completed.append(job_id)
                             completed_checkpoint_hashes[job_id] = curr_best_sha
                             if "MLP" in arch.upper():
@@ -2445,19 +2589,93 @@ def run_production_experiment_driver(context: Dict[str, Any]) -> Dict[str, Any]:
                             else:
                                 m = TransformerAnnual(seed=seed, dropout=float(neural_cfg.get("transformer_dropout", 0.1)))
                             st = torch.load(best_pt, map_location="cpu", weights_only=False)
-                            m.load_state_dict(st.model_state)
-                            m.to(device)
+                            m.load_state_dict(st.model_state if hasattr(st, "model_state") else st)
+                            m.to("cpu")
+                            m.eval()
                             trained_models[f"{arch}_seed{seed}"] = m
                             continue
                         else:
-                            print(f"  [INCOMPATIBLE_TRAINING] Job {job_id} training identity or checkpoint digest mismatch; retraining...")
-                    except Exception:
-                        pass
+                            if ident_matches and sha_matches:
+                                print(f"  [COMPLETED] Job {job_id} already finished and verified for identical training identity.")
+                                jobs_completed.append(job_id)
+                                completed_checkpoint_hashes[job_id] = curr_best_sha
+                                if "MLP" in arch.upper():
+                                    m = MLPAnnual(seed=seed)
+                                else:
+                                    m = TransformerAnnual(seed=seed, dropout=float(neural_cfg.get("transformer_dropout", 0.1)))
+                                st = torch.load(best_pt, map_location="cpu", weights_only=False)
+                                m.load_state_dict(st.model_state if hasattr(st, "model_state") else st)
+                                m.to("cpu")
+                                m.eval()
+                                trained_models[f"{arch}_seed{seed}"] = m
+                                continue
+                            else:
+                                print(f"  [INCOMPATIBLE_TRAINING] Job {job_id} training identity or checkpoint digest mismatch; retraining...")
+                    except Exception as exc:
+                        if execution_mode == "production":
+                            raise
                     completion_marker.unlink(missing_ok=True)
                     best_pt.unlink(missing_ok=True)
                     last_pt.unlink(missing_ok=True)
                     preds_json.unlink(missing_ok=True)
                     training_ident_file.unlink(missing_ok=True)
+
+                if execution_mode == "production" and best_pt.exists():
+                    print(f"  [REUSING CHECKPOINT] Generating predictions from approved checkpoint {job_id} on {device}...")
+                    curr_best_sha = hashlib.sha256(best_pt.read_bytes()).hexdigest()
+                    if "MLP" in arch.upper():
+                        m = MLPAnnual(seed=seed)
+                        ex = fold_data["eval_x_mlp"]
+                        dx = fold_data["dev_x_mlp"]
+                    else:
+                        m = TransformerAnnual(seed=seed, dropout=float(neural_cfg.get("transformer_dropout", 0.1)))
+                        ex = fold_data["eval_x_trans"]
+                        dx = fold_data["dev_x_trans"]
+
+                    st = torch.load(best_pt, map_location="cpu", weights_only=False)
+                    m.load_state_dict(st.model_state if hasattr(st, "model_state") else st)
+                    m.to(device)
+                    m.eval()
+
+                    with torch.no_grad():
+                        eval_preds = m(torch.tensor(ex, dtype=torch.float32, device=device)).squeeze(-1).cpu().numpy().tolist() if len(ex) > 0 else []
+                        dev_preds = m(torch.tensor(dx, dtype=torch.float32, device=device)).squeeze(-1).cpu().numpy().tolist() if len(dx) > 0 else []
+                    m.to("cpu")
+
+                    preds_payload = {
+                        "job_id": job_id,
+                        "fold_year": fold_year,
+                        "architecture": arch,
+                        "seed": seed,
+                        "eval_predictions": eval_preds,
+                        "dev_predictions": dev_preds,
+                    }
+                    with open(preds_json, "w", encoding="utf-8") as f:
+                        f.write(to_canonical_json(preds_payload))
+
+                    preds_sha = hashlib.sha256(preds_json.read_bytes()).hexdigest()
+                    c_data = {
+                        "job_id": job_id,
+                        "fold_year": fold_year,
+                        "architecture": arch,
+                        "seed": seed,
+                        "status": "STAGE_COMPLETED",
+                        "checkpoint_reused": True,
+                        "training_identity": current_job_training_identity,
+                        "artifacts": {
+                            "best_checkpoint": {"path": str(best_pt), "sha256": curr_best_sha},
+                            "predictions": {"path": str(preds_json), "sha256": preds_sha},
+                        },
+                        "summary": {"reused_from": str(best_pt)},
+                        "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+                    }
+                    with open(completion_marker, "w", encoding="utf-8") as f:
+                        f.write(to_canonical_json(c_data))
+
+                    jobs_completed.append(job_id)
+                    completed_checkpoint_hashes[job_id] = curr_best_sha
+                    trained_models[f"{arch}_seed{seed}"] = m
+                    continue
 
                 resume_from = None
                 if last_pt.exists() and not completion_marker.exists():
@@ -2532,6 +2750,7 @@ def run_production_experiment_driver(context: Dict[str, Any]) -> Dict[str, Any]:
                 with torch.no_grad():
                     eval_preds = trained_model(torch.tensor(ex, dtype=torch.float32, device=device)).squeeze(-1).cpu().numpy().tolist() if len(ex) > 0 else []
                     dev_preds = trained_model(torch.tensor(dx, dtype=torch.float32, device=device)).squeeze(-1).cpu().numpy().tolist() if len(dx) > 0 else []
+                trained_model.to("cpu")
 
                 preds_payload = {
                     "job_id": job_id,
@@ -2582,6 +2801,12 @@ def run_production_experiment_driver(context: Dict[str, Any]) -> Dict[str, Any]:
         )
         ridge_models_by_year[fold_year] = ridge_model
 
+        for m in trained_models.values():
+            m.to("cpu")
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        gc.collect()
+
     if context.get("interrupt_at_macro_step") is not None:
         return {
             "status": "INTERRUPTED",
@@ -2599,6 +2824,10 @@ def run_production_experiment_driver(context: Dict[str, Any]) -> Dict[str, Any]:
         fold_data = fold_data_by_year[fold_year]
         t_models = trained_models_by_year[fold_year]
         r_model = ridge_models_by_year[fold_year]
+
+        for m in t_models.values():
+            m.to(device)
+            m.eval()
 
         with GLOBAL_PROFILER.time_stage(
             "3. generate_and_seal_policy_predictions",
@@ -2620,8 +2849,15 @@ def run_production_experiment_driver(context: Dict[str, Any]) -> Dict[str, Any]:
                 fail_on_corrupted_predictions=bool(context.get("fail_on_corrupted_predictions", False)),
                 checkpoint_hashes=completed_checkpoint_hashes,
                 code_revision=current_run_identity["code_revision"],
+                max_workers=context.get("workers"),
             )
         predictions_by_year[fold_year] = p_records
+
+        for m in t_models.values():
+            m.to("cpu")
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        gc.collect()
 
         fold_summary_path = fold_dir / "fold_summary.json"
         fold_summary_data = {
@@ -2810,6 +3046,8 @@ def launch_a30_deployment(
     selected_securities: Optional[List[str]] = None,
     execution_mode: str = "production",
     driver_kwargs: Optional[Dict[str, Any]] = None,
+    workers: Optional[int] = None,
+    checkpoints_dir: Optional[Path] = None,
 ) -> Dict[str, Any]:
     """Run full A30 startup validation, safety guards, and launch execution."""
     t_start = time.perf_counter()
@@ -2817,10 +3055,22 @@ def launch_a30_deployment(
     print("NVIDIA A30 / Production Deployment Preflight & Launch Runner")
     print("=" * 70)
 
+    canonical_recovery_dir = (REPO_ROOT / "outputs" / "a30-final-recovery").resolve()
+    target_output_dir = Path(output_dir).resolve()
+    if target_output_dir == canonical_recovery_dir or canonical_recovery_dir in target_output_dir.parents:
+        raise ValueError(
+            f"Output directory cannot be set to reference recovery directory {canonical_recovery_dir}. "
+            "Reference directory outputs/a30-final-recovery is strictly immutable."
+        )
+
+    max_avail_cpus = os.cpu_count() or 1
+    selected_worker_count = int(workers) if workers is not None else min(16, max_avail_cpus)
+
     # 1. System & Host Telemetry
     host_telemetry = get_system_telemetry()
     print(f"Host: {host_telemetry['platform']} | Python: {host_telemetry['python_version']}")
     print(f"RAM Total: {host_telemetry.get('ram_total_gb')} GB | Available: {host_telemetry.get('ram_available_gb')} GB")
+    print(f"Selected Worker Count: {selected_worker_count} (CPU count: {max_avail_cpus})")
 
     # 2. CUDA Hardware Preflight
     print("\n[Step 1/4] Running CUDA Hardware & Kernel Compute Probe...")
@@ -2874,6 +3124,7 @@ def launch_a30_deployment(
             "status": "PREFLIGHT_STORAGE_ERROR",
             "timestamp_utc": datetime.now(timezone.utc).isoformat(),
             "elapsed_seconds": round(time.perf_counter() - t_start, 3),
+            "selected_worker_count": selected_worker_count,
             "host_telemetry": host_telemetry,
             "cuda_preflight": cuda_info,
             "storage_checks": storage_info,
@@ -2935,6 +3186,8 @@ def launch_a30_deployment(
             "selected_folds": selected_folds,
             "selected_securities": selected_securities,
             "execution_mode": execution_mode,
+            "workers": selected_worker_count,
+            "checkpoints_dir": checkpoints_dir or (REPO_ROOT / "outputs" / "a30-final-recovery"),
         }
         if driver_kwargs:
             launch_context.update(driver_kwargs)
@@ -2956,6 +3209,7 @@ def launch_a30_deployment(
                 "status": "PRODUCTION_FAILED",
                 "timestamp_utc": datetime.now(timezone.utc).isoformat(),
                 "elapsed_seconds": round(time.perf_counter() - t_start, 3),
+                "selected_worker_count": selected_worker_count,
                 "host_telemetry": host_telemetry,
                 "cuda_preflight": cuda_info,
                 "storage_checks": storage_info,
@@ -2977,6 +3231,7 @@ def launch_a30_deployment(
         "status": receipt_status,
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "elapsed_seconds": elapsed_total,
+        "selected_worker_count": selected_worker_count,
         "host_telemetry": host_telemetry,
         "cuda_preflight": cuda_info,
         "storage_checks": storage_info,
@@ -3007,6 +3262,8 @@ def main():
     parser.add_argument("--folds", type=int, nargs="+", default=None, help="Optional subset of fold evaluation years to run")
     parser.add_argument("--securities", type=str, nargs="+", default=None, help="Optional subset of securities to run")
     parser.add_argument("--mode", type=str, default="production", choices=["production", "pilot"], help="Execution mode (production enforces all strict contracts)")
+    parser.add_argument("--workers", type=int, default=None, help="Number of concurrent worker processes for caching and retrieval")
+    parser.add_argument("--checkpoints-dir", type=Path, default=REPO_ROOT / "outputs" / "a30-final-recovery", help="Directory containing reference checkpoints for reuse without retraining")
 
     args = parser.parse_args()
 
@@ -3022,6 +3279,8 @@ def main():
             selected_folds=args.folds,
             selected_securities=args.securities,
             execution_mode=args.mode,
+            workers=args.workers,
+            checkpoints_dir=args.checkpoints_dir,
         )
         if receipt["status"] not in ("PREFLIGHT_PASS", "LOCKED_AWAITING_AUTHORIZATION"):
             sys.exit(1)

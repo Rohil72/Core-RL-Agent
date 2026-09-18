@@ -1440,3 +1440,103 @@ def test_checkpoint_modification_regenerates_policy_predictions(real_driver_env,
     )
 
 
+def test_reference_directory_output_guard(mock_repo_env):
+    """Output directory cannot be set to outputs/a30-final-recovery or any descendant."""
+    from scripts.launch_a30_production import REPO_ROOT
+
+    recovery_dir = REPO_ROOT / "outputs" / "a30-final-recovery"
+    with pytest.raises(ValueError, match="strictly immutable"):
+        launch_a30_deployment(
+            config_path=mock_repo_env["config_path"],
+            output_dir=recovery_dir,
+            sample_ids_dir=mock_repo_env["sample_ids_dir"],
+            check_only=True,
+        )
+
+    with pytest.raises(ValueError, match="strictly immutable"):
+        launch_a30_deployment(
+            config_path=mock_repo_env["config_path"],
+            output_dir=recovery_dir / "nested_subfolder",
+            sample_ids_dir=mock_repo_env["sample_ids_dir"],
+            check_only=True,
+        )
+
+
+def test_receipt_selected_worker_count_and_telemetry(mock_repo_env):
+    """Preflight receipt records selected_worker_count and host telemetry."""
+    receipt = launch_a30_deployment(
+        config_path=mock_repo_env["config_path"],
+        output_dir=mock_repo_env["output_dir"],
+        sample_ids_dir=mock_repo_env["sample_ids_dir"],
+        check_only=True,
+        workers=8,
+    )
+    assert receipt["status"] == "PREFLIGHT_PASS"
+    assert receipt["selected_worker_count"] == 8
+    assert "cpu_model" in receipt["host_telemetry"]
+    assert "git_commit" in receipt["host_telemetry"]
+    assert "numpy_version" in receipt["host_telemetry"]
+    assert "torch_version" in receipt["host_telemetry"]
+
+
+def test_production_mode_zero_retraining_enforcement(real_driver_env, tmp_path):
+    """Production mode strictly forbids neural retraining when checkpoints are missing."""
+    empty_chk_dir = tmp_path / "empty_checkpoints"
+    empty_chk_dir.mkdir(parents=True, exist_ok=True)
+    out_dir = tmp_path / "prod_zero_retrain_test"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    with pytest.raises(RuntimeError, match="Zero neural retraining enforced in production mode"):
+        launch_a30_deployment(
+            config_path=real_driver_env["config_path"],
+            data_dir=real_driver_env["data_dir"],
+            output_dir=out_dir,
+            sample_ids_dir=real_driver_env["sample_ids_dir"],
+            authorize_production=True,
+            check_only=False,
+            selected_folds=[2020],
+            selected_securities=["US_AAPL"],
+            execution_mode="production",
+            checkpoints_dir=empty_chk_dir,
+        )
+
+
+def test_production_mode_reuses_checkpoints_without_retraining(real_driver_env, tmp_path):
+    """Production mode successfully copies and reuses approved checkpoints without training."""
+    import types
+
+    chk_source = tmp_path / "source_checkpoints"
+    fold_source = chk_source / "fold_2020" / "checkpoints_MLP_ANNUAL_966_64_128_1_seed7"
+    fold_source.mkdir(parents=True, exist_ok=True)
+    model = MLPAnnual(seed=7)
+    chk_state = types.SimpleNamespace(model_state=model.state_dict())
+    torch.save(chk_state, fold_source / "best_checkpoint.pt")
+
+    out_dir = tmp_path / "prod_reuse_success_test"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    receipt = launch_a30_deployment(
+        config_path=real_driver_env["config_path"],
+        data_dir=real_driver_env["data_dir"],
+        output_dir=out_dir,
+        sample_ids_dir=real_driver_env["sample_ids_dir"],
+        authorize_production=True,
+        check_only=False,
+        selected_folds=[2020],
+        selected_securities=["US_AAPL", "US_MSFT"],
+        execution_mode="production",
+        checkpoints_dir=chk_source,
+        driver_kwargs={"selected_policies": ["MLP_BASE"]},
+    )
+
+    assert receipt["status"] == "PREFLIGHT_PASS"
+    assert receipt["execution"]["status"] == "PRODUCTION_SUCCESS"
+    comp_file = out_dir / "fold_2020" / "checkpoints_MLP_ANNUAL_966_64_128_1_seed7" / "job_completion.json"
+    assert comp_file.exists()
+    comp_data = json.loads(comp_file.read_text(encoding="utf-8"))
+    assert comp_data.get("checkpoint_reused") is True
+    assert comp_data.get("status") == "STAGE_COMPLETED"
+
+
+
+

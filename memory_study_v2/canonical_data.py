@@ -190,6 +190,8 @@ def build_total_return_bars(
             "tr_open", "tr_high", "tr_low", "tr_close", "normalized_volume",
             "split_ratio", "cash_dividend", "cum_split_factor"
         ]
+        if "segment_id" in df.columns:
+            cols.append("segment_id")
         return pd.DataFrame(columns=cols)
 
     df_sorted = df.sort_values(by="session").reset_index(drop=True)
@@ -255,7 +257,7 @@ def build_total_return_bars(
         # Volume normalized by cumulative split factor
         norm_volume[t] = raw_volume[t] / cum_s
 
-    result = pd.DataFrame({
+    res_dict = {
         "session": sessions,
         "raw_open": raw_open,
         "raw_high": raw_high,
@@ -270,8 +272,10 @@ def build_total_return_bars(
         "split_ratio": splits,
         "cash_dividend": dividends,
         "cum_split_factor": cum_split,
-    })
-    return result
+    }
+    if "segment_id" in df_sorted.columns:
+        res_dict["segment_id"] = df_sorted["segment_id"].to_numpy()
+    return pd.DataFrame(res_dict)
 
 
 def align_to_venue_calendar(

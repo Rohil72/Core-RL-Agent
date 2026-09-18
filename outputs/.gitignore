@@ -6,3 +6,16 @@ accounts/
 *.npy
 *.pt
 *.log
+
+# Large coverage manifests and intermediate shards (>100MB violates GitHub limits)
+coverage_manifest.json
+**/coverage_manifest.json
+**/shards/
+shards/
+
+# Intermediate recovery outputs and checkpoints
+a30-recovery/
+a30-targeted-recovery/
+a30-final-recovery/**/checkpoints_*/
+a30-production/**/checkpoints_*/
+ops/checkpoint_recovery_approval.json
